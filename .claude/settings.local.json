@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "Bash(npm install *)",
+      "Bash(tailscale status *)",
+      "Bash(tailscale ip *)",
+      "Bash(tailscale serve *)",
+      "Bash(tailscale cert *)",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":8788 :5175 :8765\")",
+      "Bash(node --check serve.mjs)",
+      "Bash(node serve.mjs)",
+      "Bash(curl -s http://127.0.0.1:5184/)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  %{content_type}\\\\n\" \"http://127.0.0.1:5184/Kerr-Newman%20Lab%20Mobile.html\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  %{content_type}\\\\n\" \"http://127.0.0.1:5184/full-physics-bridge.mjs\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:5184/../../../../Windows/win.ini\")",
+      "Bash(curl -s -o /dev/null -w \"HTTPS root: HTTP %{http_code}  %{content_type}\\\\n\" \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/\")",
+      "Bash(curl -s -o /dev/null -w \"HTTPS mobile: HTTP %{http_code}  %{content_type}\\\\n\" \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/Kerr-Newman%20Lab%20Mobile.html\")"
+    ]
+  }
+}

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Kerr-Newman Lab — Mobile</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="mobile-styles.css" />
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- Shared simulation engine -->
+<script src="physics.js"></script>
+<script src="sim.js"></script>
+<script src="disc.js"></script>
+<script type="module" src="full-physics-bridge.mjs"></script>
+
+<!-- Phone frame + mobile UI -->
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="mobile-panels.jsx"></script>
+<script type="text/babel" src="mobile-app.jsx"></script>
+
+<script type="text/babel">
+  // Wrap the mobile lab in an iPhone bezel for desktop preview. When viewed on
+  // an actual phone, the bezel is hidden via the media query in mobile-styles.
+  function Root() {
+    const isPhone = window.matchMedia('(max-width: 500px)').matches;
+    if (isPhone) {
+      return <MobileApp />;
+    }
+    return (
+      <IOSDevice dark={true} width={402} height={874}>
+        <MobileApp />
+      </IOSDevice>
+    );
+  }
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(<Root />);
+</script>
+</body>
+</html>

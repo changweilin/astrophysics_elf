@@ -1,0 +1,367 @@
+/* App root — wires panels + viewport */
+
+const { useState: useS, useEffect: useE, useRef: useR } = React;
+
+const SIM = window.KNSim.createSim();
+window.KNDisc.initDisc(SIM);
+window.KNSim.initBinary(SIM);
+// seed a couple of bodies so the first frame is interesting
+(function seed() {
+  for (const it of [
+    { name: 'PL-01 Rocky',    kind: 'planet', radius: 0.30, binding: 2.5, x: 12,  y: 0, vx: 0,    vy: 0.35 },
+    { name: 'GG-01 Gas',      kind: 'gas',    radius: 0.55, binding: 0.9, x: -16, y: 4, vx: -0.05, vy: -0.30 },
+    { name: 'SS-01 Crewed',   kind: 'ship',   radius: 0.02, binding: 8.0, x: 0,   y: 9, vx: -0.40, vy: 0 },
+  ]) window.KNSim.addBody(SIM, it);
+  SIM.selectedId = SIM.bodies[2].id;
+})();
+
+function App() {
+  const [, setTick] = useS(0);
+  const [playing, setPlaying] = useS(true);
+  const [timescale, setTimescale] = useS(1);
+  const force = () => setTick((t) => t + 1);
+  const canvasRef = useR(null);
+
+  // Unified pointer interaction (placement / aim / pan / select).
+  useE(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    let pan = null;
+    let suppressClick = false;
+    let downAt = null;
+
+    function rectOf() { return c.getBoundingClientRect(); }
+    function clientToCanvas(e) {
+      const r = rectOf();
+      return { sx: e.clientX - r.left, sy: e.clientY - r.top, w: r.width, h: r.height, inside:
+        e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom };
+    }
+
+    function onMove(e) {
+      const { sx, sy, w, h, inside } = clientToCanvas(e);
+      // update placement ghost
+      if (SIM.placement) {
+        const [wx, wy] = window.KNSim.screenToWorld(SIM, w, h, sx, sy);
+        SIM.placement.wx = wx; SIM.placement.wy = wy;
+        SIM.placement.inCanvas = inside;
+      }
+      // update aim pull
+      if (SIM.aiming && SIM.aiming.isAiming) {
+        SIM.aiming.pullSx = sx; SIM.aiming.pullSy = sy;
+      }
+      // pan
+      if (pan) {
+        const dx = (e.clientX - pan.x) / SIM.view.scale;
+        const dy = (e.clientY - pan.y) / SIM.view.scale;
+        SIM.view.ox = pan.ox + dx;
+        SIM.view.oy = pan.oy + dy;
+      }
+    }
+
+    function onUp(e) {
+      const { sx, sy, w, h, inside } = clientToCanvas(e);
+      // 1) Placement release: commit body + enter aim mode
+      if (SIM.placement) {
+        if (inside) {
+          const [wx, wy] = window.KNSim.screenToWorld(SIM, w, h, sx, sy);
+          const it = SIM.placement.item;
+          if (it.isCompanion) {
+            // Companion placement: set up binary at world pos with default circular v
+            window.KNSim.placeCompanion(SIM, wx, wy);
+            SIM.aiming = { kind: 'companion', isAiming: false, pullSx: sx, pullSy: sy };
+            const vc = Math.sqrt(SIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
+            window.KNSim.logEv(SIM, 'good',
+              `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`);
+          } else {
+            const prefix = { planet:'PL', gas:'GG', star:'ST', ship:'SS', probe:'PR' }[it.kind];
+            const suffix = window.__bumpName(it.kind);
+            const id = window.KNSim.addBody(SIM, {
+              name: `${prefix}-${suffix} ${it.name.split(' ')[0]}`,
+              kind: it.kind, radius: it.radius, binding: it.binding, charge: it.charge || 0,
+              x: wx, y: wy, vx: 0, vy: 0,
+            });
+            SIM.selectedId = id;
+            SIM.aiming = { bodyId: id, isAiming: false, pullSx: sx, pullSy: sy };
+            window.KNSim.logEv(SIM, 'good', `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`);
+          }
+        } else {
+          window.KNSim.logEv(SIM, 'warn', `placement cancelled`);
+        }
+        SIM.placement = null;
+        suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
+        force();
+        return;
+      }
+      // 2) Aim release: commit velocity
+      if (SIM.aiming && SIM.aiming.isAiming) {
+        if (SIM.aiming.kind === 'companion') {
+          const bin = SIM.binary;
+          if (bin) {
+            const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, bin.x2, bin.y2);
+            const dx = sx - bx, dy = sy - by;
+            const dragPx = Math.hypot(dx, dy);
+            // Tiny drag → keep the stable circular default we set at placement.
+            if (dragPx > 4) {
+              const vScale = 0.08;
+              bin.vx2 = -dx / SIM.view.scale * vScale;
+              bin.vy2 = -dy / SIM.view.scale * vScale;
+              const v = Math.hypot(bin.vx2, bin.vy2);
+              window.KNSim.logEv(SIM, 'good', `companion launched · v₀ = ${v.toFixed(3)} c`);
+            } else {
+              window.KNSim.logEv(SIM, 'good', `companion retains stable v_circ`);
+            }
+          }
+        } else {
+          const body = SIM.bodies.find((b) => b.id === SIM.aiming.bodyId);
+          if (body) {
+            const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, body.x, body.y);
+            const dx = sx - bx;
+            const dy = sy - by;
+            const vScale = 0.08;
+            body.vx = -dx / SIM.view.scale * vScale;
+            body.vy = -dy / SIM.view.scale * vScale;
+            const v = Math.hypot(body.vx, body.vy);
+            window.KNSim.logEv(SIM, 'good', `${body.name} launched · v₀ = ${v.toFixed(3)} c`);
+          }
+        }
+        SIM.aiming = null;
+        pan = null;
+        suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
+        force();
+        return;
+      }
+      // 3) End pan
+      if (pan) {
+        const moved = Math.hypot(e.clientX - pan.x, e.clientY - pan.y);
+        pan = null;
+        if (moved > 4) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 60); }
+      }
+    }
+
+    function onDown(e) {
+      const { sx, sy, w, h } = clientToCanvas(e);
+      downAt = { sx, sy };
+      // If aiming-armed (body placed, not yet aimed): start aim drag
+      if (SIM.aiming && !SIM.aiming.isAiming) {
+        SIM.aiming.isAiming = true;
+        SIM.aiming.pullSx = sx;
+        SIM.aiming.pullSy = sy;
+        e.preventDefault();
+        return;
+      }
+      // Companion hit-test: pressing on a placed companion re-arms its v₀ aim
+      if (SIM.binary && SIM.binary.enabled && !SIM.placement && !SIM.aiming) {
+        const bin = SIM.binary;
+        const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, bin.x2, bin.y2);
+        const phys = window.KNphysics;
+        const sType = bin.type || 'bh';
+        const { rplus: rp2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
+        const visualR = sType === 'bh'
+          ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * SIM.view.scale)
+          : Math.max(6, (bin.R_star2 || 3) * SIM.view.scale * 0.7);
+        const hitR = Math.max(14, visualR + 4);
+        if (Math.hypot(sx - bx, sy - by) <= hitR) {
+          SIM.aiming = { kind: 'companion', isAiming: true, pullSx: sx, pullSy: sy };
+          window.KNSim.logEv(SIM, 'amber', 'companion re-aim — drag to set new v₀');
+          e.preventDefault();
+          return;
+        }
+      }
+      // Central body hit-test: presents the pan as a deliberate drag-on-central
+      // (visual cue only; the actual world-pan behaviour is unchanged).
+      pan = { x: e.clientX, y: e.clientY, ox: SIM.view.ox, oy: SIM.view.oy };
+    }
+
+    function onClick(e) {
+      if (suppressClick || SIM.placement || SIM.aiming) return;
+      const { sx, sy, w, h } = clientToCanvas(e);
+      let best = null, bestD = 22;
+      for (const b of SIM.bodies) {
+        if (b.state !== 'orbit') continue;
+        const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, b.x, b.y);
+        const d = Math.hypot(bx - sx, by - sy);
+        if (d < bestD) { bestD = d; best = b; }
+      }
+      if (best) { SIM.selectedId = best.id; force(); }
+    }
+
+    function onWheel(e) {
+      e.preventDefault();
+      const k = e.deltaY < 0 ? 1.1 : 0.9;
+      SIM.view.scale = Math.min(80, Math.max(4, SIM.view.scale * k));
+    }
+
+    c.addEventListener('mousedown', onDown);
+    c.addEventListener('click', onClick);
+    c.addEventListener('wheel', onWheel, { passive: false });
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      c.removeEventListener('mousedown', onDown);
+      c.removeEventListener('click', onClick);
+      c.removeEventListener('wheel', onWheel);
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  // animation loop
+  useE(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    let raf, last = performance.now(), frame = 0;
+    function loop(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      SIM.paused = !playing;
+      SIM.timescale = timescale;
+      window.KNSim.step(SIM, dt);
+
+      // resize
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = c.clientWidth, cssH = c.clientHeight;
+      if (c.width !== cssW * dpr || c.height !== cssH * dpr) {
+        c.width = cssW * dpr; c.height = cssH * dpr;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      window.KNSim.render(SIM, ctx, cssW, cssH);
+      window.KNSim.renderInteraction(SIM, ctx, cssW, cssH);
+
+      // throttle React re-render to ~15 Hz for telemetry
+      frame++;
+      if (frame % 4 === 0) force();
+      raf = requestAnimationFrame(loop);
+    }
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, timescale]);
+
+  // keyboard
+  useE(() => {
+    function onKey(e) {
+      if (e.key === ' ') { setPlaying((p) => !p); e.preventDefault(); }
+      if (e.key === 'Escape') {
+        if (SIM.placement) { SIM.placement = null; window.KNSim.logEv(SIM, 'warn', 'placement cancelled'); force(); }
+        else if (SIM.aiming) {
+          if (SIM.aiming.kind === 'companion') {
+            // If user never customised velocity & companion still on default, remove it.
+            if (!SIM.aiming.isAiming) {
+              window.KNSim.removeCompanion(SIM);
+              window.KNSim.logEv(SIM, 'warn', 'companion placement cancelled');
+            } else {
+              window.KNSim.logEv(SIM, 'warn', 'aim cancelled · companion kept at default v_circ');
+            }
+          } else {
+            // remove the un-launched body if velocity never set
+            const body = SIM.bodies.find((b) => b.id === SIM.aiming.bodyId);
+            if (body && !SIM.aiming.isAiming && body.vx === 0 && body.vy === 0) {
+              SIM.bodies = SIM.bodies.filter((b) => b.id !== body.id);
+            }
+            window.KNSim.logEv(SIM, 'warn', 'aim cancelled');
+          }
+          SIM.aiming = null;
+          force();
+        }
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        SIM.bodies = []; SIM.selectedId = null; SIM.events = []; SIM.t = 0;
+        SIM.placement = null; SIM.aiming = null;
+        force();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const phys = window.KNphysics;
+  const cls = phys.classify(SIM.params.M, SIM.params.Q, SIM.params.a, SIM.params.type);
+
+  return (
+    <div className="app">
+      <div className="topbar">
+        <div className="brand">
+          <span className="dot" />
+          <span><strong>KERR-NEWMAN</strong> · BLACK HOLE LAB</span>
+        </div>
+        <div className="crumbs">
+          INSTRUMENT <span>/</span> SANDBOX <span>/</span> <span>session 04C</span>
+        </div>
+        <div className="session">
+          <span>SOLVER <b>RK2-MID</b></span>
+          <span>SUBSTEP <b>4×</b></span>
+          <span>FRAME <b>BL-COORDS</b></span>
+          <span className="ok">● LIVE</span>
+        </div>
+      </div>
+
+      <LeftPanel sim={SIM} force={force} />
+
+      <div className="viewport" style={{ cursor: SIM.placement ? 'crosshair' : (SIM.aiming && !SIM.aiming.isAiming) ? 'grab' : 'default' }}>
+        <canvas ref={canvasRef} />
+        <div className="overlay-tl">
+          <div className="frame-id">Equatorial slice · θ = π/2</div>
+          <div className="frame-coord">scale: 1 px = {(1 / SIM.view.scale).toFixed(3)} M · drag to pan · scroll to zoom</div>
+          {SIM.placement && (
+            <div className="frame-coord" style={{color: SIM.placement.item.isCompanion ? 'oklch(0.82 0.14 295)' : 'var(--amber)'}}>
+              ● PLACEMENT · {SIM.placement.item.name} · ESC to cancel
+            </div>
+          )}
+          {SIM.aiming && !SIM.aiming.isAiming && (
+            <div className="frame-coord" style={{color: SIM.aiming.kind === 'companion' ? 'oklch(0.82 0.14 295)' : 'var(--amber)'}}>
+              ● AIM · {SIM.aiming.kind === 'companion' ? 'drag from companion to override v_circ' : 'drag from body to launch'} · ESC to cancel
+            </div>
+          )}
+          {SIM.aiming && SIM.aiming.isAiming && (
+            <div className="frame-coord" style={{color: SIM.aiming.kind === 'companion' ? 'oklch(0.82 0.14 295)' : 'var(--amber)'}}>
+              ● AIMING… release to commit v₀
+            </div>
+          )}
+        </div>
+        <div className="overlay-tr">
+          <div className="chip">CLASS · <b>{cls.name}</b></div>
+          <div className="chip">M=<b>{SIM.params.M.toFixed(2)}</b> · Q=<b>{SIM.params.Q.toFixed(2)}</b> · a=<b>{SIM.params.a.toFixed(2)}</b>
+            {SIM.params.type && SIM.params.type !== 'bh' && <> · R★=<b>{(SIM.params.R_star || 3).toFixed(2)}</b></>}
+          </div>
+        </div>
+        <div className="overlay-bl">
+          <div className="view-toggles">
+            <ToggleBtn label="HORIZON"  k="showHorizon" sim={SIM} force={force} />
+            <ToggleBtn label="ERGO"     k="showErgo" sim={SIM} force={force} />
+            <ToggleBtn label="ISCO"     k="showISCO" sim={SIM} force={force} />
+            <ToggleBtn label="PHOTON"   k="showPhoton" sim={SIM} force={force} />
+            <ToggleBtn label="DRAG"     k="showDragField" sim={SIM} force={force} />
+            <ToggleBtn label="GW"       k="showGW" sim={SIM} force={force} />
+            <ToggleBtn label="TRAILS"   k="showOrbits" sim={SIM} force={force} />
+            <ToggleBtn label="TIDAL"    k="showTidal" sim={SIM} force={force} />
+            <ToggleBtn label="LABELS"   k="showLabels" sim={SIM} force={force} />
+          </div>
+        </div>
+        <div className="overlay-br">
+          <div>RENDER · CANVAS2D · {Math.round(SIM.view.scale)}px/M</div>
+        </div>
+
+        <TidalMicroscope sim={SIM} force={force} />
+        <MHDMonitor sim={SIM} force={force} />
+      </div>
+
+      <RightPanel sim={SIM} force={force} />
+
+      <BottomStrip sim={SIM} force={force}
+        playing={playing} setPlaying={setPlaying}
+        timescale={timescale} setTimescale={setTimescale} />
+    </div>
+  );
+}
+
+function ToggleBtn({ label, k, sim, force }) {
+  const on = sim.flags[k];
+  return (
+    <button className={on ? 'on' : ''}
+      onClick={() => { sim.flags[k] = !sim.flags[k]; force(); }}>
+      <span className="sw" />{label}
+    </button>
+  );
+}
+
+window.App = App;

@@ -1,0 +1,7 @@
+interface:
+  display_name: "KN Market Science"
+  short_description: "Design evidence-based market experiments."
+  default_prompt: "Use $kn-market-science to design a scientific market analysis or product experiment for the lab."
+
+policy:
+  allow_implicit_invocation: true

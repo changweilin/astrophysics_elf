@@ -1,0 +1,7 @@
+interface:
+  display_name: "KN L10n Translation"
+  short_description: "Localize and repair Kerr-Newman UI copy."
+  default_prompt: "Use $kn-l10n-translation to localize the Kerr-Newman Lab UI copy and preserve physics notation."
+
+policy:
+  allow_implicit_invocation: true

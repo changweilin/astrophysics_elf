@@ -1,0 +1,7 @@
+interface:
+  display_name: "KN Parameter DB"
+  short_description: "Curate presets, catalogs, schemas, and units."
+  default_prompt: "Use $kn-parameter-db to update simulation parameters, object catalog entries, or presets consistently."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "KN UI Events"
+  short_description: "Edit Kerr-Newman canvas and UI interactions."
+  default_prompt: "Use $kn-ui-events to update the Kerr-Newman Lab interaction flow or UI event logic."
+
+policy:
+  allow_implicit_invocation: true

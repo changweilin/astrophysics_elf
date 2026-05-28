@@ -1,0 +1,7 @@
+interface:
+  display_name: "KN Spatial Numerics"
+  short_description: "Verify Kerr-Newman numerics and benchmarks."
+  default_prompt: "Use $kn-spatial-numerics to change or validate geodesics, tidal tensors, MHD, units, or numerical diagnostics."
+
+policy:
+  allow_implicit_invocation: true
