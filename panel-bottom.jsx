@@ -43,7 +43,7 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
                 {playing ? '❚❚' : '▶'}
               </button>
               <button onClick={() => { sim.bodies.forEach(b => b.trail.length = 0); force(); }}>CLR TRAILS</button>
-              <button onClick={() => { sim.bodies = []; sim.selectedId = null; sim.events = []; sim.t = 0; force(); }}>RESET</button>
+              <button onClick={() => { sim.bodies = []; sim.selectedId = null; sim.events = []; sim.t = 0; sim.moving = null; if (sim.binary) sim.binary.held = false; force(); }}>RESET</button>
             </div>
             <div className="meta-row">
               <span>T <b>{sim.t.toFixed(1)} M</b></span>

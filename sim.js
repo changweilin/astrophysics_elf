@@ -129,6 +129,13 @@
     }
     bin.x1 = sim.primary.x; bin.y1 = sim.primary.y; // primary follows pan handle
 
+    if (bin.held) { // frozen while user repositions companion
+      bin.d = Math.hypot(bin.x2 - bin.x1, bin.y2 - bin.y1);
+      bin.theta = Math.atan2(bin.y2 - bin.y1, bin.x2 - bin.x1);
+      bin.trail2.length = 0;
+      return;
+    }
+
     const M1 = sim.params.M, M2 = bin.M2;
     const isBH = (sim.params.type || 'bh') === 'bh';
 
@@ -221,6 +228,7 @@
     const bin = sim.binary || null;
     for (const b of sim.bodies) {
       if (b.state !== 'orbit') continue;
+      if (b.held) { b.trail.length = 0; continue; } // frozen while user repositions
       const a1 = phys.acceleration(b.x, b.y, b.vx, b.vy, M, Q, a, b.charge || 0, bin);
       const mx = b.x + b.vx * dt * 0.5;
       const my = b.y + b.vy * dt * 0.5;
@@ -915,6 +923,34 @@
 
   // --- Overlay: placement ghost + aim arrow + predicted trajectory ---
   function renderInteraction(sim, ctx, w, h) {
+    // REPOSITION cue (long-press → drag to move)
+    if (sim.moving) {
+      let mx = null, my = null, label = '';
+      if (sim.moving.kind === 'companion' && sim.binary && sim.binary.enabled) {
+        [mx, my] = worldToScreen(sim, w, h, sim.binary.x2, sim.binary.y2);
+        label = 'companion';
+      } else {
+        const b = sim.bodies.find((x) => x.id === sim.moving.bodyId);
+        if (b) { [mx, my] = worldToScreen(sim, w, h, b.x, b.y); label = b.name; }
+      }
+      if (mx != null) {
+        ctx.strokeStyle = 'oklch(0.85 0.16 130 / 0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.arc(mx, my, 16, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(mx - 23, my); ctx.lineTo(mx - 12, my);
+        ctx.moveTo(mx + 12, my); ctx.lineTo(mx + 23, my);
+        ctx.moveTo(mx, my - 23); ctx.lineTo(mx, my - 12);
+        ctx.moveTo(mx, my + 12); ctx.lineTo(mx, my + 23);
+        ctx.stroke();
+        ctx.fillStyle = 'oklch(0.85 0.16 130)';
+        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.fillText(`moving · ${label}`, mx + 24, my - 8);
+      }
+    }
+
     // PLACEMENT ghost
     if (sim.placement && sim.placement.inCanvas) {
       const p = sim.placement;

@@ -53,6 +53,8 @@ function MobileApp() {
     let downAt = null;
     let movedSinceDown = false;
     let suppressTap = false;
+    let grab = null;            // active body/companion grab (hold→move, drag→re-aim)
+    let longPressTimer = null;  // fires → enter reposition mode
 
     function rectOf() { return c.getBoundingClientRect(); }
     function toLocal(e) {
@@ -66,6 +68,55 @@ function MobileApp() {
       };
     }
 
+    // Which orbiting body / companion sits under a screen point (null if none).
+    function hitTestGrabbable(sx, sy, w, h) {
+      let best = null, bestD = 28;
+      for (const b of MSIM.bodies) {
+        if (b.state !== 'orbit') continue;
+        const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, b.x, b.y);
+        const d = Math.hypot(bx - sx, by - sy);
+        if (d < bestD) { bestD = d; best = b; }
+      }
+      if (best) return { kind: 'body', bodyId: best.id, label: best.name };
+      if (MSIM.binary && MSIM.binary.enabled) {
+        const bin = MSIM.binary;
+        const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, bin.x2, bin.y2);
+        const phys = window.KNphysics;
+        const sType = bin.type || 'bh';
+        const { rplus: rp2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
+        const visualR = sType === 'bh'
+          ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * MSIM.view.scale)
+          : Math.max(6, (bin.R_star2 || 3) * MSIM.view.scale * 0.7);
+        const hitR = Math.max(18, visualR + 6);
+        if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: 'companion' };
+      }
+      return null;
+    }
+
+    // Reposition the grabbed target to a world coordinate (keeps velocity).
+    function moveGrabTo(g, wx, wy) {
+      if (g.kind === 'companion') {
+        const bin = MSIM.binary;
+        if (!bin) return;
+        bin.x2 = wx; bin.y2 = wy;
+      } else {
+        const b = MSIM.bodies.find((x) => x.id === g.bodyId);
+        if (b) { b.x = wx; b.y = wy; }
+      }
+    }
+
+    // Release any in-progress grab and unfreeze its target.
+    function clearGrab() {
+      if (grab) {
+        if (grab.kind === 'companion') { if (MSIM.binary) MSIM.binary.held = false; }
+        else { const b = MSIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = false; }
+      }
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+      MSIM.moving = null;
+      grab = null;
+    }
+
     function onPointerDown(e) {
       c.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -76,6 +127,7 @@ function MobileApp() {
         const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         pinch = { startDist: d, startScale: MSIM.view.scale };
         pan = null;
+        clearGrab();
         return;
       }
 
@@ -92,20 +144,22 @@ function MobileApp() {
         return;
       }
 
-      // Companion hit-test: press placed companion → re-arm aim for v₀
-      if (MSIM.binary && MSIM.binary.enabled && !MSIM.placement && !MSIM.aiming) {
-        const bin = MSIM.binary;
-        const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, bin.x2, bin.y2);
-        const phys = window.KNphysics;
-        const sType = bin.type || 'bh';
-        const { rplus: rp2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
-        const visualR = sType === 'bh'
-          ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * MSIM.view.scale)
-          : Math.max(6, (bin.R_star2 || 3) * MSIM.view.scale * 0.7);
-        const hitR = Math.max(18, visualR + 6);
-        if (Math.hypot(sx - bx, sy - by) <= hitR) {
-          MSIM.aiming = { kind: 'companion', isAiming: true, pullSx: sx, pullSy: sy };
-          window.KNSim.logEv(MSIM, 'amber', 'companion re-aim — drag to set new v₀');
+      // Grab an existing body / companion: long-press → reposition, drag → re-aim v₀
+      if (!MSIM.placement && !MSIM.aiming) {
+        const hit = hitTestGrabbable(sx, sy, w, h);
+        if (hit) {
+          if (hit.kind === 'body') MSIM.selectedId = hit.bodyId;
+          grab = { ...hit, startSx: sx, startSy: sy, mode: 'pending' };
+          longPressTimer = setTimeout(() => {
+            if (grab && grab.mode === 'pending') {
+              grab.mode = 'move';
+              if (grab.kind === 'companion') { if (MSIM.binary) MSIM.binary.held = true; }
+              else { const b = MSIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = true; }
+              MSIM.moving = { kind: grab.kind, bodyId: grab.bodyId };
+              window.KNSim.logEv(MSIM, 'amber', `${grab.label} — hold-drag to reposition`);
+              force();
+            }
+          }, 350);
           e.preventDefault();
           return;
         }
@@ -128,6 +182,27 @@ function MobileApp() {
         const ratio = d / pinch.startDist;
         MSIM.view.scale = Math.min(80, Math.max(4, pinch.startScale * ratio));
         movedSinceDown = true;
+        return;
+      }
+
+      // grab: reposition (hold) or hand off to velocity re-aim (drag)
+      if (grab) {
+        const dist = Math.hypot(sx - grab.startSx, sy - grab.startSy);
+        if (grab.mode === 'move') {
+          const [wx, wy] = window.KNSim.screenToWorld(MSIM, w, h, sx, sy);
+          moveGrabTo(grab, wx, wy);
+          movedSinceDown = true;
+        } else if (grab.mode === 'pending' && dist > 6) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+          if (grab.kind === 'companion') {
+            MSIM.aiming = { kind: 'companion', isAiming: true, pullSx: sx, pullSy: sy };
+          } else {
+            MSIM.aiming = { bodyId: grab.bodyId, isAiming: true, pullSx: sx, pullSy: sy };
+          }
+          movedSinceDown = true;
+          grab = null;
+        }
         return;
       }
 
@@ -240,6 +315,17 @@ function MobileApp() {
         return;
       }
 
+      // Grab release: commit reposition (drag→re-aim already handed off above)
+      if (grab) {
+        if (grab.mode === 'move') {
+          window.KNSim.logEv(MSIM, 'good', `${grab.label} repositioned`);
+          suppressTap = true; setTimeout(() => { suppressTap = false; }, 80);
+        }
+        clearGrab();
+        force();
+        return;
+      }
+
       // Pan end — if no real movement, treat as tap (selection)
       if (pan) {
         if (!movedSinceDown && !suppressTap) {
@@ -260,6 +346,7 @@ function MobileApp() {
     function onPointerCancel(e) {
       pointers.delete(e.pointerId);
       pan = null; pinch = null;
+      clearGrab();
     }
 
     c.addEventListener('pointerdown', onPointerDown);
@@ -267,6 +354,7 @@ function MobileApp() {
     c.addEventListener('pointerup', onPointerUp);
     c.addEventListener('pointercancel', onPointerCancel);
     return () => {
+      clearTimeout(longPressTimer);
       c.removeEventListener('pointerdown', onPointerDown);
       c.removeEventListener('pointermove', onPointerMove);
       c.removeEventListener('pointerup', onPointerUp);

@@ -29,12 +29,63 @@ function App() {
     let pan = null;
     let suppressClick = false;
     let downAt = null;
+    let grab = null;            // active body/companion grab (hold→move, drag→re-aim)
+    let longPressTimer = null;  // fires → enter reposition mode
 
     function rectOf() { return c.getBoundingClientRect(); }
     function clientToCanvas(e) {
       const r = rectOf();
       return { sx: e.clientX - r.left, sy: e.clientY - r.top, w: r.width, h: r.height, inside:
         e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom };
+    }
+
+    // Which orbiting body / companion sits under a screen point (null if none).
+    function hitTestGrabbable(sx, sy, w, h) {
+      let best = null, bestD = 22;
+      for (const b of SIM.bodies) {
+        if (b.state !== 'orbit') continue;
+        const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, b.x, b.y);
+        const d = Math.hypot(bx - sx, by - sy);
+        if (d < bestD) { bestD = d; best = b; }
+      }
+      if (best) return { kind: 'body', bodyId: best.id, label: best.name };
+      if (SIM.binary && SIM.binary.enabled) {
+        const bin = SIM.binary;
+        const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, bin.x2, bin.y2);
+        const phys = window.KNphysics;
+        const sType = bin.type || 'bh';
+        const { rplus: rp2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
+        const visualR = sType === 'bh'
+          ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * SIM.view.scale)
+          : Math.max(6, (bin.R_star2 || 3) * SIM.view.scale * 0.7);
+        const hitR = Math.max(14, visualR + 4);
+        if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: 'companion' };
+      }
+      return null;
+    }
+
+    // Reposition the grabbed target to a world coordinate (keeps velocity).
+    function moveGrabTo(g, wx, wy) {
+      if (g.kind === 'companion') {
+        const bin = SIM.binary;
+        if (!bin) return;
+        bin.x2 = wx; bin.y2 = wy;
+      } else {
+        const b = SIM.bodies.find((x) => x.id === g.bodyId);
+        if (b) { b.x = wx; b.y = wy; }
+      }
+    }
+
+    // Release any in-progress grab and unfreeze its target.
+    function clearGrab() {
+      if (grab) {
+        if (grab.kind === 'companion') { if (SIM.binary) SIM.binary.held = false; }
+        else { const b = SIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = false; }
+      }
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+      SIM.moving = null;
+      grab = null;
     }
 
     function onMove(e) {
@@ -48,6 +99,24 @@ function App() {
       // update aim pull
       if (SIM.aiming && SIM.aiming.isAiming) {
         SIM.aiming.pullSx = sx; SIM.aiming.pullSy = sy;
+      }
+      // grab: reposition (hold) or hand off to velocity re-aim (drag)
+      if (grab) {
+        const dist = Math.hypot(sx - grab.startSx, sy - grab.startSy);
+        if (grab.mode === 'move') {
+          const [wx, wy] = window.KNSim.screenToWorld(SIM, w, h, sx, sy);
+          moveGrabTo(grab, wx, wy);
+        } else if (grab.mode === 'pending' && dist > 5) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+          if (grab.kind === 'companion') {
+            SIM.aiming = { kind: 'companion', isAiming: true, pullSx: sx, pullSy: sy };
+          } else {
+            SIM.aiming = { bodyId: grab.bodyId, isAiming: true, pullSx: sx, pullSy: sy };
+          }
+          grab = null;
+        }
+        return;
       }
       // pan
       if (pan) {
@@ -130,6 +199,19 @@ function App() {
         force();
         return;
       }
+      // 2.5) Grab release: commit reposition (drag→re-aim already handed off above)
+      if (grab) {
+        if (grab.mode === 'move') {
+          let r = 0;
+          if (grab.kind === 'companion') { r = SIM.binary ? SIM.binary.d : 0; }
+          else { const b = SIM.bodies.find((x) => x.id === grab.bodyId); r = b ? Math.hypot(b.x, b.y) : 0; }
+          window.KNSim.logEv(SIM, 'good', `${grab.label} repositioned · r = ${r.toFixed(2)} M`);
+          suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
+        }
+        clearGrab();
+        force();
+        return;
+      }
       // 3) End pan
       if (pan) {
         const moved = Math.hypot(e.clientX - pan.x, e.clientY - pan.y);
@@ -149,26 +231,27 @@ function App() {
         e.preventDefault();
         return;
       }
-      // Companion hit-test: pressing on a placed companion re-arms its v₀ aim
-      if (SIM.binary && SIM.binary.enabled && !SIM.placement && !SIM.aiming) {
-        const bin = SIM.binary;
-        const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, bin.x2, bin.y2);
-        const phys = window.KNphysics;
-        const sType = bin.type || 'bh';
-        const { rplus: rp2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
-        const visualR = sType === 'bh'
-          ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * SIM.view.scale)
-          : Math.max(6, (bin.R_star2 || 3) * SIM.view.scale * 0.7);
-        const hitR = Math.max(14, visualR + 4);
-        if (Math.hypot(sx - bx, sy - by) <= hitR) {
-          SIM.aiming = { kind: 'companion', isAiming: true, pullSx: sx, pullSy: sy };
-          window.KNSim.logEv(SIM, 'amber', 'companion re-aim — drag to set new v₀');
+      // Grab an existing body / companion: long-press → reposition, drag → re-aim v₀
+      if (!SIM.placement && !SIM.aiming) {
+        const hit = hitTestGrabbable(sx, sy, w, h);
+        if (hit) {
+          if (hit.kind === 'body') SIM.selectedId = hit.bodyId;
+          grab = { ...hit, startSx: sx, startSy: sy, mode: 'pending' };
+          longPressTimer = setTimeout(() => {
+            if (grab && grab.mode === 'pending') {
+              grab.mode = 'move';
+              if (grab.kind === 'companion') { if (SIM.binary) SIM.binary.held = true; }
+              else { const b = SIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = true; }
+              SIM.moving = { kind: grab.kind, bodyId: grab.bodyId };
+              window.KNSim.logEv(SIM, 'amber', `${grab.label} — hold-drag to reposition`);
+              force();
+            }
+          }, 300);
           e.preventDefault();
           return;
         }
       }
-      // Central body hit-test: presents the pan as a deliberate drag-on-central
-      // (visual cue only; the actual world-pan behaviour is unchanged).
+      // Otherwise: drag empty space to pan the view.
       pan = { x: e.clientX, y: e.clientY, ox: SIM.view.ox, oy: SIM.view.oy };
     }
 
@@ -197,6 +280,7 @@ function App() {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     return () => {
+      clearTimeout(longPressTimer);
       c.removeEventListener('mousedown', onDown);
       c.removeEventListener('click', onClick);
       c.removeEventListener('wheel', onWheel);
@@ -266,7 +350,8 @@ function App() {
       }
       if (e.key === 'r' || e.key === 'R') {
         SIM.bodies = []; SIM.selectedId = null; SIM.events = []; SIM.t = 0;
-        SIM.placement = null; SIM.aiming = null;
+        SIM.placement = null; SIM.aiming = null; SIM.moving = null;
+        if (SIM.binary) SIM.binary.held = false;
         force();
       }
     }
@@ -297,7 +382,7 @@ function App() {
 
       <LeftPanel sim={SIM} force={force} />
 
-      <div className="viewport" style={{ cursor: SIM.placement ? 'crosshair' : (SIM.aiming && !SIM.aiming.isAiming) ? 'grab' : 'default' }}>
+      <div className="viewport" style={{ cursor: SIM.placement ? 'crosshair' : SIM.moving ? 'move' : (SIM.aiming && !SIM.aiming.isAiming) ? 'grab' : 'default' }}>
         <canvas ref={canvasRef} />
         <div className="overlay-tl">
           <div className="frame-id">Equatorial slice · θ = π/2</div>
