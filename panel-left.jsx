@@ -607,6 +607,14 @@ function BinaryReadout({ sim, force }) {
           <span className="v">{bin.enabled ? (bin.omega || 0).toFixed(3) : '—'}<small>c/M</small></span>
         </div>
         <div className="cell">
+          <span className="k">L_GW dE/dt</span>
+          <span className="v">{bin.enabled ? (bin.gwLum || 0).toExponential(2) : '—'}<small>c⁵/G</small></span>
+        </div>
+        <div className="cell">
+          <span className="k">E_GW radiated</span>
+          <span className="v">{(bin.eGW || 0) > 1e-4 ? (bin.eGW || 0).toFixed(3) : '—'}<small>Mc²</small></span>
+        </div>
+        <div className="cell">
           <span className="k">surf₁ + surf₂</span>
           <span className="v">{rMerge.toFixed(2)}<small>M</small></span>
         </div>
@@ -637,7 +645,7 @@ function BinaryReadout({ sim, force }) {
       {bin.merged && !bin.enabled && (
         <div className="lock-banner" style={{marginTop: 10, borderColor: 'oklch(0.72 0.14 150)'}}>
           <span className="lock-glyph" style={{color: 'oklch(0.78 0.14 150)'}}>✓</span>
-          <span>MERGER COMPLETE · M_f = {sim.params.M.toFixed(2)} M · a_f/M = {(sim.params.a / sim.params.M).toFixed(2)}</span>
+          <span>MERGER COMPLETE · M_f = {sim.params.M.toFixed(2)} M · a_f/M = {(sim.params.a / sim.params.M).toFixed(2)} · E_GW = {(bin.eMergerGW || 0).toFixed(3)} Mc²</span>
         </div>
       )}
     </div>

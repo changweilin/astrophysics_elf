@@ -79,8 +79,11 @@
       mergerFlash: 0,
       ringdownPhase: 0,
       trail1: [], trail2: [],
+      // GW energy readouts (set by stepBinary): instantaneous luminosity,
+      // cumulative energy radiated during inspiral, and the merger-burst energy.
+      gwLum: 0, eGW: 0, eMergerGW: 0,
       // last computed metrics (for UI readout)
-      lastPeters: { omega: 0, ddot: 0, t_merge: Infinity, Mc: 0, Mt: 0, mu: 0 },
+      lastPeters: { omega: 0, ddot: 0, t_merge: Infinity, Mc: 0, Mt: 0, mu: 0, Lgw: 0 },
     };
   }
 
@@ -189,10 +192,12 @@
 
     // GW back-reaction for every binary (BH, NS, WD, star): a tangential drag on
     // the *relative* motion that bleeds orbital energy at the Peters rate
-    // dE/dt = (32/5) M1² M2² (M1+M2) / r⁵ (reduced mass μ = M1 M2 / Mt). This turns
-    // a classically stable circular orbit into a GR inspiral — the chirp steepens
-    // as r shrinks (∝ r⁻⁵). A double-BH pair ends in merger below; other pairs
-    // spiral in until their surfaces touch. Strength: bin.inspiralRate (×Peters).
+    // dE/dt = (32/5) M1² M2² (M1+M2) / r⁵ (reduced mass μ = M1 M2 / Mt). The loss
+    // is set by BOTH masses and the drag is split back onto both stars below, so
+    // primary and companion mutually spiral toward the conserved barycentre —
+    // the binary radiates as a single quadrupole, not two separate sources. The
+    // chirp steepens as r shrinks (∝ r⁻⁵). A double-BH pair ends in merger below;
+    // other pairs spiral in until their surfaces touch. Strength: inspiralRate.
     if (vrel > 1e-4) {
       const dEdt = (32 / 5) * M1 * M1 * M2 * M2 * Mt / Math.pow(r, 5);
       const mu = (M1 * M2) / Mt;
@@ -224,6 +229,14 @@
     bin.theta = Math.atan2(Dy, Dx);
     bin.omega = vrel / Math.max(0.1, bin.d);
 
+    // GW energy bookkeeping. Instantaneous luminosity is the Peters rate; the
+    // cumulative energy radiated equals the orbital binding energy bled away
+    // since placement (energy conservation): ΔE = (M1 M2 / 2)(1/d − 1/d₀).
+    bin.gwLum = pet.Lgw;
+    bin.eGW = bin.d0 > 0
+      ? Math.max(0, (M1 * M2 / 2) * (1 / Math.max(0.05, bin.d) - 1 / bin.d0))
+      : 0;
+
     // Trails for BOTH stars (they now mutually orbit)
     bin.trail1.push(bin.x1, bin.y1);
     if (bin.trail1.length > 1200) bin.trail1.splice(0, bin.trail1.length - 1200);
@@ -244,17 +257,24 @@
     if (cType === 'bh' && sType === 'bh') {
       const rmerge = surface1 + surface2 * 1.05;
       if (bin.d <= rmerge && !bin.merged) {
+        // Coalescence: the final plunge + ringdown radiates a GW burst whose
+        // energy and the remnant spin depend on the mass ratio and BOTH
+        // progenitor spins (see phys.mergerRemnant). Equal-mass non-spinning →
+        // ~5.5% of Mt radiated and a_f/M_f ≈ 0.69; extreme ratios radiate little.
+        const chi1 = sim.params.a / Math.max(0.05, M1);   // dimensionless spins a/M
+        const chi2 = (bin.a2 || 0) / Math.max(0.05, M2);
+        const orbitSign = Math.sign(sim.params.a || 1);
+        const rem = phys.mergerRemnant(M1, M2, chi1, chi2, orbitSign);
         bin.merged = true;
         bin.mergerFlash = 1.6;
-        const radiated = Mt * 0.05;
-        sim.params.M = Mt - radiated;
+        bin.eMergerGW = rem.eRad;     // GW energy in the merger/ringdown burst
+        bin.eGW = (bin.eGW || 0) + rem.eRad;
+        sim.params.M = rem.Mf;
         sim.params.Q = sim.params.Q + (bin.Q2 || 0);
-        const aFinal = Math.min(0.998 * sim.params.M,
-          Math.abs(sim.params.a) + 0.4 * Math.min(M1, M2));
-        sim.params.a = Math.sign(sim.params.a || 1) * aFinal;
+        sim.params.a = rem.af * rem.Mf;   // a = (a/M)·M_f
         bin.enabled = false;
-        logEv(sim, 'warn', `MERGER · M_f=${sim.params.M.toFixed(2)}M · ΔE_GW=${radiated.toFixed(2)} c²`);
-        logEv(sim, 'amber', `ringdown · a/M → ${(sim.params.a / sim.params.M).toFixed(2)}`);
+        logEv(sim, 'warn', `MERGER · η=${rem.eta.toFixed(3)} · M_f=${rem.Mf.toFixed(2)}M · E_GW=${rem.eRad.toFixed(3)} c² (${(rem.eRad / Mt * 100).toFixed(1)}%)`);
+        logEv(sim, 'amber', `ringdown · a_f/M_f → ${rem.af.toFixed(3)}`);
         return;
       }
     } else {
@@ -900,10 +920,12 @@
     }
 
     // Merger flash
-    if (sim.binary && sim.binary.mergerFlash > 0) {
-      const t = sim.binary.mergerFlash / 1.6;
+    if (sim.binary && sim.binary.mergerFlash > 0 && w > 0 && h > 0) {
+      const t = Math.max(0, Math.min(1, sim.binary.mergerFlash / 1.6));
       const alpha = Math.min(1, t * 2);
-      const radius = (1 - t) * Math.min(w, h) * 0.7;
+      // Expanding shell: radius grows as the flash fades. Guard ≥ 1 and finite
+      // so the gradient never gets a negative/NaN radius (which throws).
+      const radius = Math.max(1, (1 - t) * Math.min(w, h) * 0.7);
       const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
       grd.addColorStop(0, `oklch(0.98 0.20 75 / ${alpha * 0.9})`);
       grd.addColorStop(0.4, `oklch(0.85 0.16 295 / ${alpha * 0.4})`);
@@ -1209,6 +1231,58 @@
     }
   }
 
+  // Expanding quadrupole GW wavefield, tuned for legibility rather than
+  // subtlety. Three perceptual cues do the work: (1) additive 'lighter'
+  // compositing + bloom so crests glow on the dark sky; (2) a pronounced
+  // rotating "peanut" deformation (∝cos2θ) so the stretch/squeeze that defines
+  // a gravitational wave is obvious at a glance; (3) brightness + line weight
+  // concentrated at the outgoing wavefront so the eye reads motion outward.
+  // (cx,cy,r0,maxR) are screen px; omegaGW is the GW angular frequency.
+  function drawGWField(ctx, cx, cy, t, omegaGW, strength, r0, maxR) {
+    const str = Math.max(0, Math.min(1, strength));
+    // Calm, low-glare wavefield: normal (source-over) compositing so overlapping
+    // rings never stack into harsh highlights, muted low-chroma tones, a soft
+    // halo rather than bloom. Still clearly legible — the quadrupole peanut
+    // deformation reads at a glance, and brightness eases toward the wavefront.
+    // `str` gently modulates intensity (above a floor) and the deformation depth.
+    const vis = 0.5 + 0.3 * str;                     // overall opacity 0.5‥0.8
+    const def = 0.15 + 0.13 * str;                   // deformation depth ≥0.15
+    const rings = 5, segs = 96;
+    const expand = Math.max(0.05, omegaGW * 0.28);   // wavefront travel speed
+    const ang = t * omegaGW;
+    const strokeQuad = (r, amp, phase) => {
+      ctx.beginPath();
+      for (let k = 0; k <= segs; k++) {
+        const th = (k / segs) * Math.PI * 2;
+        const rr = r * (1 + amp * Math.cos(2 * th - phase));
+        const x = cx + Math.cos(th) * rr, y = cy + Math.sin(th) * rr;
+        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath(); ctx.stroke();
+    };
+    ctx.save();
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < rings; i++) {
+      const phase = ((t * expand) + i / rings) % 1;
+      const r = r0 + phase * (maxR - r0);
+      const fade = Math.sin(phase * Math.PI);        // dim at birth & far edge
+      if (fade < 0.05) continue;
+      const crest = fade * fade;                     // gentle swell toward the front
+      // h_+ — soft lavender
+      ctx.shadowColor = 'oklch(0.70 0.09 288 / 0.5)';
+      ctx.shadowBlur = 2 + 3 * crest;
+      ctx.lineWidth = 1.1 + 1.4 * crest;
+      ctx.strokeStyle = `oklch(0.80 0.10 288 / ${((0.20 + 0.22 * crest) * vis).toFixed(3)})`;
+      strokeQuad(r, def * fade, ang);
+      // h_× — soft teal partner, rotated 45° (the second GW polarisation)
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 0.9 + 1.0 * crest;
+      ctx.strokeStyle = `oklch(0.82 0.08 205 / ${((0.10 + 0.13 * crest) * vis).toFixed(3)})`;
+      strokeQuad(r, def * fade * 0.82, ang + Math.PI / 2);
+    }
+    ctx.restore();
+  }
+
   function renderGW(sim, ctx, w, h) {
     const { M, Q, a } = sim.params;
     const { rplus, naked } = phys.horizons(M, Q, a);
@@ -1225,49 +1299,10 @@
       const [bx1, by1] = worldToScreen(sim, w, h, bin.x1, bin.y1);
       const [bx2, by2] = worldToScreen(sim, w, h, bin.x2, bin.y2);
       const rSource = bin.d * 0.5 * s;
-      const maxR = Math.hypot(w, h) * 0.65;
-      const r0 = Math.max(8, rSource * 0.5);
-      const ringCount = 8;
+      const maxR = Math.hypot(w, h) * 0.66;
+      const r0 = Math.max(10, rSource * 0.5);
       ctx.save();
-      ctx.lineWidth = 1.2;
-      for (let i = 0; i < ringCount; i++) {
-        const phase = ((sim.t * omegaGW * 0.3) + i / ringCount) % 1;
-        const r = r0 + phase * (maxR - r0);
-        const fade = Math.sin(phase * Math.PI);
-        const alpha = 0.38 * fade * Math.min(1, h0);
-        if (alpha < 0.01) continue;
-        const strain = 0.07 * h0 * fade;
-        // h_+ polarisation — quadrupolar (2θ symmetry)
-        ctx.strokeStyle = `oklch(0.74 0.15 295 / ${alpha.toFixed(3)})`;
-        ctx.beginPath();
-        const segs = 120;
-        for (let k = 0; k <= segs; k++) {
-          const ang = (k / segs) * Math.PI * 2;
-          const rr = r * (1 + strain * Math.cos(2 * ang - sim.t * omegaGW));
-          ctx.lineTo(cx + Math.cos(ang) * rr, cy + Math.sin(ang) * rr);
-        }
-        ctx.closePath(); ctx.stroke();
-      }
-      // h_× cross-polarisation
-      {
-        const phase = (sim.t * omegaGW * 0.3 + 0.5) % 1;
-        const r = r0 + phase * (maxR - r0);
-        const fade = Math.sin(phase * Math.PI);
-        const alpha = 0.20 * fade * Math.min(1, h0);
-        if (alpha > 0.01) {
-          ctx.strokeStyle = `oklch(0.82 0.12 320 / ${alpha.toFixed(3)})`;
-          ctx.setLineDash([3, 5]);
-          ctx.beginPath();
-          const segs = 120;
-          for (let k = 0; k <= segs; k++) {
-            const ang = (k / segs) * Math.PI * 2;
-            const rr = r * (1 + 0.07 * h0 * fade * Math.cos(2 * ang - sim.t * omegaGW + Math.PI / 2));
-            ctx.lineTo(cx + Math.cos(ang) * rr, cy + Math.sin(ang) * rr);
-          }
-          ctx.closePath(); ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      }
+      drawGWField(ctx, cx, cy, sim.t, omegaGW, Math.min(1, h0), r0, maxR);
       // Binary axis line (GW quadrupole axis indicator)
       ctx.strokeStyle = 'oklch(0.78 0.16 295 / 0.5)';
       ctx.setLineDash([2, 4]);
@@ -1312,55 +1347,9 @@
     const omegaGW = omegaOrb * 2;
 
     ctx.save();
-    const ringCount = 7;
     const maxR = Math.hypot(w, h) * 0.6;
-    const r0 = Math.max(8, rSource * s * 0.4);
-    ctx.lineWidth = 1;
-    for (let i = 0; i < ringCount; i++) {
-      const phase = ((sim.t * omegaGW * 0.35) + i / ringCount) % 1;
-      const r = r0 + phase * (maxR - r0);
-      if (r < r0) continue;
-      const fade = Math.sin(phase * Math.PI);
-      const alpha = 0.32 * fade * Math.min(1, amp);
-      if (alpha < 0.015) continue;
-      const strain = 0.06 * amp * fade;
-      ctx.strokeStyle = `oklch(0.74 0.14 295 / ${alpha.toFixed(3)})`;
-      ctx.beginPath();
-      const segs = 96;
-      for (let k = 0; k <= segs; k++) {
-        const ang = (k / segs) * Math.PI * 2;
-        const rr = r * (1 + strain * Math.cos(2 * ang - sim.t * omegaGW));
-        const rx = cx + Math.cos(ang) * rr;
-        const ry = cy + Math.sin(ang) * rr;
-        if (k === 0) ctx.moveTo(rx, ry); else ctx.lineTo(rx, ry);
-      }
-      ctx.closePath();
-      ctx.stroke();
-    }
-
-    // h_× ghost ring
-    {
-      const phase = (sim.t * omegaGW * 0.35 + 0.5) % 1;
-      const r = r0 + phase * (maxR - r0);
-      const fade = Math.sin(phase * Math.PI);
-      const alpha = 0.18 * fade * Math.min(1, amp);
-      if (alpha > 0.015) {
-        ctx.strokeStyle = `oklch(0.82 0.11 320 / ${alpha.toFixed(3)})`;
-        ctx.setLineDash([3, 5]);
-        ctx.beginPath();
-        const segs = 96;
-        for (let k = 0; k <= segs; k++) {
-          const ang = (k / segs) * Math.PI * 2;
-          const rr = r * (1 + 0.06 * amp * fade * Math.cos(2 * ang - sim.t * omegaGW + Math.PI / 2));
-          const rx = cx + Math.cos(ang) * rr;
-          const ry = cy + Math.sin(ang) * rr;
-          if (k === 0) ctx.moveTo(rx, ry); else ctx.lineTo(rx, ry);
-        }
-        ctx.closePath();
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
+    const r0 = Math.max(10, rSource * s * 0.4);
+    drawGWField(ctx, cx, cy, sim.t, omegaGW, Math.min(1, amp), r0, maxR);
 
     // Inner quadrupole "pinwheel"
     if (primary) {
@@ -1412,6 +1401,7 @@
       R_star2: b.R_star2, T_eff2: b.T_eff2, d: b.d,
       _stellarTouched: !!b._stellarTouched,
       enabled: !!b.enabled,
+      merged: !!b.merged, eMergerGW: b.eMergerGW || 0,
     } : null;
     // A placed companion also stores its live orbital state so it resumes mid-orbit.
     if (binSnap && b.enabled) {
@@ -1494,6 +1484,8 @@
       if (isNum(b.T_eff2)) B.T_eff2 = b.T_eff2;
       if (isNum(b.d)) { B.d = b.d; B.d0 = b.d; }
       B._stellarTouched = !!b._stellarTouched;
+      B.merged = !!b.merged;
+      if (isNum(b.eMergerGW)) B.eMergerGW = b.eMergerGW;
       // Restore a placed companion's live orbit (positions/velocities/barycentre).
       if (b.enabled && isNum(b.x2) && isNum(b.y2) && isNum(b.vx2) && isNum(b.vy2)) {
         B.enabled = true;

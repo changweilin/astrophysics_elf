@@ -220,7 +220,36 @@
     const Mc = Math.pow(M1 * M2, 0.6) / Math.pow(Mt, 0.2);
     // Reduced mass μ
     const mu = (M1 * M2) / Mt;
-    return { omega, ddot, t_merge, Mc, Mt, mu };
+    // GW luminosity (Peters circular): dE/dt = (32/5) M1² M2² (M1+M2) / d⁵.
+    // It is set by BOTH masses (∝ M1²M2²) — the system radiates as one
+    // time-varying mass quadrupole, not as two independent sources.
+    const Lgw = (32 / 5) * (M1 * M1 * M2 * M2) * Mt / Math.pow(dSafe, 5);
+    return { omega, ddot, t_merge, Mc, Mt, mu, Lgw };
+  }
+
+  // ── Binary-BH coalescence remnant (approximate NR fits) ──────
+  // Given progenitor masses and dimensionless spins χ_i = a_i/M_i (signed,
+  // projected on the orbital angular momentum), returns the remnant mass M_f,
+  // dimensionless spin a_f/M_f and the energy E_rad carried off by the final
+  // merger/ringdown GW burst. Built on the symmetric mass ratio
+  //   η = M1 M2 / (M1+M2)²   (η → 0.25 equal mass, → 0 extreme ratio):
+  //   · radiated energy  E_rad/M ≈ 0.055·(4η)·(1 + 0.4 χ_eff)
+  //         equal-mass non-spinning → ≈5.5%; extreme mass ratio radiates little.
+  //   · final spin  a_f/M_f ≈ √12 η − 2.9 η²            (orbital, ≈0.686 at η=¼)
+  //                          + (χ1 M1² + χ2 M2²)/M_f²    (progenitor spins carried in)
+  function mergerRemnant(M1, M2, chi1 = 0, chi2 = 0, orbitSign = 1) {
+    const Mt = M1 + M2;
+    const eta = (M1 * M2) / (Mt * Mt);              // 0 < η ≤ 0.25
+    const chiEff = (chi1 * M1 + chi2 * M2) / Mt;    // mass-weighted aligned spin
+    let eRadFrac = 0.055 * (4 * eta) * (1 + 0.4 * chiEff);
+    eRadFrac = Math.max(0.002, Math.min(0.12, eRadFrac));
+    const eRad = Mt * eRadFrac;
+    const Mf = Mt - eRad;
+    const jOrb = Math.sqrt(12) * eta - 2.9 * eta * eta;            // orbital → a_f/M_f
+    const jSpin = (chi1 * M1 * M1 + chi2 * M2 * M2) / (Mf * Mf);   // S_total / M_f²
+    let af = orbitSign * jOrb + jSpin;
+    af = Math.max(-0.998, Math.min(0.998, af));     // sub-extremal Kerr bound
+    return { Mf, af, eRad, eta, chiEff };
   }
 
   // Tidal stress at distance r on a body of radius R_b — units arbitrary, 0..∞.
@@ -248,7 +277,7 @@
 
   window.KNphysics = {
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
-    classify, acceleration, tidalStress, r_s, peters,
+    classify, acceleration, tidalStress, r_s, peters, mergerRemnant,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
   };
 })();

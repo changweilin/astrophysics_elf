@@ -504,6 +504,14 @@ function TabBinary({ sim, force }) {
           <span className="k">t_merge*</span>
           <span className="v">{tMerge}</span>
         </div>
+        <div className="cell">
+          <span className="k">L_GW</span>
+          <span className="v">{bin.enabled ? (bin.gwLum || 0).toExponential(2) : '—'}<small>c⁵/G</small></span>
+        </div>
+        <div className="cell">
+          <span className="k">E_GW</span>
+          <span className="v">{(bin.eGW || 0) > 1e-4 ? (bin.eGW || 0).toFixed(3) : '—'}<small>Mc²</small></span>
+        </div>
       </div>
 
       {bin.enabled && (
@@ -524,7 +532,7 @@ function TabBinary({ sim, force }) {
 
       {bin.merged && !bin.enabled && (
         <div className="m-diag">
-          <div className="line good">Merger complete · M_f = {sim.params.M.toFixed(2)} M · a_f/M = {(sim.params.a / sim.params.M).toFixed(2)}</div>
+          <div className="line good">Merger complete · M_f = {sim.params.M.toFixed(2)} M · a_f/M = {(sim.params.a / sim.params.M).toFixed(2)} · E_GW = {(bin.eMergerGW || 0).toFixed(3)} Mc²</div>
         </div>
       )}
     </>
