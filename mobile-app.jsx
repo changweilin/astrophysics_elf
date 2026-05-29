@@ -55,6 +55,7 @@ function MobileApp() {
     let suppressTap = false;
     let grab = null;            // active body/companion grab (hold→move, drag→re-aim)
     let longPressTimer = null;  // fires → enter reposition mode
+    let lastTap = null;         // { t, sx, sy } — for double-tap detection
 
     function rectOf() { return c.getBoundingClientRect(); }
     function toLocal(e) {
@@ -91,6 +92,47 @@ function MobileApp() {
         if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: 'companion' };
       }
       return null;
+    }
+
+    // Screen radius (px) of a star's drawn body — shared by binary hit-tests.
+    function starVisualR(M, Q, a, type, R_star) {
+      const phys = window.KNphysics;
+      const { rplus, naked } = phys.horizons(M, Q || 0, a || 0);
+      return (type || 'bh') === 'bh'
+        ? Math.max(4, (isFinite(rplus) && !naked ? rplus : M) * MSIM.view.scale)
+        : Math.max(6, (R_star || 3) * MSIM.view.scale * 0.7);
+    }
+
+    // Double-tap → snap onto a classical stable periodic orbit (mobile twin of
+    // the desktop dblclick). A binary star circularises the pair; any other body
+    // keeps its direction but takes the local v_circ. Returns true if it acted.
+    function handleDoubleTap(sx, sy, w, h) {
+      if (MSIM.binary && MSIM.binary.enabled) {
+        const bin = MSIM.binary;
+        const [c2x, c2y] = window.KNSim.worldToScreen(MSIM, w, h, bin.x2, bin.y2);
+        const r2 = Math.max(18, starVisualR(bin.M2, bin.Q2, bin.a2, bin.type, bin.R_star2) + 6);
+        const [c1x, c1y] = window.KNSim.worldToScreen(MSIM, w, h, bin.x1, bin.y1);
+        const r1 = Math.max(18, starVisualR(MSIM.params.M, MSIM.params.Q, MSIM.params.a, MSIM.params.type, MSIM.params.R_star) + 6);
+        if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1) {
+          const vc = window.KNSim.circularizeBinary(MSIM);
+          window.KNSim.logEv(MSIM, 'good', `binary circularised · v_circ=${vc.toFixed(3)} c · GW inspiral active → orbit will decay`);
+          return true;
+        }
+      }
+      let best = null, bestD = 28;
+      for (const b of MSIM.bodies) {
+        if (b.state !== 'orbit') continue;
+        const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, b.x, b.y);
+        const d = Math.hypot(bx - sx, by - sy);
+        if (d < bestD) { bestD = d; best = b; }
+      }
+      if (best) {
+        const vc = window.KNSim.circularizeBody(MSIM, best);
+        MSIM.selectedId = best.id;
+        window.KNSim.logEv(MSIM, 'good', `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`);
+        return true;
+      }
+      return false;
     }
 
     // Reposition the grabbed target to a world coordinate (keeps velocity).
@@ -165,8 +207,11 @@ function MobileApp() {
         }
       }
 
-      // Otherwise: prepare pan
-      pan = { x: e.clientX, y: e.clientY, ox: MSIM.view.ox, oy: MSIM.view.oy };
+      // Otherwise: prepare pan — but only in 'free' frame; a locked reference
+      // frame drives view.ox/oy itself.
+      if (!MSIM.view.frame || MSIM.view.frame === 'free') {
+        pan = { x: e.clientX, y: e.clientY, ox: MSIM.view.ox, oy: MSIM.view.oy };
+      }
     }
 
     function onPointerMove(e) {
@@ -243,6 +288,25 @@ function MobileApp() {
           pan = null;
         }
         return;
+      }
+
+      // Double-tap → classical stable periodic orbit. Only clean taps (no drag,
+      // no placement/aim in progress) qualify; a second tap within 300ms and
+      // ~30px re-uses the desktop circularise helpers.
+      if (!movedSinceDown && !MSIM.placement && !MSIM.aiming) {
+        const now = performance.now();
+        if (lastTap && now - lastTap.t < 300 && Math.hypot(sx - lastTap.sx, sy - lastTap.sy) < 30) {
+          lastTap = null;
+          if (handleDoubleTap(sx, sy, w, h)) {
+            clearGrab();
+            pan = null;
+            suppressTap = true; setTimeout(() => { suppressTap = false; }, 80);
+            force();
+            return;
+          }
+        } else {
+          lastTap = { t: now, sx, sy };
+        }
       }
 
       // Placement release
@@ -473,6 +537,9 @@ function MobileApp() {
           </div>
         )}
 
+        {/* Reference-frame lock */}
+        <MFrameLock sim={MSIM} force={force} />
+
         {/* Layer toggles scroll strip */}
         <div className="m-view-bl">
           <MToggle label="HORIZON" k="showHorizon" sim={MSIM} force={force} />
@@ -552,6 +619,29 @@ function MToggle({ label, k, sim, force }) {
       onClick={() => { sim.flags[k] = !sim.flags[k]; force(); }}>
       <span className="sw" />{label}
     </button>
+  );
+}
+
+// Reference-frame switch: lock the camera to m1 / m2 / barycenter, or free pan.
+function MFrameLock({ sim, force }) {
+  const cur = sim.view.frame || 'free';
+  const hasBin = !!(sim.binary && sim.binary.enabled);
+  const opts = [
+    ['free', 'FREE', true],
+    ['m1', 'M1', true],
+    ['m2', 'M2', hasBin],
+    ['com', 'COM', hasBin],
+  ];
+  return (
+    <div className="m-view-frame">
+      <span className="lbl">FRAME</span>
+      {opts.map(([k, lbl, on]) => (
+        <button key={k} className={cur === k ? 'on' : ''} disabled={!on}
+          onClick={() => { sim.view.frame = k; force(); }}>
+          {lbl}
+        </button>
+      ))}
+    </div>
   );
 }
 

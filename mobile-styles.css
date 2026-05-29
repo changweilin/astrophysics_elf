@@ -222,6 +222,32 @@ html, body {
 .m-view-bl button.on { color: var(--amber); }
 .m-view-bl button.on .sw { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
 
+/* reference-frame lock strip (sits above the layer toggles) */
+.m-view-frame {
+  position: absolute; bottom: 46px; left: 8px;
+  display: flex; gap: 2px;
+  pointer-events: auto; z-index: 3;
+  background: oklch(0.16 0.020 255 / 0.7);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+  padding: 2px;
+}
+.m-view-frame .lbl {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.10em;
+  color: var(--fg-3);
+  padding: 6px 7px; display: flex; align-items: center;
+  border-right: 1px solid var(--line-soft);
+}
+.m-view-frame button {
+  flex-shrink: 0;
+  background: transparent; border: none;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.10em;
+  text-transform: uppercase; color: var(--fg-2);
+  padding: 6px 9px; cursor: pointer; white-space: nowrap;
+}
+.m-view-frame button.on { color: var(--amber); }
+.m-view-frame button:disabled { color: var(--fg-3); opacity: 0.4; }
+
 /* zoom buttons stacked right */
 .m-zoom {
   position: absolute;
