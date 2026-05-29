@@ -14,7 +14,7 @@ for multiple locales.
 1. Inventory copy before editing. Search root UI files: `app.jsx`,
    `panel-left.jsx`, `panel-right.jsx`, `panel-bottom.jsx`,
    `tidal-scope.jsx`, `mhd-monitor.jsx`, `physics.js`, `disc.js`, and
-   `Kerr-Newman Lab.html`.
+   `index.html`.
 2. Separate user-facing copy from identifiers. Do not translate JS keys,
    CSS classes, exported names on `window`, physics variables, or API fields.
 3. Preserve canonical notation: `M`, `Q`, `a`, `J/Mc`, `r+`, `r-`, `ISCO`,

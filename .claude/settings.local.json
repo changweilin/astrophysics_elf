@@ -26,7 +26,8 @@
       "PowerShell(Compare-Object *)",
       "PowerShell(Get-NetTCPConnection *)",
       "PowerShell(npm run *)",
-      "PowerShell(Start-Sleep -Seconds 2; Write-Output \"=== npm run dev output ===\"; Get-Content \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-user-Documents-app-astrophysics-elf\\\\8fac0e9a-9302-4c84-b977-377c164a66e7\\\\tasks\\\\bvd9ca4dp.output\" -ErrorAction SilentlyContinue; Write-Output \"=== local test ===\"; try { $r = Invoke-WebRequest -Uri \"http://127.0.0.1:5184/\" -UseBasicParsing -TimeoutSec 5; Write-Output \"Local /  Status: $\\($r.StatusCode\\)  Length: $\\($r.RawContentLength\\)\" } catch { Write-Output \"ERR: $\\($_.Exception.Message\\)\" }; Write-Output \"=== tailnet test ===\"; try { $r2 = Invoke-WebRequest -Uri \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/\" -UseBasicParsing -TimeoutSec 10; Write-Output \"Tailnet / Status: $\\($r2.StatusCode\\)  Length: $\\($r2.RawContentLength\\)\" } catch { Write-Output \"ERR: $\\($_.Exception.Message\\)\" })"
+      "PowerShell(Start-Sleep -Seconds 2; Write-Output \"=== npm run dev output ===\"; Get-Content \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-user-Documents-app-astrophysics-elf\\\\8fac0e9a-9302-4c84-b977-377c164a66e7\\\\tasks\\\\bvd9ca4dp.output\" -ErrorAction SilentlyContinue; Write-Output \"=== local test ===\"; try { $r = Invoke-WebRequest -Uri \"http://127.0.0.1:5184/\" -UseBasicParsing -TimeoutSec 5; Write-Output \"Local /  Status: $\\($r.StatusCode\\)  Length: $\\($r.RawContentLength\\)\" } catch { Write-Output \"ERR: $\\($_.Exception.Message\\)\" }; Write-Output \"=== tailnet test ===\"; try { $r2 = Invoke-WebRequest -Uri \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/\" -UseBasicParsing -TimeoutSec 10; Write-Output \"Tailnet / Status: $\\($r2.StatusCode\\)  Length: $\\($r2.RawContentLength\\)\" } catch { Write-Output \"ERR: $\\($_.Exception.Message\\)\" })",
+      "Bash(git rm *)"
     ]
   }
 }

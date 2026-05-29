@@ -1,7 +1,7 @@
 # Full Kerr-Newman Physics Core
 
 This folder is additive-only. It does not modify or wire into the existing
-`Kerr-Newman Lab.html` browser demo.
+`index.html` browser demo.
 
 ## What It Simulates
 
