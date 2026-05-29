@@ -1,0 +1,14 @@
+{
+  "name": "kerr-newman-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kerr-Newman Black Hole Laboratory browser demo, served as static files behind tailscale serve.",
+  "type": "module",
+  "scripts": {
+    "dev": "node serve.mjs",
+    "start": "node serve.mjs"
+  },
+  "dependencies": {
+    "@babel/standalone": "^7.29.7"
+  }
+}

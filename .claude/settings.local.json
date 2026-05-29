@@ -16,7 +16,17 @@
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}  %{content_type}\\\\n\" \"http://127.0.0.1:5184/full-physics-bridge.mjs\")",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:5184/../../../../Windows/win.ini\")",
       "Bash(curl -s -o /dev/null -w \"HTTPS root: HTTP %{http_code}  %{content_type}\\\\n\" \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/\")",
-      "Bash(curl -s -o /dev/null -w \"HTTPS mobile: HTTP %{http_code}  %{content_type}\\\\n\" \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/Kerr-Newman%20Lab%20Mobile.html\")"
+      "Bash(curl -s -o /dev/null -w \"HTTPS mobile: HTTP %{http_code}  %{content_type}\\\\n\" \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/Kerr-Newman%20Lab%20Mobile.html\")",
+      "Bash(node -e \"console.log\\('node ok', process.version\\)\")",
+      "PowerShell(tailscale *)",
+      "PowerShell(node serve.mjs)",
+      "PowerShell(tailscale serve *)",
+      "PowerShell(Write-Output \"=== Tailnet HTTPS end-to-end test ===\"; try { $r = Invoke-WebRequest -Uri \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/\" -UseBasicParsing -TimeoutSec 10; Write-Output \"Status: $\\($r.StatusCode\\)\"; Write-Output \"Content-Type: $\\($r.Headers['Content-Type']\\)\"; Write-Output \"Length: $\\($r.RawContentLength\\)\" } catch { Write-Output \"ERROR: $\\($_.Exception.Message\\)\" })",
+      "PowerShell(Test-Path *)",
+      "PowerShell(Compare-Object *)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(npm run *)",
+      "PowerShell(Start-Sleep -Seconds 2; Write-Output \"=== npm run dev output ===\"; Get-Content \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-user-Documents-app-astrophysics-elf\\\\8fac0e9a-9302-4c84-b977-377c164a66e7\\\\tasks\\\\bvd9ca4dp.output\" -ErrorAction SilentlyContinue; Write-Output \"=== local test ===\"; try { $r = Invoke-WebRequest -Uri \"http://127.0.0.1:5184/\" -UseBasicParsing -TimeoutSec 5; Write-Output \"Local /  Status: $\\($r.StatusCode\\)  Length: $\\($r.RawContentLength\\)\" } catch { Write-Output \"ERR: $\\($_.Exception.Message\\)\" }; Write-Output \"=== tailnet test ===\"; try { $r2 = Invoke-WebRequest -Uri \"https://desktop-2caj1dn.taile51bc0.ts.net:5184/\" -UseBasicParsing -TimeoutSec 10; Write-Output \"Tailnet / Status: $\\($r2.StatusCode\\)  Length: $\\($r2.RawContentLength\\)\" } catch { Write-Output \"ERR: $\\($_.Exception.Message\\)\" })"
     ]
   }
 }
