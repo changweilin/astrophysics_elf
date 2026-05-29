@@ -202,12 +202,13 @@
       const dEdt = (32 / 5) * M1 * M1 * M2 * M2 * Mt / Math.pow(r, 5);
       const mu = (M1 * M2) / Mt;
       let aDrag = (dEdt / (mu * vrel)) * bin.inspiralRate;
-      // Cap the bleed so the inspiral stays quasi-static (≳ a few orbits) and the
-      // integrator can't pump energy at extreme inspiralRate. The damping rate
-      // aDrag/vrel is limited to a fraction of the orbital frequency ω = vrel/r;
-      // low/moderate rates pass through unchanged (physically accurate), while
-      // very high speedups saturate at the fastest *stable* inspiral.
-      const aDragMax = 0.3 * vrel * vrel / r;
+      // Cap the bleed so the inspiral stays quasi-static — multiple visible
+      // orbits rather than a half-turn plunge. The damping rate aDrag/vrel is
+      // limited to a small fraction κ of the orbital frequency ω = vrel/r; the
+      // orbits completed before merger scale as ~ln(d₀/r_merge)/κ, so κ=0.04
+      // gives ≳1.5 revolutions even from a close placement and several from a
+      // wide one. Lower inspiralRate stays below the cap and spirals slower.
+      const aDragMax = 0.04 * vrel * vrel / r;
       if (aDrag > aDragMax) aDrag = aDragMax;
       arx -= aDrag * Vx / vrel;
       ary -= aDrag * Vy / vrel;
@@ -1301,8 +1302,12 @@
       const rSource = bin.d * 0.5 * s;
       const maxR = Math.hypot(w, h) * 0.66;
       const r0 = Math.max(10, rSource * 0.5);
+      // Centre the wavefield on the *barycentre* — the quadrupole source — not
+      // the world origin, so the waves stay wrapped around the orbiting pair
+      // wherever the companion was placed (and under any camera frame-lock).
+      const [gcx, gcy] = worldToScreen(sim, w, h, bin.cx, bin.cy);
       ctx.save();
-      drawGWField(ctx, cx, cy, sim.t, omegaGW, Math.min(1, h0), r0, maxR);
+      drawGWField(ctx, gcx, gcy, sim.t, omegaGW, Math.min(1, h0), r0, maxR);
       // Binary axis line (GW quadrupole axis indicator)
       ctx.strokeStyle = 'oklch(0.78 0.16 295 / 0.5)';
       ctx.setLineDash([2, 4]);
@@ -1319,8 +1324,13 @@
       return; // skip single-body GW below
     }
 
-    // ── Original single-body GW path ─────────────────────
-    // Pick the most relativistic orbiter as the dominant GW source.
+    // ── Single-body GW path ──────────────────────────────
+    // A lone black hole — even a rapidly spinning one — radiates NO gravitational
+    // waves: a stationary, axisymmetric mass has a *constant* quadrupole moment,
+    // and GW require a *time-varying* one. The field therefore appears only when
+    // a body is genuinely orbiting; its changing position is the quadrupole
+    // source. (And GW are inherently quadrupolar/spin-2, so the wavefront is a
+    // rotating ellipse — never a circle, which would be a forbidden monopole.)
     let primary = null, bestScore = 0;
     for (const b of sim.bodies) {
       if (b.state !== 'orbit') continue;
@@ -1330,44 +1340,31 @@
       const score = v / Math.max(0.5, r);   // ~ orbital ω
       if (score > bestScore) { bestScore = score; primary = b; }
     }
+    if (!primary) return;   // no orbiting mass → no time-varying quadrupole → no GW
 
-    // Base ω from BH spin so the visual still pulses with no orbiters.
-    let omegaOrb = 0.18 + Math.abs(a) * 0.20;
-    let amp = 0.25;
-    let rSource = (rplus || 1) * 1.5;
-    if (primary) {
-      const r = Math.hypot(primary.x, primary.y);
-      const v = Math.hypot(primary.vx, primary.vy);
-      omegaOrb = Math.max(0.08, v / Math.max(1, r));
-      const compact = Math.min(1, 4 / Math.max(1.5, r));
-      const mass = Math.min(1, (primary.binding || 1) / 6);
-      amp = 0.25 + 0.85 * compact * (0.3 + mass);
-      rSource = r;
-    }
+    const r = Math.hypot(primary.x, primary.y);
+    const v = Math.hypot(primary.vx, primary.vy);
+    const omegaOrb = Math.max(0.08, v / Math.max(1, r));
+    const compact = Math.min(1, 4 / Math.max(1.5, r));
+    const mass = Math.min(1, (primary.binding || 1) / 6);
+    const amp = 0.25 + 0.85 * compact * (0.3 + mass);
     const omegaGW = omegaOrb * 2;
 
     ctx.save();
     const maxR = Math.hypot(w, h) * 0.6;
-    const r0 = Math.max(10, rSource * s * 0.4);
+    const r0 = Math.max(10, r * s * 0.4);
     drawGWField(ctx, cx, cy, sim.t, omegaGW, Math.min(1, amp), r0, maxR);
 
-    // Inner quadrupole "pinwheel"
-    if (primary) {
-      const [bx, by] = worldToScreen(sim, w, h, primary.x, primary.y);
-      ctx.strokeStyle = 'oklch(0.78 0.16 295 / 0.45)';
-      ctx.setLineDash([2, 4]);
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(bx, by); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = 'oklch(0.82 0.12 295 / 0.85)';
-      ctx.font = '9px JetBrains Mono, monospace';
-      const fGW = (omegaGW / (2 * Math.PI)).toFixed(3);
-      ctx.fillText(`f_GW ${fGW} c/M  h ${amp.toFixed(2)}`, bx + 10, by + 18);
-    } else {
-      ctx.fillStyle = 'oklch(0.74 0.10 295 / 0.7)';
-      ctx.font = '9px JetBrains Mono, monospace';
-      ctx.fillText(`f_GW ${(omegaGW / (2 * Math.PI)).toFixed(3)} c/M`, cx + 14, cy + 26);
-    }
+    // Quadrupole axis toward the orbiting source
+    const [bx, by] = worldToScreen(sim, w, h, primary.x, primary.y);
+    ctx.strokeStyle = 'oklch(0.78 0.10 288 / 0.4)';
+    ctx.setLineDash([2, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'oklch(0.80 0.10 288 / 0.8)';
+    ctx.font = '9px JetBrains Mono, monospace';
+    ctx.fillText(`f_GW ${(omegaGW / (2 * Math.PI)).toFixed(3)} c/M  h ${amp.toFixed(2)}`, bx + 10, by + 18);
 
     ctx.restore();
   }
