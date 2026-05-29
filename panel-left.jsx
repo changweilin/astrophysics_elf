@@ -432,7 +432,7 @@ function LeftPanel({ sim, force }) {
           {sim.disc.enabled ? 'ACCRETION DISC · active' : 'Spin up accretion disc'}
         </button>
         <Param sym="B" name="Magnetic field" val={p.B} unit="B₀" min={0} max={1} step={0.01}
-               color="magenta" fmt={(v) => v.toFixed(2)} onChange={set('B')}
+               color="magenta" fmt={(v) => v.toFixed(2)} onChange={(v) => { sim.params.B = v; force(); }}
                scaleLabels={["off", "0.5", "magnetar"]} />
         <Param sym="α" name="Viscosity" val={sim.disc.alpha} unit="" min={0} max={0.5} step={0.01}
                color="cyan" fmt={(v) => v.toFixed(2)}
