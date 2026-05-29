@@ -1395,8 +1395,103 @@
     return [wx, wy];
   }
 
+  // ── Config persistence (localStorage) ──────────────────────────────
+  // Only the user-chosen *configuration* is stored (BH/companion params,
+  // disc tuning, overlay toggles, zoom, timescale) — not the live N-body
+  // state (positions, time, particles), which re-seeds each load.
+  const CONFIG_KEY = 'kn-lab-config-v1';
+  const isNum = (v) => typeof v === 'number' && isFinite(v);
+  const TYPES = { bh: 1, ns: 1, wd: 1, ms: 1 };
+
+  function configSnapshot(sim) {
+    const p = sim.params || {}, d = sim.disc, b = sim.binary, f = sim.flags || {}, v = sim.view || {};
+    return {
+      params: {
+        M: p.M, Q: p.Q, a: p.a, type: p.type,
+        R_star: p.R_star, T_eff: p.T_eff, B: p.B,
+        _stellarTouched: !!p._stellarTouched,
+      },
+      disc: d ? { enabled: !!d.enabled, alpha: d.alpha, emissionRate: d.emissionRate } : null,
+      binary: b ? {
+        type: b.type, M2: b.M2, Q2: b.Q2, a2: b.a2,
+        R_star2: b.R_star2, T_eff2: b.T_eff2, d: b.d,
+        _stellarTouched: !!b._stellarTouched,
+      } : null,
+      flags: { ...f },
+      view: { scale: v.scale },
+      timescale: sim.timescale,
+    };
+  }
+
+  // Write current config to storage, but only when it actually changed since
+  // the last write (cheap string diff) — safe to call on a timer / every frame.
+  function saveConfig(sim) {
+    try {
+      const json = JSON.stringify(configSnapshot(sim));
+      if (json === sim._cfgJson) return;
+      sim._cfgJson = json;
+      localStorage.setItem(CONFIG_KEY, json);
+    } catch (e) { /* storage blocked (private mode / quota) — skip silently */ }
+  }
+
+  function readConfig() {
+    try {
+      const raw = localStorage.getItem(CONFIG_KEY);
+      if (!raw) return null;
+      const cfg = JSON.parse(raw);
+      return (cfg && typeof cfg === 'object') ? cfg : null;
+    } catch (e) { return null; }
+  }
+
+  // Merge a stored config onto a freshly created sim. Every field is validated
+  // so a corrupt/old payload can never throw or poison the running simulation.
+  function applyConfig(sim, cfg) {
+    if (cfg === undefined) cfg = readConfig();
+    if (!cfg) return false;
+    const p = cfg.params;
+    if (p && sim.params) {
+      if (isNum(p.M)) sim.params.M = p.M;
+      if (isNum(p.Q)) sim.params.Q = p.Q;
+      if (isNum(p.a)) sim.params.a = p.a;
+      if (TYPES[p.type]) sim.params.type = p.type;
+      if (isNum(p.R_star)) sim.params.R_star = p.R_star;
+      if (isNum(p.T_eff)) sim.params.T_eff = p.T_eff;
+      if (isNum(p.B)) sim.params.B = p.B;
+      sim.params._stellarTouched = !!p._stellarTouched;
+    }
+    if (cfg.disc && sim.disc) {
+      sim.disc.enabled = !!cfg.disc.enabled;
+      if (isNum(cfg.disc.alpha)) sim.disc.alpha = cfg.disc.alpha;
+      if (isNum(cfg.disc.emissionRate)) sim.disc.emissionRate = cfg.disc.emissionRate;
+    }
+    if (cfg.binary && sim.binary) {
+      const b = cfg.binary, B = sim.binary;
+      if (TYPES[b.type]) B.type = b.type;
+      if (isNum(b.M2)) B.M2 = b.M2;
+      if (isNum(b.Q2)) B.Q2 = b.Q2;
+      if (isNum(b.a2)) B.a2 = b.a2;
+      if (isNum(b.R_star2)) B.R_star2 = b.R_star2;
+      if (isNum(b.T_eff2)) B.T_eff2 = b.T_eff2;
+      if (isNum(b.d)) { B.d = b.d; B.d0 = b.d; }
+      B._stellarTouched = !!b._stellarTouched;
+    }
+    if (cfg.flags && sim.flags) {
+      for (const k of Object.keys(sim.flags)) {
+        if (typeof cfg.flags[k] === 'boolean') sim.flags[k] = cfg.flags[k];
+      }
+    }
+    if (cfg.view && isNum(cfg.view.scale)) {
+      sim.view.scale = Math.min(80, Math.max(4, cfg.view.scale));
+    }
+    if (isNum(cfg.timescale)) sim.timescale = cfg.timescale;
+    // Record the resulting state as "already saved" so the first autosave no-ops.
+    sim._cfgJson = JSON.stringify(configSnapshot(sim));
+    return true;
+  }
+
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, render, renderInteraction,
                    applyFrameLock, frameAnchor, circularizeBody, circularizeBinary, setBinaryVelocity,
-                   worldToScreen, screenToWorld, colorOf, predictTrajectory };
+                   worldToScreen, screenToWorld, colorOf, predictTrajectory,
+                   saveConfig, readConfig, applyConfig, CONFIG_KEY };
 })();

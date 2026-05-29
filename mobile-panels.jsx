@@ -98,7 +98,7 @@ function MParam({ sym, name, val, unit, min, max, step, onChange, fmt, color, sc
       </div>
       <input type="range" min={min} max={max} step={step} value={val}
              disabled={!!locked}
-             onChange={(e) => onChange(parseFloat(e.target.value))} />
+             {...window.KNUI.rangeGuard(onChange)} />
       <div className="scale">
         {scaleLabels.map((l, i) => <span key={i}>{l}</span>)}
       </div>

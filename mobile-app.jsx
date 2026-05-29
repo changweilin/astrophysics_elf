@@ -17,6 +17,8 @@ window.KNSim.initBinary(MSIM);
   MSIM.selectedId = MSIM.bodies[1].id;
   MSIM.view.scale = 14; // start zoomed a bit further out for small screens
 })();
+// Restore the user's last-used parameters (after seed, so saved zoom wins).
+window.KNSim.applyConfig(MSIM);
 
 let mobileNameCounters = {};
 function bumpName(kind) {
@@ -28,11 +30,28 @@ function bumpName(kind) {
 function MobileApp() {
   const [, setTick] = useStateApp(0);
   const [playing, setPlaying] = useStateApp(true);
-  const [timescale, setTimescale] = useStateApp(1);
+  const [timescale, setTimescale] = useStateApp(() => isFinite(MSIM.timescale) ? MSIM.timescale : 1);
   const [tab, setTab] = useStateApp('hole'); // hole | objects | spawn | disc
   const [drawerOpen, setDrawerOpen] = useStateApp(true);
   const canvasRef = useRefApp(null);
   const force = () => setTick((t) => t + 1);
+
+  // Persist the chosen configuration so it survives a reload (see app.jsx).
+  useEffectApp(() => {
+    // Re-read on mount so a layout swap (desktop→mobile) picks up edits the
+    // other root flushed on unmount, not just the page-load snapshot.
+    if (window.KNSim.applyConfig(MSIM)) force();
+    const id = setInterval(() => window.KNSim.saveConfig(MSIM), 1000);
+    const flush = () => window.KNSim.saveConfig(MSIM);
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+      flush();
+    };
+  }, []);
 
   // Arm placement and switch to viewport (collapse drawer for clarity)
   const armPlacement = (it) => {

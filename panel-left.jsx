@@ -2,6 +2,43 @@
 
 const { useState, useEffect, useRef, useMemo } = React;
 
+// Touch gesture guard for <input type=range>. A native range slider jumps its
+// value to wherever a finger lands and tracks any drag — so scrolling the panel
+// (a vertical swipe) or a stray tap silently changes a parameter. This guard
+// commits a value change only during a deliberate horizontal drag; vertical
+// swipes scroll the page and plain taps are ignored. Gesture state lives on the
+// DOM node (no hooks), so the same helper works from any component/file.
+// Mouse and keyboard input are untouched (no touch events fire for them).
+window.KNUI = window.KNUI || {
+  rangeGuard(onChange) {
+    return {
+      onTouchStart(e) {
+        const el = e.currentTarget, t = e.touches[0];
+        el._kn = { mode: 'undecided', x0: t.clientX, y0: t.clientY, startVal: el.value };
+      },
+      onTouchMove(e) {
+        const st = e.currentTarget._kn;
+        if (!st || st.mode === 'slide') return;
+        const t = e.touches[0], dx = t.clientX - st.x0, dy = t.clientY - st.y0;
+        if (st.mode === 'undecided') {
+          if (Math.abs(dx) > 6 && Math.abs(dx) >= Math.abs(dy)) st.mode = 'slide';
+          else if (Math.abs(dy) > 6) st.mode = 'scroll';
+        }
+      },
+      onTouchEnd(e) { if (e.currentTarget._kn) e.currentTarget._kn.mode = 'idle'; },
+      onChange(e) {
+        const st = e.target._kn;
+        // Mid-touch, suppress everything except a committed horizontal slide.
+        if (st && (st.mode === 'undecided' || st.mode === 'scroll')) {
+          e.target.value = st.startVal; // snap the thumb back; drop the change
+          return;
+        }
+        onChange(parseFloat(e.target.value));
+      },
+    };
+  },
+};
+
 // ---------- Click-to-type editor for a clamped numeric value ----------
 function ValEditor({ val, min, max, step, fmt, onChange, disabled, klass }) {
   const [editing, setEditing] = useState(false);
@@ -102,7 +139,7 @@ function Param({ sym, name, val, unit, min, max, step, onChange, fmt, color, sca
       <div className="slider">
         <input type="range" min={min} max={max} step={step} value={val}
                disabled={!!locked}
-               onChange={(e) => onChange(parseFloat(e.target.value))} />
+               {...window.KNUI.rangeGuard(onChange)} />
       </div>
       <div className="scale">
         {scaleLabels.map((l, i) => <span key={i}>{l}</span>)}

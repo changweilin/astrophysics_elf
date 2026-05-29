@@ -5,6 +5,8 @@ const { useState: useS, useEffect: useE, useRef: useR } = React;
 const SIM = window.KNSim.createSim();
 window.KNDisc.initDisc(SIM);
 window.KNSim.initBinary(SIM);
+// Restore the user's last-used parameters (BH/companion/disc/overlays/zoom).
+window.KNSim.applyConfig(SIM);
 // seed a couple of bodies so the first frame is interesting
 (function seed() {
   for (const it of [
@@ -18,9 +20,28 @@ window.KNSim.initBinary(SIM);
 function App() {
   const [, setTick] = useS(0);
   const [playing, setPlaying] = useS(true);
-  const [timescale, setTimescale] = useS(1);
+  const [timescale, setTimescale] = useS(() => isFinite(SIM.timescale) ? SIM.timescale : 1);
   const force = () => setTick((t) => t + 1);
   const canvasRef = useR(null);
+
+  // Persist the chosen configuration so it survives a reload. saveConfig diffs
+  // internally, so the 1 s timer only writes when something actually changed;
+  // visibility/pagehide flushes capture edits made right before leaving.
+  useE(() => {
+    // Re-read on mount so a layout swap (mobile→desktop) picks up edits the
+    // other root flushed on unmount, not just the page-load snapshot.
+    if (window.KNSim.applyConfig(SIM)) force();
+    const id = setInterval(() => window.KNSim.saveConfig(SIM), 1000);
+    const flush = () => window.KNSim.saveConfig(SIM);
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+      flush();
+    };
+  }, []);
 
   // Unified pointer interaction (placement / aim / pan / select).
   useE(() => {

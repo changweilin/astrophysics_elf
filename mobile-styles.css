@@ -524,6 +524,9 @@ html, body {
   outline: none;
   margin: 0;
   cursor: pointer;
+  /* Vertical swipes scroll the drawer; only horizontal gestures move the slider,
+     so dragging the panel up/down never nudges a parameter by accident. */
+  touch-action: pan-y;
 }
 .m-param input[type=range]::-webkit-slider-runnable-track {
   height: 2px; background: var(--bg-3);
