@@ -5,8 +5,6 @@ const { useState: useS, useEffect: useE, useRef: useR } = React;
 const SIM = window.KNSim.createSim();
 window.KNDisc.initDisc(SIM);
 window.KNSim.initBinary(SIM);
-// Restore the user's last-used parameters (BH/companion/disc/overlays/zoom).
-window.KNSim.applyConfig(SIM);
 // seed a couple of bodies so the first frame is interesting
 (function seed() {
   for (const it of [
@@ -16,6 +14,9 @@ window.KNSim.applyConfig(SIM);
   ]) window.KNSim.addBody(SIM, it);
   SIM.selectedId = SIM.bodies[2].id;
 })();
+// Restore the user's last session (params + the scene they built). Runs after
+// the seed so a saved scene replaces the defaults instead of stacking on them.
+window.KNSim.applyConfig(SIM);
 
 function App() {
   const [, setTick] = useS(0);

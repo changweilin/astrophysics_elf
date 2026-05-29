@@ -17,7 +17,8 @@ window.KNSim.initBinary(MSIM);
   MSIM.selectedId = MSIM.bodies[1].id;
   MSIM.view.scale = 14; // start zoomed a bit further out for small screens
 })();
-// Restore the user's last-used parameters (after seed, so saved zoom wins).
+// Restore the user's last session (params + the scene they built). Runs after
+// the seed so a saved scene/zoom replaces the defaults instead of stacking.
 window.KNSim.applyConfig(MSIM);
 
 let mobileNameCounters = {};
