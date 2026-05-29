@@ -202,13 +202,13 @@
       const dEdt = (32 / 5) * M1 * M1 * M2 * M2 * Mt / Math.pow(r, 5);
       const mu = (M1 * M2) / Mt;
       let aDrag = (dEdt / (mu * vrel)) * bin.inspiralRate;
-      // Cap the bleed so the inspiral stays quasi-static — multiple visible
-      // orbits rather than a half-turn plunge. The damping rate aDrag/vrel is
-      // limited to a small fraction κ of the orbital frequency ω = vrel/r; the
-      // orbits completed before merger scale as ~ln(d₀/r_merge)/κ, so κ=0.04
-      // gives ≳1.5 revolutions even from a close placement and several from a
+      // Cap the bleed so the inspiral stays quasi-static — many visible orbits
+      // rather than a half-turn plunge. The damping rate aDrag/vrel is limited
+      // to a small fraction κ of the orbital frequency ω = vrel/r; the orbits
+      // completed before merger scale as ~ln(d₀/r_merge)/κ, so κ=0.012 gives
+      // roughly 5 revolutions even from a close placement and many more from a
       // wide one. Lower inspiralRate stays below the cap and spirals slower.
-      const aDragMax = 0.04 * vrel * vrel / r;
+      const aDragMax = 0.012 * vrel * vrel / r;
       if (aDrag > aDragMax) aDrag = aDragMax;
       arx -= aDrag * Vx / vrel;
       ary -= aDrag * Vy / vrel;
@@ -448,15 +448,25 @@
 
   function step(sim, realDt) {
     if (sim.paused) return;
-    const dt = Math.min(0.05, realDt * sim.timescale);
-    // sub-step for stability
-    const sub = 4;
-    for (let i = 0; i < sub; i++) {
-      stepBinary(sim, dt / sub);
-      integrate(sim, dt / sub);
+    // Total sim-time to advance this frame. The per-macro-step dt is capped at
+    // `maxStep` for integrator stability, so a large timescale advances by
+    // running MORE macro-steps rather than one huge (unstable, and previously
+    // clamped-to-no-effect) step. A guard caps the work per frame so very high
+    // multipliers can't spiral the loop.
+    const maxStep = 0.05, sub = 4, guardMax = 256;
+    let remaining = Math.min(0.05, realDt) * sim.timescale;
+    let guard = 0;
+    while (remaining > 1e-6 && guard < guardMax) {
+      const dt = Math.min(maxStep, remaining);
+      for (let i = 0; i < sub; i++) {
+        stepBinary(sim, dt / sub);
+        integrate(sim, dt / sub);
+      }
+      if (window.KNDisc) window.KNDisc.step(sim, dt);
+      sim.t += dt;
+      remaining -= dt;
+      guard++;
     }
-    if (window.KNDisc) window.KNDisc.step(sim, dt);
-    sim.t += dt;
   }
 
   // ── Camera reference-frame lock ───────────────────────────
@@ -1232,63 +1242,171 @@
     }
   }
 
-  // Expanding quadrupole GW wavefield, tuned for legibility rather than
-  // subtlety. Three perceptual cues do the work: (1) additive 'lighter'
-  // compositing + bloom so crests glow on the dark sky; (2) a pronounced
-  // rotating "peanut" deformation (∝cos2θ) so the stretch/squeeze that defines
-  // a gravitational wave is obvious at a glance; (3) brightness + line weight
-  // concentrated at the outgoing wavefront so the eye reads motion outward.
-  // (cx,cy,r0,maxR) are screen px; omegaGW is the GW angular frequency.
-  function drawGWField(ctx, cx, cy, t, omegaGW, strength, r0, maxR) {
-    const str = Math.max(0, Math.min(1, strength));
-    // Calm, low-glare wavefield: normal (source-over) compositing so overlapping
-    // rings never stack into harsh highlights, muted low-chroma tones, a soft
-    // halo rather than bloom. Still clearly legible — the quadrupole peanut
-    // deformation reads at a glance, and brightness eases toward the wavefront.
-    // `str` gently modulates intensity (above a floor) and the deformation depth.
-    const vis = 0.5 + 0.3 * str;                     // overall opacity 0.5‥0.8
-    const def = 0.15 + 0.13 * str;                   // deformation depth ≥0.15
-    const rings = 5, segs = 96;
-    const expand = Math.max(0.05, omegaGW * 0.28);   // wavefront travel speed
-    const ang = t * omegaGW;
-    const strokeQuad = (r, amp, phase) => {
-      ctx.beginPath();
-      for (let k = 0; k <= segs; k++) {
-        const th = (k / segs) * Math.PI * 2;
-        const rr = r * (1 + amp * Math.cos(2 * th - phase));
-        const x = cx + Math.cos(th) * rr, y = cy + Math.sin(th) * rr;
-        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  // Warped, shaded spacetime grid — a qualitative depiction of curved spacetime
+  // around the bodies. It is NOT a numerical solution of Einstein's equations,
+  // but it uses the right functional forms and the genuinely relativistic
+  // effects, scaled up for legibility:
+  //  (1) CURVATURE WELL — each mass funnels the grid radially inward with an
+  //      embedding-diagram profile that steepens toward its Schwarzschild
+  //      radius r_s = 2M (the Flamm-paraboloid slope dz/dr = √(r_s/(r−r_s))),
+  //      and the cells darken with the gravitational potential so the depth of
+  //      the well reads at a glance. Present for ANY mass — even a lone one.
+  //  (2) FRAME DRAGGING — a spinning body (a≠0) shears the grid azimuthally in
+  //      the spin direction, the Lense-Thirring drag ω_drag ∝ J/r³ = M·a/r³.
+  //  (3) GRAVITATIONAL WAVES — only a *time-varying* quadrupole (a binary, or an
+  //      orbiting body) adds the propagating strain h ∝ cos(2θ − ω(t − r/c))
+  //      that ripples the shading outward; a lone, stationary, axisymmetric
+  //      mass has a constant quadrupole and radiates none.
+  function renderGWGrid(sim, ctx, w, h) {
+    const bin = sim.binary;
+
+    // Masses that curve the grid (with spin a, for frame dragging).
+    const masses = [];
+    if (bin && bin.enabled) {
+      masses.push({ x: bin.x1, y: bin.y1, m: sim.params.M, a: sim.params.a || 0 });
+      masses.push({ x: bin.x2, y: bin.y2, m: bin.M2,       a: bin.a2 || 0 });
+    } else {
+      masses.push({ x: 0, y: 0, m: sim.params.M, a: sim.params.a || 0 });
+    }
+
+    // Quadrupole wave source (a *time-varying* mass distribution). A binary
+    // radiates from its barycentre; otherwise the fastest orbiting body does.
+    let wave = false, omegaGW = 0, hAmp = 0, waveCx = 0, waveCy = 0;
+    if (bin && bin.enabled) {
+      const pet = bin.lastPeters;
+      omegaGW = Math.max(0.15, pet.omega * 2);
+      hAmp = Math.min(1.2, pet.Mc * 0.9 / Math.max(0.5, bin.d));
+      waveCx = bin.cx; waveCy = bin.cy; wave = true;
+    } else {
+      const { rplus } = phys.horizons(sim.params.M, sim.params.Q, sim.params.a);
+      let best = null, bestScore = 0;
+      for (const b of sim.bodies) {
+        if (b.state !== 'orbit') continue;
+        const r = Math.hypot(b.x, b.y);
+        if (r < (rplus || 0.5) || r > 40) continue;
+        const v = Math.hypot(b.vx, b.vy);
+        const score = v / Math.max(0.5, r);
+        if (score > bestScore) { bestScore = score; best = b; }
       }
-      ctx.closePath(); ctx.stroke();
+      if (best) {
+        const r = Math.hypot(best.x, best.y);
+        const v = Math.hypot(best.vx, best.vy);
+        omegaGW = Math.max(0.15, (v / Math.max(1, r)) * 2);
+        hAmp = Math.min(1, 0.3 + 3.5 / Math.max(1.5, r));
+        wave = true;
+      }
+    }
+
+    const vwave = 7;        // visual wavefront speed (M per unit sim-time)
+    const t = sim.t;
+
+    // World-space field sample → radial funnel + frame-drag shear (displacement),
+    // potential-well depth (shading), and GW strain (shading ripple).
+    function fieldAt(wx, wy) {
+      let dispx = 0, dispy = 0, well = 0;
+      for (const src of masses) {
+        const ex = wx - src.x, ey = wy - src.y;
+        const r = Math.hypot(ex, ey);
+        const ux = ex / (r + 1e-6), uy = ey / (r + 1e-6);
+        const rs = Math.max(0.6, 2 * src.m);     // Schwarzschild radius ~ 2M
+        const rr = Math.max(r, rs * 0.55);       // clamp inside the horizon
+        // Radial funnel — broad 1/r dishing that the cap turns into a steep
+        // plunge once inside ~r_s, so the well is dramatic but never collapses
+        // a node through the centre.
+        let pull = 2.8 * src.m / rr;
+        const cap = r * 0.78;
+        if (pull > cap) pull = cap;
+        dispx -= ux * pull;
+        dispy -= uy * pull;
+        // Lense-Thirring frame dragging — azimuthal shear ∝ M·a/r³, in the
+        // spin's direction, vanishing fast with distance (capped near centre).
+        if (src.a) {
+          let drag = 3.0 * src.m * Math.abs(src.a) / (rr * rr);
+          const dcap = r * 0.45;
+          if (drag > dcap) drag = dcap;
+          const sgn = Math.sign(src.a);
+          dispx += -uy * drag * sgn;
+          dispy +=  ux * drag * sgn;
+        }
+        well += src.m / (r + 0.6);               // ∝ Newtonian potential depth
+      }
+      let hgt = 0;
+      if (wave) {
+        const ex = wx - waveCx, ey = wy - waveCy;
+        const r = Math.hypot(ex, ey) + 0.6;
+        const th = Math.atan2(ey, ex);
+        const env = hAmp / Math.sqrt(r) * Math.exp(-r / 110);   // 1/√r + far fade
+        hgt = env * Math.cos(2 * th - omegaGW * (t - r / vwave));
+      }
+      return { dispx, dispy, hgt, well };
+    }
+
+    // Lattice over the viewport (+margin, so inward-pulled border nodes still
+    // cover the edges). Each node is warped and tagged with strain + well depth.
+    const stepPx = 40;
+    const margin = stepPx * 3;
+    const nx = Math.ceil((w + margin * 2) / stepPx) + 1;
+    const ny = Math.ceil((h + margin * 2) / stepPx) + 1;
+    const px = new Float32Array(nx * ny);
+    const py = new Float32Array(nx * ny);
+    const ph = new Float32Array(nx * ny);
+    const pw = new Float32Array(nx * ny);
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const sx = -margin + i * stepPx;
+        const sy = -margin + j * stepPx;
+        const [wx, wy] = screenToWorld(sim, w, h, sx, sy);
+        const f = fieldAt(wx, wy);
+        const [dsx, dsy] = worldToScreen(sim, w, h, wx + f.dispx, wy + f.dispy);
+        const k = j * nx + i;
+        px[k] = dsx; py[k] = dsy; ph[k] = f.hgt; pw[k] = f.well;
+      }
+    }
+
+    // Shade a gridline segment: a deep potential well darkens it and makes it
+    // more prominent (the curvature reads as a dark, taut funnel), while a GW
+    // strain crest brightens / trough dims it (the wave ripples through).
+    const segStyle = (hm, wm) => {
+      const wn = Math.min(1, wm * 0.55);
+      const tt = Math.max(-1, Math.min(1, hm * 4));
+      const L = Math.max(0.06, 0.46 - 0.34 * wn + 0.22 * tt).toFixed(3);
+      const A = Math.min(0.72, 0.12 + 0.34 * wn + 0.16 * Math.abs(tt)).toFixed(3);
+      return `oklch(${L} 0.05 288 / ${A})`;
     };
+
     ctx.save();
-    ctx.lineJoin = 'round';
-    for (let i = 0; i < rings; i++) {
-      const phase = ((t * expand) + i / rings) % 1;
-      const r = r0 + phase * (maxR - r0);
-      const fade = Math.sin(phase * Math.PI);        // dim at birth & far edge
-      if (fade < 0.05) continue;
-      const crest = fade * fade;                     // gentle swell toward the front
-      // h_+ — soft lavender
-      ctx.shadowColor = 'oklch(0.70 0.09 288 / 0.5)';
-      ctx.shadowBlur = 2 + 3 * crest;
-      ctx.lineWidth = 1.1 + 1.4 * crest;
-      ctx.strokeStyle = `oklch(0.80 0.10 288 / ${((0.20 + 0.22 * crest) * vis).toFixed(3)})`;
-      strokeQuad(r, def * fade, ang);
-      // h_× — soft teal partner, rotated 45° (the second GW polarisation)
-      ctx.shadowBlur = 0;
-      ctx.lineWidth = 0.9 + 1.0 * crest;
-      ctx.strokeStyle = `oklch(0.82 0.08 205 / ${((0.10 + 0.13 * crest) * vis).toFixed(3)})`;
-      strokeQuad(r, def * fade * 0.82, ang + Math.PI / 2);
+    ctx.lineWidth = 1;
+    for (let j = 0; j < ny; j++) {            // horizontal lines
+      for (let i = 0; i < nx - 1; i++) {
+        const k = j * nx + i;
+        ctx.strokeStyle = segStyle((ph[k] + ph[k + 1]) * 0.5, (pw[k] + pw[k + 1]) * 0.5);
+        ctx.beginPath(); ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k + 1], py[k + 1]); ctx.stroke();
+      }
+    }
+    for (let i = 0; i < nx; i++) {             // vertical lines
+      for (let j = 0; j < ny - 1; j++) {
+        const k = j * nx + i, k2 = k + nx;
+        ctx.strokeStyle = segStyle((ph[k] + ph[k2]) * 0.5, (pw[k] + pw[k2]) * 0.5);
+        ctx.beginPath(); ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]); ctx.stroke();
+      }
     }
     ctx.restore();
   }
 
   function renderGW(sim, ctx, w, h) {
     const { M, Q, a } = sim.params;
-    const { rplus, naked } = phys.horizons(M, Q, a);
+    const { rplus } = phys.horizons(M, Q, a);
     const [cx, cy] = worldToScreen(sim, w, h, 0, 0);
-    const s = sim.view.scale;
+
+    // Always draw the warped, shaded spacetime grid. The field distortion (the
+    // grid bending toward each mass) is present for ANY configuration — a lone
+    // primary still curves spacetime — so it shows even with no GW source.
+    // renderGWGrid only adds the rippling light/dark undulation when a genuine
+    // time-varying quadrupole exists (a binary, or an orbiting body); a lone,
+    // stationary mass radiates no GW, so its grid simply sits in the static well.
+    ctx.save();
+    renderGWGrid(sim, ctx, w, h);
+    ctx.restore();
 
     // ── Binary inspiral GW source ────────────────────────
     const bin = sim.binary;
@@ -1299,15 +1417,7 @@
       const h0 = Math.min(1.8, pet.Mc * 0.8 / Math.max(0.5, bin.d));
       const [bx1, by1] = worldToScreen(sim, w, h, bin.x1, bin.y1);
       const [bx2, by2] = worldToScreen(sim, w, h, bin.x2, bin.y2);
-      const rSource = bin.d * 0.5 * s;
-      const maxR = Math.hypot(w, h) * 0.66;
-      const r0 = Math.max(10, rSource * 0.5);
-      // Centre the wavefield on the *barycentre* — the quadrupole source — not
-      // the world origin, so the waves stay wrapped around the orbiting pair
-      // wherever the companion was placed (and under any camera frame-lock).
-      const [gcx, gcy] = worldToScreen(sim, w, h, bin.cx, bin.cy);
       ctx.save();
-      drawGWField(ctx, gcx, gcy, sim.t, omegaGW, Math.min(1, h0), r0, maxR);
       // Binary axis line (GW quadrupole axis indicator)
       ctx.strokeStyle = 'oklch(0.78 0.16 295 / 0.5)';
       ctx.setLineDash([2, 4]);
@@ -1324,13 +1434,11 @@
       return; // skip single-body GW below
     }
 
-    // ── Single-body GW path ──────────────────────────────
-    // A lone black hole — even a rapidly spinning one — radiates NO gravitational
-    // waves: a stationary, axisymmetric mass has a *constant* quadrupole moment,
-    // and GW require a *time-varying* one. The field therefore appears only when
-    // a body is genuinely orbiting; its changing position is the quadrupole
-    // source. (And GW are inherently quadrupolar/spin-2, so the wavefront is a
-    // rotating ellipse — never a circle, which would be a forbidden monopole.)
+    // ── Single-body GW source annotation ─────────────────
+    // The grid is already drawn (it shows the static field for any mass). Here
+    // we only add the wave readout/axis IF a body is genuinely orbiting — a
+    // stationary, axisymmetric mass has a *constant* quadrupole moment and so
+    // radiates no GW; the changing position of an orbiting body is the source.
     let primary = null, bestScore = 0;
     for (const b of sim.bodies) {
       if (b.state !== 'orbit') continue;
@@ -1340,7 +1448,7 @@
       const score = v / Math.max(0.5, r);   // ~ orbital ω
       if (score > bestScore) { bestScore = score; primary = b; }
     }
-    if (!primary) return;   // no orbiting mass → no time-varying quadrupole → no GW
+    if (!primary) return;   // no orbiting mass → no time-varying quadrupole → no wave annotation
 
     const r = Math.hypot(primary.x, primary.y);
     const v = Math.hypot(primary.vx, primary.vy);
@@ -1351,10 +1459,6 @@
     const omegaGW = omegaOrb * 2;
 
     ctx.save();
-    const maxR = Math.hypot(w, h) * 0.6;
-    const r0 = Math.max(10, r * s * 0.4);
-    drawGWField(ctx, cx, cy, sim.t, omegaGW, Math.min(1, amp), r0, maxR);
-
     // Quadrupole axis toward the orbiting source
     const [bx, by] = worldToScreen(sim, w, h, primary.x, primary.y);
     ctx.strokeStyle = 'oklch(0.78 0.10 288 / 0.4)';

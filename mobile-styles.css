@@ -316,6 +316,34 @@ html, body {
   background: var(--bg-3);
   color: var(--amber);
 }
+.m-dock .speed-scrub {
+  flex: 1;
+  display: flex; align-items: center; gap: 8px;
+  user-select: none; touch-action: none; margin: 0;
+}
+.m-dock .speed-scrub .track {
+  position: relative; flex: 1; height: 24px;
+  background: var(--bg-0); border: 1px solid var(--line);
+}
+.m-dock .speed-scrub .fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--bg-3); pointer-events: none;
+}
+.m-dock .speed-scrub .tick {
+  position: absolute; top: 50%; width: 1px; height: 8px;
+  background: var(--fg-3); opacity: 0.45;
+  transform: translate(-50%, -50%); pointer-events: none;
+}
+.m-dock .speed-scrub .tick.on { opacity: 0; }
+.m-dock .speed-scrub .knob {
+  position: absolute; top: 50%; width: 10px; height: 24px;
+  background: var(--amber); transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.m-dock .speed-scrub .val {
+  font-family: var(--mono); font-size: 11px; color: var(--amber);
+  min-width: 40px; text-align: right; letter-spacing: 0.04em;
+}
 .m-dock .meta {
   font-family: var(--mono);
   font-size: 9px;

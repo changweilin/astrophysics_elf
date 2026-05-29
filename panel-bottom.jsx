@@ -50,12 +50,7 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
               <span>×<b>{timescale.toFixed(2)}</b></span>
               <span>BODIES <b>{sim.bodies.filter(b => b.state === 'orbit').length}/{sim.bodies.length}</b></span>
             </div>
-            <div className="speed-bar">
-              {[0.25, 0.5, 1, 2, 4, 8].map((s) => (
-                <button key={s} className={Math.abs(timescale - s) < 0.01 ? 'on' : ''}
-                  onClick={() => setTimescale(s)}>×{s}</button>
-              ))}
-            </div>
+            <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
           </div>
           <div className="meta-row">
             <span style={{color:'var(--fg-3)'}}>Keyboard <span className="kbd">space</span> play · <span className="kbd">R</span> reset · <span className="kbd">·</span></span>
@@ -65,6 +60,60 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
     </div>
   );
 }
+
+// Discrete simulation-speed multipliers. Wider range + finer steps than before;
+// step() now advances multiple macro-steps per frame so the high end is real
+// (the old dt clamp made anything past ~×3 a no-op).
+const SPEED_STEPS = [0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64];
+window.SPEED_STEPS = SPEED_STEPS;
+
+function speedFmt(s) { return s < 1 ? `×${s}` : `×${s % 1 === 0 ? s : s.toFixed(2)}`; }
+function nearestSpeedIdx(s) {
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < SPEED_STEPS.length; i++) {
+    const d = Math.abs(SPEED_STEPS[i] - s);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  return bi;
+}
+
+// Horizontal speed scrubber: tap a tick or drag left/right to scrub through the
+// discrete multipliers. Pointer events so it works with mouse and touch alike.
+function SpeedScrubber({ timescale, setTimescale }) {
+  const ref = React.useRef(null);
+  const dragging = React.useRef(false);
+  const idx = nearestSpeedIdx(timescale);
+  const n = SPEED_STEPS.length;
+  const frac = n > 1 ? idx / (n - 1) : 0;
+
+  function setFromClientX(clientX) {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (clientX - r.left) / Math.max(1, r.width)));
+    setTimescale(SPEED_STEPS[Math.round(f * (n - 1))]);
+  }
+
+  return (
+    <div className="speed-scrub" ref={ref}
+      onPointerDown={(e) => { dragging.current = true; try { e.currentTarget.setPointerCapture(e.pointerId); } catch {} setFromClientX(e.clientX); }}
+      onPointerMove={(e) => { if (dragging.current) setFromClientX(e.clientX); }}
+      onPointerUp={() => { dragging.current = false; }}
+      onPointerCancel={() => { dragging.current = false; }}
+      title="拖曳左右切換模擬速度倍率">
+      <div className="track">
+        <div className="fill" style={{ width: `${frac * 100}%` }} />
+        {SPEED_STEPS.map((s, i) => (
+          <span key={s} className={`tick ${i === idx ? 'on' : ''}`}
+            style={{ left: `${(n > 1 ? i / (n - 1) : 0) * 100}%` }} />
+        ))}
+        <div className="knob" style={{ left: `${frac * 100}%` }} />
+      </div>
+      <div className="val">{speedFmt(SPEED_STEPS[idx])}</div>
+    </div>
+  );
+}
+window.SpeedScrubber = SpeedScrubber;
 
 const LIBRARY = [
   { name: 'Rocky planet',  kind: 'planet', radius: 0.30, binding: 2.5, charge: 0,    spawnR: 12 },

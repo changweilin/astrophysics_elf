@@ -33,7 +33,12 @@
       "Bash(PORT=5191 node serve.mjs)",
       "Bash(curl -s http://127.0.0.1:5191/ -o /dev/null -w \"%{http_code}\\\\n\")",
       "Bash(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5191/__TRACKED_VAR__)",
-      "PowerShell(Get-ChildItem *)"
+      "PowerShell(Get-ChildItem *)",
+      "Read(//c/tmp/**)",
+      "Bash(\"/c/Program Files/Google/Chrome/Application/chrome.exe\" --headless --disable-gpu --dump-dom --virtual-time-budget=6000 \"http://127.0.0.1:5184/\")",
+      "Bash(\"/c/Program Files/Google/Chrome/Application/chrome.exe\" --headless --disable-gpu --enable-logging=stderr --v=0 --virtual-time-budget=7000 --dump-dom \"http://127.0.0.1:5184/\")",
+      "Bash(\"/c/Program Files/Google/Chrome/Application/chrome.exe\" --headless --disable-gpu --virtual-time-budget=20000 --dump-dom \"http://127.0.0.1:5184/_gwtest.html\")",
+      "Bash(pkill -f serve.mjs)"
     ]
   }
 }

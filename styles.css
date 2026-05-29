@@ -1034,6 +1034,36 @@ html, body {
 }
 .time .meta-row b { color: var(--fg-1); font-weight: 500; }
 
+/* Speed scrubber — drag left/right to switch the simulation-speed multiplier */
+.speed-scrub {
+  margin-top: 10px;
+  display: flex; align-items: center; gap: 10px;
+  user-select: none; touch-action: none; cursor: ew-resize;
+}
+.speed-scrub .track {
+  position: relative; flex: 1; height: 16px;
+  background: var(--bg-0); border: 1px solid var(--line);
+}
+.speed-scrub .fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--bg-3); pointer-events: none;
+}
+.speed-scrub .tick {
+  position: absolute; top: 50%; width: 1px; height: 6px;
+  background: var(--fg-3); opacity: 0.45;
+  transform: translate(-50%, -50%); pointer-events: none;
+}
+.speed-scrub .tick.on { opacity: 0; }
+.speed-scrub .knob {
+  position: absolute; top: 50%; width: 8px; height: 16px;
+  background: var(--amber); transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.speed-scrub .val {
+  font-family: var(--mono); font-size: 11px; color: var(--amber);
+  min-width: 46px; text-align: right; letter-spacing: 0.04em;
+}
+
 /* Event log */
 .eventlog {
   font-family: var(--mono);

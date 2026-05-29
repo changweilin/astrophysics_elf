@@ -159,6 +159,9 @@ function App() {
           if (it.isCompanion) {
             // Companion placement: set up binary at world pos with default circular v
             window.KNSim.placeCompanion(SIM, wx, wy);
+            // Default the camera to the conserved barycentre so both stars stay
+            // framed as they orbit (user can switch back via FRAME · FREE).
+            SIM.view.frame = 'com';
             SIM.aiming = { kind: 'companion', isAiming: false, pullSx: sx, pullSy: sy };
             const vc = Math.sqrt(SIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
             window.KNSim.logEv(SIM, 'good',
@@ -179,6 +182,7 @@ function App() {
           window.KNSim.logEv(SIM, 'warn', `placement cancelled`);
         }
         SIM.placement = null;
+        pan = null;   // a click-armed placement (companion) left a stale pan grab
         suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
         force();
         return;
@@ -274,9 +278,11 @@ function App() {
           return;
         }
       }
-      // Otherwise: drag empty space to pan the view — but only in 'free' frame;
-      // a locked reference frame drives view.ox/oy itself.
-      if (!SIM.view.frame || SIM.view.frame === 'free') {
+      // Otherwise: drag empty space to pan the view — but only in 'free' frame
+      // and never while placing/aiming (a press to drop a body must not also arm
+      // a pan, which would otherwise leak past the release and stick the view to
+      // the cursor). A locked reference frame drives view.ox/oy itself.
+      if (!SIM.placement && !SIM.aiming && (!SIM.view.frame || SIM.view.frame === 'free')) {
         pan = { x: e.clientX, y: e.clientY, ox: SIM.view.ox, oy: SIM.view.oy };
       }
     }
@@ -371,7 +377,10 @@ function App() {
     function loop(now) {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      SIM.paused = !playing;
+      // Auto-pause while the user is placing or aiming a body/companion, then
+      // resume the instant they commit (drag-launch / double-click clears these).
+      // A manual pause (playing=false) still overrides and stays paused.
+      SIM.paused = !playing || !!SIM.placement || !!SIM.aiming;
       SIM.timescale = timescale;
       window.KNSim.step(SIM, dt);
 

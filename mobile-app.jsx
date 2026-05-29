@@ -227,9 +227,10 @@ function MobileApp() {
         }
       }
 
-      // Otherwise: prepare pan — but only in 'free' frame; a locked reference
-      // frame drives view.ox/oy itself.
-      if (!MSIM.view.frame || MSIM.view.frame === 'free') {
+      // Otherwise: prepare pan — but only in 'free' frame and never while
+      // placing/aiming (a stale pan grab would otherwise stick the view to the
+      // finger after release). A locked reference frame drives view.ox/oy itself.
+      if (!MSIM.placement && !MSIM.aiming && (!MSIM.view.frame || MSIM.view.frame === 'free')) {
         pan = { x: e.clientX, y: e.clientY, ox: MSIM.view.ox, oy: MSIM.view.oy };
       }
     }
@@ -336,6 +337,9 @@ function MobileApp() {
           const it = MSIM.placement.item;
           if (it.isCompanion) {
             window.KNSim.placeCompanion(MSIM, wx, wy);
+            // Default to the barycentre frame so both stars stay framed (switch
+            // back via FRAME · FREE).
+            MSIM.view.frame = 'com';
             MSIM.aiming = { kind: 'companion', isAiming: false, pullSx: sx, pullSy: sy };
             const vc = Math.sqrt(MSIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
             window.KNSim.logEv(MSIM, 'good',
@@ -356,6 +360,7 @@ function MobileApp() {
           window.KNSim.logEv(MSIM, 'warn', `placement cancelled`);
         }
         MSIM.placement = null;
+        pan = null;
         suppressTap = true; setTimeout(() => { suppressTap = false; }, 80);
         force();
         return;
@@ -456,7 +461,9 @@ function MobileApp() {
     function loop(now) {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      MSIM.paused = !playing;
+      // Auto-pause while placing/aiming, resume on commit (see app.jsx). A
+      // manual pause still overrides.
+      MSIM.paused = !playing || !!MSIM.placement || !!MSIM.aiming;
       MSIM.timescale = timescale;
       window.KNSim.step(MSIM, dt);
 
@@ -586,12 +593,7 @@ function MobileApp() {
         <button className="play" onClick={() => setPlaying(!playing)}>
           {playing ? '❚❚' : '▶'}
         </button>
-        <div className="speed">
-          {[0.25, 0.5, 1, 2, 4, 8].map((s) => (
-            <button key={s} className={Math.abs(timescale - s) < 0.01 ? 'on' : ''}
-              onClick={() => setTimescale(s)}>×{s}</button>
-          ))}
-        </div>
+        <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
         <div className="meta">
           <span className="t">T+{MSIM.t.toFixed(1)}</span>
           <span><b>{orbitCount}</b>/{MSIM.bodies.length} BOD</span>
