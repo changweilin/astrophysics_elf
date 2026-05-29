@@ -436,7 +436,15 @@ function TabBinary({ sim, force }) {
         className={`m-disc-toggle ${bin.enabled ? 'on' : ''}`}
         onClick={() => {
           if (!bin.enabled) {
-            bin.enabled = true;
+            // If no companion was placed on the canvas yet, set up a stable
+            // circular binary at the chosen separation along +x from the primary.
+            const degenerate = Math.hypot(bin.x2 - bin.x1, bin.y2 - bin.y1) < 0.5;
+            if (degenerate) {
+              window.KNSim.placeCompanion(sim, sim.primary.x + bin.d, sim.primary.y);
+              window.KNSim.circularizeBinary(sim);
+            } else {
+              bin.enabled = true;
+            }
             bin.merged  = false;
             bin.mergerFlash = 0;
             bin.d0 = bin.d;

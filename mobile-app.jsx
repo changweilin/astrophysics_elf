@@ -351,10 +351,11 @@ function MobileApp() {
             const dragPx = Math.hypot(dx, dy);
             if (dragPx > 4) {
               const vScale = 0.08;
-              bin.vx2 = -dx / MSIM.view.scale * vScale;
-              bin.vy2 = -dy / MSIM.view.scale * vScale;
+              const vx2 = -dx / MSIM.view.scale * vScale;
+              const vy2 = -dy / MSIM.view.scale * vScale;
+              window.KNSim.setBinaryVelocity(MSIM, vx2, vy2);
               const v = Math.hypot(bin.vx2, bin.vy2);
-              window.KNSim.logEv(MSIM, 'good', `companion launched · v₀ = ${v.toFixed(3)} c`);
+              window.KNSim.logEv(MSIM, 'good', `companion launched · v₀ = ${v.toFixed(3)} c (primary recoils)`);
             } else {
               window.KNSim.logEv(MSIM, 'good', `companion retains stable v_circ`);
             }

@@ -69,8 +69,10 @@
       d0: 18,            // initial separation (for inspiral progress bar)
       theta: 0,          // orbital phase
       omega: 0,          // current angular velocity
-      x1: 0, y1: 0,      // primary position (mirrors sim.primary)
-      x2: 0, y2: 0,      // secondary position
+      cx: 0, cy: 0,      // conserved barycentre (centre of mass) — both stars orbit this
+      x1: 0, y1: 0,      // primary position (orbits the barycentre)
+      y2: 0, x2: 0,      // secondary position
+      vx1: 0, vy1: 0,    // primary velocity
       vx2: 0, vy2: 0,    // secondary velocity
       inspiralRate: 60,  // visual speedup of Peters GW back-reaction
       merged: false,
@@ -83,30 +85,51 @@
   }
 
   // Place / arm the companion. Called from UI tab + canvas placement.
+  // Sets up a real two-body system: both stars orbit the conserved barycentre
+  // that the two initial positions define. opts.vx/vy (if given) are the
+  // companion's velocity in the lab frame; the primary recoil is derived.
   function placeCompanion(sim, wx, wy, opts = {}) {
     const bin = sim.binary;
     if (!bin) return;
+    const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
     bin.x1 = sim.primary.x; bin.y1 = sim.primary.y;
     bin.x2 = wx; bin.y2 = wy;
     const dx0 = wx - bin.x1, dy0 = wy - bin.y1;
     const r = Math.hypot(dx0, dy0);
     bin.d = r; bin.d0 = r;
     bin.theta = Math.atan2(dy0, dx0);
-    // Default stable circular orbit velocity, tangential (counter-clockwise)
+    // Barycentre from the two initial positions — conserved from here on.
+    bin.cx = (M1 * bin.x1 + M2 * bin.x2) / Mt;
+    bin.cy = (M1 * bin.y1 + M2 * bin.y2) / Mt;
+    // Relative (separation) velocity V = ẋ₂ − ẋ₁.
+    let Vx, Vy;
     if (opts.vx != null && opts.vy != null) {
-      bin.vx2 = opts.vx; bin.vy2 = opts.vy;
+      // opts are the companion's lab velocity v₂ = (M1/Mt)·V  ⇒  V = v₂·Mt/M1
+      Vx = opts.vx * Mt / M1; Vy = opts.vy * Mt / M1;
     } else {
-      const vc = Math.sqrt(sim.params.M / Math.max(0.5, r));
+      // Stable two-body circular orbit: relative speed √(Mt / r), tangential.
+      const vrel = Math.sqrt(Mt / Math.max(0.5, r));
       const dir = Math.sign(sim.params.a || 1);
-      bin.vx2 = -dy0 / r * vc * dir;
-      bin.vy2 =  dx0 / r * vc * dir;
+      Vx = -dy0 / r * vrel * dir;
+      Vy =  dx0 / r * vrel * dir;
     }
-    bin.omega = Math.hypot(bin.vx2, bin.vy2) / r;
+    splitTwoBody(bin, M1, M2, Vx, Vy);
     bin.enabled = true;
     bin.merged = false;
     bin.mergerFlash = 0;
     bin.trail1.length = 0;
     bin.trail2.length = 0;
+  }
+
+  // Split a relative velocity V (= v₂ − v₁) onto the two stars about the
+  // conserved barycentre. Positions are left as-is; velocities are set so the
+  // barycentre stays fixed (total momentum zero in the COM frame).
+  function splitTwoBody(bin, M1, M2, Vx, Vy) {
+    const Mt = M1 + M2;
+    const f1 = M2 / Mt, f2 = M1 / Mt;
+    bin.vx1 = -f1 * Vx; bin.vy1 = -f1 * Vy;
+    bin.vx2 =  f2 * Vx; bin.vy2 =  f2 * Vy;
+    bin.omega = Math.hypot(Vx, Vy) / Math.max(0.1, bin.d || 1);
   }
 
   function removeCompanion(sim) {
@@ -129,59 +152,81 @@
       if (bin.mergerFlash > 0) bin.mergerFlash = Math.max(0, bin.mergerFlash - dt);
       return;
     }
-    bin.x1 = sim.primary.x; bin.y1 = sim.primary.y; // primary follows pan handle
 
-    if (bin.held) { // frozen while user repositions companion
+    const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
+
+    if (bin.held) {
+      // User is repositioning the companion — freeze the orbit and re-derive the
+      // barycentre from the two current positions so motion resumes smoothly.
       bin.d = Math.hypot(bin.x2 - bin.x1, bin.y2 - bin.y1);
       bin.theta = Math.atan2(bin.y2 - bin.y1, bin.x2 - bin.x1);
-      bin.trail2.length = 0;
+      bin.cx = (M1 * bin.x1 + M2 * bin.x2) / Mt;
+      bin.cy = (M1 * bin.y1 + M2 * bin.y2) / Mt;
+      bin.trail1.length = 0; bin.trail2.length = 0;
       return;
     }
 
-    const M1 = sim.params.M, M2 = bin.M2;
-
-    // Newtonian gravity from primary on secondary (test-particle approx —
-    // primary stays anchored so the rest of the lab frame is consistent).
-    const dx = bin.x2 - bin.x1, dy = bin.y2 - bin.y1;
-    const r2 = dx * dx + dy * dy;
+    // ── True two-body motion about the conserved barycentre ──
+    // Evolve the relative (separation) coordinate D = x₂ − x₁ under the two-body
+    // equation D̈ = −(M₁+M₂)/r³ · D, then split D and V back onto both stars.
+    // Recomputing D and V from the absolute state each step absorbs any external
+    // edits (placement, drag-launch, reposition).
+    let Dx = bin.x2 - bin.x1, Dy = bin.y2 - bin.y1;
+    const r2 = Dx * Dx + Dy * Dy;
     const r  = Math.sqrt(r2);
     if (r < 1e-3) return;
+    let Vx = bin.vx2 - bin.vx1, Vy = bin.vy2 - bin.vy1;
 
     const inv = 1 / (r * r2);
-    let ax = -M1 * dx * inv;
-    let ay = -M1 * dy * inv;
+    let arx = -Mt * Dx * inv;
+    let ary = -Mt * Dy * inv;
 
-    const v = Math.hypot(bin.vx2, bin.vy2);
+    const vrel = Math.hypot(Vx, Vy);
 
     // Peters readout (used for UI + the GW radiation drag below)
     const pet = phys.peters(M1, M2, r);
     bin.lastPeters = pet;
 
-    // GW back-reaction for every binary (BH, NS, WD, star): tangential drag that
-    // bleeds energy at the Peters rate dE/dt = (32/5) M1² M2² (M1+M2) / r⁵. This
-    // is what turns a classically stable circular orbit into a GR inspiral — the
-    // chirp steepens as r shrinks (∝ r⁻⁵). A double-BH pair ends in merger below;
-    // other pairs spiral in until their surfaces touch (contact). Strength is
-    // user-tunable via bin.inspiralRate (×Peters).
-    if (v > 1e-4) {
-      const dEdt = (32 / 5) * M1 * M1 * M2 * M2 * (M1 + M2) / Math.pow(r, 5);
-      const aDrag = (dEdt / (M2 * v)) * bin.inspiralRate;
-      ax -= aDrag * bin.vx2 / v;
-      ay -= aDrag * bin.vy2 / v;
+    // GW back-reaction for every binary (BH, NS, WD, star): a tangential drag on
+    // the *relative* motion that bleeds orbital energy at the Peters rate
+    // dE/dt = (32/5) M1² M2² (M1+M2) / r⁵ (reduced mass μ = M1 M2 / Mt). This turns
+    // a classically stable circular orbit into a GR inspiral — the chirp steepens
+    // as r shrinks (∝ r⁻⁵). A double-BH pair ends in merger below; other pairs
+    // spiral in until their surfaces touch. Strength: bin.inspiralRate (×Peters).
+    if (vrel > 1e-4) {
+      const dEdt = (32 / 5) * M1 * M1 * M2 * M2 * Mt / Math.pow(r, 5);
+      const mu = (M1 * M2) / Mt;
+      let aDrag = (dEdt / (mu * vrel)) * bin.inspiralRate;
+      // Cap the bleed so the inspiral stays quasi-static (≳ a few orbits) and the
+      // integrator can't pump energy at extreme inspiralRate. The damping rate
+      // aDrag/vrel is limited to a fraction of the orbital frequency ω = vrel/r;
+      // low/moderate rates pass through unchanged (physically accurate), while
+      // very high speedups saturate at the fastest *stable* inspiral.
+      const aDragMax = 0.3 * vrel * vrel / r;
+      if (aDrag > aDragMax) aDrag = aDragMax;
+      arx -= aDrag * Vx / vrel;
+      ary -= aDrag * Vy / vrel;
     }
 
-    // Symplectic Euler step (matches the substep cadence in step())
-    bin.vx2 += ax * dt;
-    bin.vy2 += ay * dt;
-    bin.x2  += bin.vx2 * dt;
-    bin.y2  += bin.vy2 * dt;
+    // Symplectic Euler on the relative coordinate (matches step() substep cadence)
+    Vx += arx * dt; Vy += ary * dt;
+    Dx += Vx * dt;  Dy += Vy * dt;
+
+    // Split back onto the two stars about the conserved barycentre.
+    const f1 = M2 / Mt, f2 = M1 / Mt;
+    bin.x1 = bin.cx - f1 * Dx; bin.y1 = bin.cy - f1 * Dy;
+    bin.x2 = bin.cx + f2 * Dx; bin.y2 = bin.cy + f2 * Dy;
+    bin.vx1 = -f1 * Vx; bin.vy1 = -f1 * Vy;
+    bin.vx2 =  f2 * Vx; bin.vy2 =  f2 * Vy;
 
     // Bookkeeping
-    bin.d     = Math.hypot(bin.x2, bin.y2);
-    bin.theta = Math.atan2(bin.y2, bin.x2);
-    bin.omega = Math.hypot(bin.vx2, bin.vy2) / Math.max(0.1, bin.d);
+    bin.d     = Math.hypot(Dx, Dy);
+    bin.theta = Math.atan2(Dy, Dx);
+    bin.omega = vrel / Math.max(0.1, bin.d);
 
-    // Trail
+    // Trails for BOTH stars (they now mutually orbit)
+    bin.trail1.push(bin.x1, bin.y1);
+    if (bin.trail1.length > 1200) bin.trail1.splice(0, bin.trail1.length - 1200);
     bin.trail2.push(bin.x2, bin.y2);
     if (bin.trail2.length > 1200) bin.trail2.splice(0, bin.trail2.length - 1200);
 
@@ -201,7 +246,6 @@
       if (bin.d <= rmerge && !bin.merged) {
         bin.merged = true;
         bin.mergerFlash = 1.6;
-        const Mt = M1 + M2;
         const radiated = Mt * 0.05;
         sim.params.M = Mt - radiated;
         sim.params.Q = sim.params.Q + (bin.Q2 || 0);
@@ -403,14 +447,11 @@
     const bin = sim.binary;
     const p = sim.primary;
     if (bin && bin.enabled) {
-      if (mode === 'm2') return { x: bin.x2, y: bin.y2 };
-      if (mode === 'com') {
-        const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2 || 1;
-        return { x: (M1 * bin.x1 + M2 * bin.x2) / Mt,
-                 y: (M1 * bin.y1 + M2 * bin.y2) / Mt };
-      }
+      if (mode === 'm1') return { x: bin.x1, y: bin.y1 };   // moving primary
+      if (mode === 'm2') return { x: bin.x2, y: bin.y2 };   // moving companion
+      if (mode === 'com') return { x: bin.cx, y: bin.cy };  // conserved barycentre
     }
-    // 'm1' — or m2/com requested without an active binary — centre the primary.
+    // m1/m2/com requested without an active binary — centre the static primary.
     return { x: p.x, y: p.y };
   }
 
@@ -446,21 +487,38 @@
     return vc;
   }
 
-  // Binary pair: put both stars onto a classical stable circular orbit. The
-  // primary is the anchored frame origin (velocity 0), so the companion takes
-  // the full tangential v_circ = sqrt(M1 / d). Returns the companion speed.
+  // Binary pair: put both stars onto a classical stable circular orbit about
+  // their common barycentre. The relative (separation) speed is the two-body
+  // circular value √((M1+M2) / d), tangential; splitTwoBody shares it between the
+  // stars by mass fraction so the barycentre stays fixed. Returns the companion's
+  // resulting lab speed.
   function circularizeBinary(sim) {
     const bin = sim.binary;
     if (!bin || !bin.enabled) return 0;
+    const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
     const dx = bin.x2 - bin.x1, dy = bin.y2 - bin.y1;
     const d = Math.max(0.5, Math.hypot(dx, dy));
-    const vc = Math.sqrt(sim.params.M / d);
+    bin.d = d;
+    const vrel = Math.sqrt(Mt / d);
     const dir = Math.sign(sim.params.a || 1);
-    bin.vx2 = -dy / d * vc * dir;
-    bin.vy2 =  dx / d * vc * dir;
-    bin.omega = vc / d;
+    const Vx = -dy / d * vrel * dir;
+    const Vy =  dx / d * vrel * dir;
+    splitTwoBody(bin, M1, M2, Vx, Vy);
+    bin.trail1.length = 0;
     bin.trail2.length = 0;
-    return vc;
+    return Math.hypot(bin.vx2, bin.vy2);
+  }
+
+  // Launch the companion with a user-chosen lab velocity (vx2,vy2). The relative
+  // velocity and the primary's recoil are derived so the barycentre stays fixed.
+  function setBinaryVelocity(sim, vx2, vy2) {
+    const bin = sim.binary;
+    if (!bin || !bin.enabled) return;
+    const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
+    // v₂ = (M1/Mt)·V  ⇒  relative velocity V = v₂·Mt/M1
+    splitTwoBody(bin, M1, M2, vx2 * Mt / M1, vy2 * Mt / M1);
+    bin.trail1.length = 0;
+    bin.trail2.length = 0;
   }
 
   // --- renderer ---
@@ -1339,6 +1397,6 @@
 
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, render, renderInteraction,
-                   applyFrameLock, frameAnchor, circularizeBody, circularizeBinary,
+                   applyFrameLock, frameAnchor, circularizeBody, circularizeBinary, setBinaryVelocity,
                    worldToScreen, screenToWorld, colorOf, predictTrajectory };
 })();

@@ -172,10 +172,11 @@ function App() {
             // Tiny drag → keep the stable circular default we set at placement.
             if (dragPx > 4) {
               const vScale = 0.08;
-              bin.vx2 = -dx / SIM.view.scale * vScale;
-              bin.vy2 = -dy / SIM.view.scale * vScale;
+              const vx2 = -dx / SIM.view.scale * vScale;
+              const vy2 = -dy / SIM.view.scale * vScale;
+              window.KNSim.setBinaryVelocity(SIM, vx2, vy2);
               const v = Math.hypot(bin.vx2, bin.vy2);
-              window.KNSim.logEv(SIM, 'good', `companion launched · v₀ = ${v.toFixed(3)} c`);
+              window.KNSim.logEv(SIM, 'good', `companion launched · v₀ = ${v.toFixed(3)} c (primary recoils)`);
             } else {
               window.KNSim.logEv(SIM, 'good', `companion retains stable v_circ`);
             }
