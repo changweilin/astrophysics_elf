@@ -21,7 +21,9 @@
       primary: { x: 0, y: 0, vx: 0, vy: 0 },
       bodies: [],
       events: [],
-      view: { scale: 18, ox: 0, oy: 0 }, // pixels per geometric unit
+      // pixels per geometric unit. `frame` locks the camera reference frame:
+      // 'free' (manual pan) | 'm1' (primary) | 'm2' (companion) | 'com' (barycenter).
+      view: { scale: 18, ox: 0, oy: 0, frame: 'free' },
       flags: {
         showErgo: true, showHorizon: true, showISCO: true, showPhoton: false,
         showDragField: true, showOrbits: true, showTidal: true, showLabels: true,
@@ -137,7 +139,6 @@
     }
 
     const M1 = sim.params.M, M2 = bin.M2;
-    const isBH = (sim.params.type || 'bh') === 'bh';
 
     // Newtonian gravity from primary on secondary (test-particle approx —
     // primary stays anchored so the rest of the lab frame is consistent).
@@ -156,9 +157,13 @@
     const pet = phys.peters(M1, M2, r);
     bin.lastPeters = pet;
 
-    // GW back-reaction for BH binaries: tangential drag that bleeds energy at
-    // the Peters rate dE/dt = (32/5) M1² M2² (M1+M2) / r⁵
-    if (isBH && v > 1e-4) {
+    // GW back-reaction for every binary (BH, NS, WD, star): tangential drag that
+    // bleeds energy at the Peters rate dE/dt = (32/5) M1² M2² (M1+M2) / r⁵. This
+    // is what turns a classically stable circular orbit into a GR inspiral — the
+    // chirp steepens as r shrinks (∝ r⁻⁵). A double-BH pair ends in merger below;
+    // other pairs spiral in until their surfaces touch (contact). Strength is
+    // user-tunable via bin.inspiralRate (×Peters).
+    if (v > 1e-4) {
       const dEdt = (32 / 5) * M1 * M1 * M2 * M2 * (M1 + M2) / Math.pow(r, 5);
       const aDrag = (dEdt / (M2 * v)) * bin.inspiralRate;
       ax -= aDrag * bin.vx2 / v;
@@ -389,6 +394,75 @@
     sim.t += dt;
   }
 
+  // ── Camera reference-frame lock ───────────────────────────
+  // Returns the world point the camera should pin to screen centre for the
+  // active frame, or null in 'free' mode (manual pan). m2/com need the binary.
+  function frameAnchor(sim) {
+    const mode = (sim.view && sim.view.frame) || 'free';
+    if (mode === 'free') return null;
+    const bin = sim.binary;
+    const p = sim.primary;
+    if (bin && bin.enabled) {
+      if (mode === 'm2') return { x: bin.x2, y: bin.y2 };
+      if (mode === 'com') {
+        const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2 || 1;
+        return { x: (M1 * bin.x1 + M2 * bin.x2) / Mt,
+                 y: (M1 * bin.y1 + M2 * bin.y2) / Mt };
+      }
+    }
+    // 'm1' — or m2/com requested without an active binary — centre the primary.
+    return { x: p.x, y: p.y };
+  }
+
+  // Drive view.ox/oy so the frame anchor stays centred. worldToScreen maps
+  // (x + ox) about the centre, so pinning anchor.x means ox = -anchor.x.
+  function applyFrameLock(sim) {
+    const anchor = frameAnchor(sim);
+    if (!anchor) return;
+    sim.view.ox = -anchor.x;
+    sim.view.oy = -anchor.y;
+  }
+
+  // ── Double-click → classical stable periodic orbit ────────
+  // Regular body: keep the current direction of motion, rescale speed to the
+  // local circular velocity v_circ = sqrt(M / r) about the primary (an at-rest
+  // body gets a tangential kick). Returns the applied speed.
+  function circularizeBody(sim, b) {
+    if (!b) return 0;
+    const p = sim.primary;
+    const dx = b.x - p.x, dy = b.y - p.y;
+    const r = Math.max(0.5, Math.hypot(dx, dy));
+    const vc = Math.sqrt(sim.params.M / r);
+    const sp = Math.hypot(b.vx, b.vy);
+    if (sp > 1e-6) {
+      b.vx = b.vx / sp * vc;
+      b.vy = b.vy / sp * vc;
+    } else {
+      const dir = Math.sign(sim.params.a || 1);
+      b.vx = -dy / r * vc * dir;
+      b.vy =  dx / r * vc * dir;
+    }
+    if (b.trail) b.trail.length = 0;
+    return vc;
+  }
+
+  // Binary pair: put both stars onto a classical stable circular orbit. The
+  // primary is the anchored frame origin (velocity 0), so the companion takes
+  // the full tangential v_circ = sqrt(M1 / d). Returns the companion speed.
+  function circularizeBinary(sim) {
+    const bin = sim.binary;
+    if (!bin || !bin.enabled) return 0;
+    const dx = bin.x2 - bin.x1, dy = bin.y2 - bin.y1;
+    const d = Math.max(0.5, Math.hypot(dx, dy));
+    const vc = Math.sqrt(sim.params.M / d);
+    const dir = Math.sign(sim.params.a || 1);
+    bin.vx2 = -dy / d * vc * dir;
+    bin.vy2 =  dx / d * vc * dir;
+    bin.omega = vc / d;
+    bin.trail2.length = 0;
+    return vc;
+  }
+
   // --- renderer ---
   function worldToScreen(sim, w, h, x, y) {
     return [w / 2 + (x + sim.view.ox) * sim.view.scale,
@@ -397,6 +471,7 @@
 
   function render(sim, ctx, w, h) {
     ctx.clearRect(0, 0, w, h);
+    applyFrameLock(sim); // re-centre camera before any worldToScreen calls
     const { M, Q, a } = sim.params;
     const type = sim.params.type || 'bh';
     const isBH = type === 'bh';
@@ -1264,5 +1339,6 @@
 
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, render, renderInteraction,
+                   applyFrameLock, frameAnchor, circularizeBody, circularizeBinary,
                    worldToScreen, screenToWorld, colorOf, predictTrajectory };
 })();

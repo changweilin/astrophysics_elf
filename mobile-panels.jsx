@@ -310,9 +310,7 @@ function TabBlackHole({ sim, force }) {
                     color="magenta"
                     fmt={(v) => '×' + v.toFixed(0)}
                     onChange={(v) => { bin.inspiralRate = v; force(); }}
-                    scaleLabels={['×1', '×60', '×300']}
-                    locked={!(isBH && (bin.type || 'bh') === 'bh')}
-                    lockHint={'GW 阻力僅在雙黑洞模式啟用'} />
+                    scaleLabels={['×1', '×60', '×300']} />
           </div>
         )}
       </div>

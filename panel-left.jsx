@@ -327,9 +327,7 @@ function LeftPanel({ sim, force }) {
                    color="magenta"
                    fmt={(v) => '×' + v.toFixed(0)}
                    onChange={(v) => { bin.inspiralRate = v; force(); }}
-                   scaleLabels={['×1', '×60', '×300']}
-                   locked={!(isBH && (bin.type || 'bh') === 'bh')}
-                   lockHint={'GW 阻力僅在雙黑洞模式啟用'} />
+                   scaleLabels={['×1', '×60', '×300']} />
           </div>
         )}
       </div>
@@ -581,7 +579,7 @@ function BinaryReadout({ sim, force }) {
         </div>
       </div>
 
-      {bin.enabled && isBHBin && (
+      {bin.enabled && (
         <div className="inspiral-track">
           <div className="row">
             <span className="k">Inspiral progress · d/d₀</span>
@@ -591,15 +589,11 @@ function BinaryReadout({ sim, force }) {
             <div className="fill" style={{ width: pctDone + '%' }} />
           </div>
           <div className="note">
-            * 雙黑洞模式：依 Peters (1964) 加入切向 GW 阻力 — dE/dt ∝ M₁²M₂²(M₁+M₂)/d⁵，視覺加速 ×{bin.inspiralRate}.
+            * 依 Peters (1964) 對所有雙星加入切向 GW 阻力 — dE/dt ∝ M₁²M₂²(M₁+M₂)/d⁵，視覺加速 ×{bin.inspiralRate}.
+            {isBHBin
+              ? ' 雙黑洞 → 旋近至視界相觸合併。'
+              : ' 含非黑洞成員 → 旋近至表面相觸（contact）。'}
           </div>
-        </div>
-      )}
-
-      {bin.enabled && !isBHBin && (
-        <div className="lock-banner" style={{marginTop: 10}}>
-          <span className="lock-glyph">◆</span>
-          <span>含非黑洞成員 · 無 GW 旋近 — 以 Kepler 軌道運行</span>
         </div>
       )}
 

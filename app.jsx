@@ -251,8 +251,56 @@ function App() {
           return;
         }
       }
-      // Otherwise: drag empty space to pan the view.
-      pan = { x: e.clientX, y: e.clientY, ox: SIM.view.ox, oy: SIM.view.oy };
+      // Otherwise: drag empty space to pan the view — but only in 'free' frame;
+      // a locked reference frame drives view.ox/oy itself.
+      if (!SIM.view.frame || SIM.view.frame === 'free') {
+        pan = { x: e.clientX, y: e.clientY, ox: SIM.view.ox, oy: SIM.view.oy };
+      }
+    }
+
+    // Screen radius (px) of a star's drawn body — shared by binary hit-tests.
+    function starVisualR(M, Q, a, type, R_star) {
+      const phys = window.KNphysics;
+      const { rplus, naked } = phys.horizons(M, Q || 0, a || 0);
+      return (type || 'bh') === 'bh'
+        ? Math.max(4, (isFinite(rplus) && !naked ? rplus : M) * SIM.view.scale)
+        : Math.max(6, (R_star || 3) * SIM.view.scale * 0.7);
+    }
+
+    // Double-click → snap onto a classical stable periodic orbit.
+    //  · a binary star (primary or companion) circularises the whole pair
+    //  · any other body keeps its direction but takes the local v_circ
+    function onDblClick(e) {
+      if (SIM.placement || SIM.aiming) return;
+      const { sx, sy, w, h } = clientToCanvas(e);
+      // Binary star first (primary at x1,y1 / companion at x2,y2)
+      if (SIM.binary && SIM.binary.enabled) {
+        const bin = SIM.binary;
+        const [c2x, c2y] = window.KNSim.worldToScreen(SIM, w, h, bin.x2, bin.y2);
+        const r2 = Math.max(14, starVisualR(bin.M2, bin.Q2, bin.a2, bin.type, bin.R_star2) + 4);
+        const [c1x, c1y] = window.KNSim.worldToScreen(SIM, w, h, bin.x1, bin.y1);
+        const r1 = Math.max(14, starVisualR(SIM.params.M, SIM.params.Q, SIM.params.a, SIM.params.type, SIM.params.R_star) + 4);
+        if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1) {
+          const vc = window.KNSim.circularizeBinary(SIM);
+          window.KNSim.logEv(SIM, 'good', `binary circularised · v_circ=${vc.toFixed(3)} c · GW inspiral active → orbit will decay`);
+          force();
+          return;
+        }
+      }
+      // Otherwise the nearest orbiting body
+      let best = null, bestD = 22;
+      for (const b of SIM.bodies) {
+        if (b.state !== 'orbit') continue;
+        const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, b.x, b.y);
+        const d = Math.hypot(bx - sx, by - sy);
+        if (d < bestD) { bestD = d; best = b; }
+      }
+      if (best) {
+        const vc = window.KNSim.circularizeBody(SIM, best);
+        SIM.selectedId = best.id;
+        window.KNSim.logEv(SIM, 'good', `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`);
+        force();
+      }
     }
 
     function onClick(e) {
@@ -276,6 +324,7 @@ function App() {
 
     c.addEventListener('mousedown', onDown);
     c.addEventListener('click', onClick);
+    c.addEventListener('dblclick', onDblClick);
     c.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -283,6 +332,7 @@ function App() {
       clearTimeout(longPressTimer);
       c.removeEventListener('mousedown', onDown);
       c.removeEventListener('click', onClick);
+      c.removeEventListener('dblclick', onDblClick);
       c.removeEventListener('wheel', onWheel);
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -421,6 +471,7 @@ function App() {
             <ToggleBtn label="TIDAL"    k="showTidal" sim={SIM} force={force} />
             <ToggleBtn label="LABELS"   k="showLabels" sim={SIM} force={force} />
           </div>
+          <FrameLock sim={SIM} force={force} />
         </div>
         <div className="overlay-br">
           <div>RENDER · CANVAS2D · {Math.round(SIM.view.scale)}px/M</div>
@@ -435,6 +486,30 @@ function App() {
       <BottomStrip sim={SIM} force={force}
         playing={playing} setPlaying={setPlaying}
         timescale={timescale} setTimescale={setTimescale} />
+    </div>
+  );
+}
+
+// Reference-frame switch: lock the camera to m1 / m2 / barycenter, or free pan.
+function FrameLock({ sim, force }) {
+  const cur = sim.view.frame || 'free';
+  const hasBin = !!(sim.binary && sim.binary.enabled);
+  const opts = [
+    ['free', 'FREE', true],
+    ['m1', 'M1', true],
+    ['m2', 'M2', hasBin],
+    ['com', 'COM', hasBin],
+  ];
+  return (
+    <div className="view-toggles frame-lock">
+      <span className="vt-label">FRAME</span>
+      {opts.map(([k, lbl, on]) => (
+        <button key={k} className={cur === k ? 'on' : ''} disabled={!on}
+          title={on ? `lock camera to ${lbl}` : 'place a companion first'}
+          onClick={() => { sim.view.frame = k; force(); }}>
+          {lbl}
+        </button>
+      ))}
     </div>
   );
 }

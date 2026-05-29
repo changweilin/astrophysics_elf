@@ -717,6 +717,18 @@ html, body {
   background: var(--bg-3);
 }
 .view-toggles button.on .sw { background: var(--amber); box-shadow: 0 0 5px var(--amber); }
+.view-toggles button:disabled {
+  color: var(--fg-3); opacity: 0.4; cursor: not-allowed; background: transparent;
+}
+.view-toggles .vt-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--fg-3);
+  padding: 7px 10px;
+  display: flex; align-items: center;
+  border-right: 1px solid var(--line-soft);
+}
 
 /* Crosshair on canvas */
 .viewport::before, .viewport::after {
