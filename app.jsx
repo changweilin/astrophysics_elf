@@ -416,7 +416,9 @@ function App() {
       // Auto-pause while the user is placing or aiming a body/companion, then
       // resume the instant they commit (drag-launch / double-click clears these).
       // A manual pause (playing=false) still overrides and stays paused.
-      SIM.paused = !playing || !!SIM.placement || !!SIM.aiming;
+      // Only placing a body/companion pauses the sim; slingshot-aiming and
+      // double-click leave it playing.
+      SIM.paused = !playing || !!SIM.placement;
       SIM.timescale = timescale;
       window.KNSim.step(SIM, dt);
 

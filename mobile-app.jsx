@@ -543,7 +543,9 @@ function MobileApp() {
       last = now;
       // Auto-pause while placing/aiming, resume on commit (see app.jsx). A
       // manual pause still overrides.
-      MSIM.paused = !playing || !!MSIM.placement || !!MSIM.aiming;
+      // Only placing a body/companion pauses the sim; slingshot-aiming and
+      // double-click leave it playing.
+      MSIM.paused = !playing || !!MSIM.placement;
       MSIM.timescale = timescale;
       window.KNSim.step(MSIM, dt);
 
