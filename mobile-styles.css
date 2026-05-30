@@ -86,12 +86,13 @@ html, body {
   color: var(--fg-1);
   display: flex; align-items: center; gap: 8px;
 }
-.m-head .brand .dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--amber);
-  box-shadow: 0 0 6px var(--amber);
+.m-head .brand .logo {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  display: block;
+  box-shadow: 0 0 0 1px var(--line), 0 1px 6px rgba(0, 0, 0, 0.45);
 }
-.m-head .brand strong { color: var(--fg-0); font-weight: 600; }
+.m-head .brand strong { color: var(--fg-0); font-weight: 600; letter-spacing: 0.2em; }
 .m-head .session {
   margin-left: auto;
   font-family: var(--mono);

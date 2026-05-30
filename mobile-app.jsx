@@ -495,8 +495,8 @@ function MobileApp() {
       {/* Header */}
       <div className="m-head">
         <div className="brand">
-          <span className="dot" />
-          <span><strong>KN-LAB</strong></span>
+          <img className="logo" src="/logos/icon-192.png" alt="Astro ELF" width="22" height="22" />
+          <span><strong>ASTRO ELF</strong></span>
         </div>
         <div className="session">
           <span>BL · RK2</span>

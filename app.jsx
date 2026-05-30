@@ -448,8 +448,8 @@ function App() {
     <div className="app">
       <div className="topbar">
         <div className="brand">
-          <span className="dot" />
-          <span><strong>KERR-NEWMAN</strong> · BLACK HOLE LAB</span>
+          <img className="logo" src="/logos/icon-192.png" alt="Astro ELF" width="24" height="24" />
+          <span className="wordmark"><strong>ASTRO ELF</strong><span className="suffix">BLACK HOLE LAB</span></span>
         </div>
         <div className="crumbs">
           INSTRUMENT <span>/</span> SANDBOX <span>/</span> <span>session 04C</span>

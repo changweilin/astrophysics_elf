@@ -70,20 +70,27 @@ html, body {
   border-bottom: 1px solid var(--line);
 }
 .topbar .brand {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 11px;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--fg-1);
 }
-.topbar .brand .dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--amber);
-  box-shadow: 0 0 6px var(--amber);
+.topbar .brand .logo {
+  width: 24px; height: 24px;
+  border-radius: 7px;
+  display: block;
+  box-shadow: 0 0 0 1px var(--line), 0 1px 7px rgba(0, 0, 0, 0.45);
 }
-.topbar .brand strong {
-  color: var(--fg-0); font-weight: 600;
+.topbar .brand .wordmark {
+  display: flex; flex-direction: column; gap: 2px; line-height: 1;
+}
+.topbar .brand .wordmark strong {
+  color: var(--fg-0); font-weight: 600; letter-spacing: 0.22em;
+}
+.topbar .brand .wordmark .suffix {
+  font-size: 8.5px; letter-spacing: 0.26em; color: var(--fg-3);
 }
 .topbar .crumbs {
   font-family: var(--mono);
