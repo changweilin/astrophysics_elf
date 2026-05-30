@@ -1275,7 +1275,7 @@
     if (bin && bin.enabled) {
       const pet = bin.lastPeters;
       omegaGW = Math.max(0.15, pet.omega * 2);
-      hAmp = Math.min(1.2, pet.Mc * 0.9 / Math.max(0.5, bin.d));
+      hAmp = Math.max(0.12, Math.min(1.2, pet.Mc * 0.9 / Math.max(0.5, bin.d)));
       waveCx = bin.cx; waveCy = bin.cy; wave = true;
     } else {
       const { rplus } = phys.horizons(sim.params.M, sim.params.Q, sim.params.a);
@@ -1297,7 +1297,14 @@
       }
     }
 
-    const vwave = 7;        // visual wavefront speed (M per unit sim-time)
+    // Visual GW wavefront. The temporal/spatial scales are a *visualisation*
+    // mapping (like inspiralRate), decoupled from the slow physical ω so a few
+    // crests actually fit the viewport and visibly travel outward. The spatial
+    // wavenumber tracks ω, so the ripples tighten into a chirp as the orbit
+    // speeds up toward merger.
+    const vwave = 4;        // visual wavefront speed (M per unit sim-time)
+    const kGW = wave ? Math.max(0.45, Math.min(1.6, omegaGW * 3.3)) : 0;
+    const omegaVis = kGW * vwave;   // temporal rate consistent with vwave
     const t = sim.t;
 
     // World-space field sample → radial funnel + frame-drag shear (displacement),
@@ -1334,9 +1341,19 @@
       if (wave) {
         const ex = wx - waveCx, ey = wy - waveCy;
         const r = Math.hypot(ex, ey) + 0.6;
+        const ux = ex / r, uy = ey / r;
         const th = Math.atan2(ey, ex);
-        const env = hAmp / Math.sqrt(r) * Math.exp(-r / 110);   // 1/√r + far fade
-        hgt = env * Math.cos(2 * th - omegaGW * (t - r / vwave));
+        // Outgoing quadrupole wave: 2θ lobes, crests travelling out at vwave.
+        const phase = 2 * th + kGW * r - omegaVis * t;
+        const env = hAmp / Math.sqrt(r) * Math.exp(-r / 90);   // 1/√r + far fade
+        const osc = Math.cos(phase);
+        hgt = env * osc;
+        // Transverse-traceless strain actually displaces the lattice — a gentle
+        // radial breathing so the wavefront is *seen* travelling outward rather
+        // than only tinting the gridlines. Capped to stay soft, not flashy.
+        const wamp = Math.min(0.5, env * 9);   // world units (M)
+        dispx += ux * wamp * osc;
+        dispy += uy * wamp * osc;
       }
       return { dispx, dispy, hgt, well };
     }
@@ -1369,8 +1386,8 @@
     const segStyle = (hm, wm) => {
       const wn = Math.min(1, wm * 0.55);
       const tt = Math.max(-1, Math.min(1, hm * 4));
-      const L = Math.max(0.06, 0.46 - 0.34 * wn + 0.22 * tt).toFixed(3);
-      const A = Math.min(0.72, 0.12 + 0.34 * wn + 0.16 * Math.abs(tt)).toFixed(3);
+      const L = Math.max(0.06, 0.46 - 0.34 * wn + 0.30 * tt).toFixed(3);
+      const A = Math.min(0.78, 0.12 + 0.34 * wn + 0.24 * Math.abs(tt)).toFixed(3);
       return `oklch(${L} 0.05 288 / ${A})`;
     };
 

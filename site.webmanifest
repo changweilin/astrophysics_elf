@@ -1,0 +1,12 @@
+{
+  "name": "Kerr-Newman Black Hole Laboratory",
+  "short_name": "KN Lab",
+  "description": "Interactive Kerr-Newman black hole laboratory and physics demo.",
+  "icons": [
+    { "src": "/logos/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/logos/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "theme_color": "#0b0d12",
+  "background_color": "#0b0d12",
+  "display": "standalone"
+}
