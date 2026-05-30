@@ -185,6 +185,7 @@ function MobileApp() {
         if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1
             || (prevHit && prevHit.kind === 'companion')) {
           const vc = window.KNSim.circularizeBinary(MSIM);
+          setPlaying(true);   // double-tap → resume play
           window.KNSim.logEv(MSIM, 'good', `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`);
           return true;
         }
@@ -201,6 +202,7 @@ function MobileApp() {
       }
       if (best) {
         const vc = window.KNSim.circularizeBody(MSIM, best);
+        setPlaying(true);   // double-tap → resume play
         MSIM.selectedId = best.id;
         window.KNSim.logEv(MSIM, 'good', `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`);
         return true;
@@ -410,6 +412,7 @@ function MobileApp() {
       // Placement release
       if (MSIM.placement) {
         if (inside) {
+          setPlaying(false);   // placed → pause until a fling or double-tap resumes
           const [wx, wy] = window.KNSim.screenToWorld(MSIM, w, h, sx, sy);
           const it = MSIM.placement.item;
           if (it.isCompanion) {
@@ -478,6 +481,7 @@ function MobileApp() {
             window.KNSim.logEv(MSIM, 'good', `${body.name} launched · v₀ = ${v.toFixed(3)} c`);
           }
         }
+        setPlaying(true);   // fling committed → resume play
         MSIM.aiming = null;
         pan = null;
         suppressTap = true; setTimeout(() => { suppressTap = false; }, 80);

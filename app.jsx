@@ -156,6 +156,7 @@ function App() {
       // 1) Placement release: commit body + enter aim mode
       if (SIM.placement) {
         if (inside) {
+          setPlaying(false);   // placed → pause until a fling or double-click resumes
           const [wx, wy] = window.KNSim.screenToWorld(SIM, w, h, sx, sy);
           const it = SIM.placement.item;
           if (it.isCompanion) {
@@ -225,6 +226,7 @@ function App() {
             window.KNSim.logEv(SIM, 'good', `${body.name} launched · v₀ = ${v.toFixed(3)} c`);
           }
         }
+        setPlaying(true);   // fling committed → resume play
         SIM.aiming = null;
         pan = null;
         suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
@@ -344,6 +346,7 @@ function App() {
         if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1
             || (recent && lastDown.kind === 'companion')) {
           const vc = window.KNSim.circularizeBinary(SIM);
+          setPlaying(true);   // double-click → resume play
           window.KNSim.logEv(SIM, 'good', `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`);
           force();
           return;
@@ -362,6 +365,7 @@ function App() {
       }
       if (best) {
         const vc = window.KNSim.circularizeBody(SIM, best);
+        setPlaying(true);   // double-click → resume play
         SIM.selectedId = best.id;
         window.KNSim.logEv(SIM, 'good', `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`);
         force();
