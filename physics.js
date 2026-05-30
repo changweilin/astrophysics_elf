@@ -133,11 +133,11 @@
         const inv1 = 1 / (r1 * r1sq);
         ax += -G * M1 * d1x * inv1;
         ay += -G * M1 * d1y * inv1;
-        // Frame dragging on primary
+        // Frame dragging on primary (gravitomagnetic, perpendicular to v → no work)
         if (Math.abs(a) > 1e-6) {
-          const drag = (2 * a * M1) / (r1 * r1sq);
-          ax += drag * (-d1y / r1);
-          ay += drag * ( d1x / r1);
+          const Bg = (2 * a * M1) / (r1 * r1sq);
+          ax += Bg * vy;
+          ay += -Bg * vx;
         }
         // Coulomb on charged probe from primary
         if (Math.abs(Q) > 1e-6 && Math.abs(bodyCharge) > 1e-6) {
@@ -153,11 +153,11 @@
         const inv2 = 1 / (r2 * r2sq);
         ax += -G * M2 * d2x * inv2;
         ay += -G * M2 * d2y * inv2;
-        // Frame dragging from companion
+        // Frame dragging from companion (gravitomagnetic, perpendicular to v → no work)
         if (Math.abs(a2) > 1e-6) {
-          const drag2 = (2 * a2 * M2) / (r2 * r2sq);
-          ax += drag2 * (-d2y / r2);
-          ay += drag2 * ( d2x / r2);
+          const Bg2 = (2 * a2 * M2) / (r2 * r2sq);
+          ax += Bg2 * vy;
+          ay += -Bg2 * vx;
         }
         // Coulomb from companion charge
         if (Math.abs(Q2) > 1e-6 && Math.abs(bodyCharge) > 1e-6) {
@@ -186,13 +186,16 @@
     ax -= corr * px / r;
     ay -= corr * py / r;
 
-    // Frame dragging — Lense-Thirring tangential drag
+    // Frame dragging — Lense-Thirring as a gravitomagnetic force (~ v × B_g,
+    // with B_g = 2 a M / r^3 along the spin axis). Because it is perpendicular to
+    // the velocity it does NO work, so it precesses orbits without injecting
+    // energy. The previous fixed-tangential push did positive work on every
+    // co-rotating (prograde) orbit, steadily spinning bodies up and flinging them
+    // outward — a violation of energy conservation, not real frame dragging.
     if (Math.abs(a) > 1e-6) {
-      const drag = (2 * a * M) / (r2 * r);
-      const tx = -py / r;
-      const ty = px / r;
-      ax += drag * tx;
-      ay += drag * ty;
+      const Bg = (2 * a * M) / (r2 * r);
+      ax += Bg * vy;
+      ay += -Bg * vx;
     }
 
     // Coulomb (charged BH on charged probe)

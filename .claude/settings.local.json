@@ -38,7 +38,11 @@
       "Bash(\"/c/Program Files/Google/Chrome/Application/chrome.exe\" --headless --disable-gpu --dump-dom --virtual-time-budget=6000 \"http://127.0.0.1:5184/\")",
       "Bash(\"/c/Program Files/Google/Chrome/Application/chrome.exe\" --headless --disable-gpu --enable-logging=stderr --v=0 --virtual-time-budget=7000 --dump-dom \"http://127.0.0.1:5184/\")",
       "Bash(\"/c/Program Files/Google/Chrome/Application/chrome.exe\" --headless --disable-gpu --virtual-time-budget=20000 --dump-dom \"http://127.0.0.1:5184/_gwtest.html\")",
-      "Bash(pkill -f serve.mjs)"
+      "Bash(pkill -f serve.mjs)",
+      "Bash(/usr/bin/grep -n \"push\" sim.js)",
+      "Bash(awk NR>=170 && NR<=235 *)",
+      "Bash(echo \"check_exit=$?\")",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }
