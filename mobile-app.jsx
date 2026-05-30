@@ -175,14 +175,15 @@ function MobileApp() {
     // Double-tap → snap onto a classical stable periodic orbit (mobile twin of
     // the desktop dblclick). A binary star circularises the pair; any other body
     // keeps its direction but takes the local v_circ. Returns true if it acted.
-    function handleDoubleTap(sx, sy, w, h) {
+    function handleDoubleTap(sx, sy, w, h, prevHit) {
       if (MSIM.binary && MSIM.binary.enabled) {
         const bin = MSIM.binary;
         const [c2x, c2y] = window.KNSim.worldToScreen(MSIM, w, h, bin.x2, bin.y2);
         const r2 = Math.max(18, starVisualR(bin.M2, bin.Q2, bin.a2, bin.type, bin.R_star2) + 6);
         const [c1x, c1y] = window.KNSim.worldToScreen(MSIM, w, h, bin.x1, bin.y1);
         const r1 = Math.max(18, starVisualR(MSIM.params.M, MSIM.params.Q, MSIM.params.a, MSIM.params.type, MSIM.params.R_star) + 6);
-        if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1) {
+        if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1
+            || (prevHit && prevHit.kind === 'companion')) {
           const vc = window.KNSim.circularizeBinary(MSIM);
           window.KNSim.logEv(MSIM, 'good', `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`);
           return true;
@@ -194,6 +195,9 @@ function MobileApp() {
         const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, b.x, b.y);
         const d = Math.hypot(bx - sx, by - sy);
         if (d < bestD) { bestD = d; best = b; }
+      }
+      if (!best && prevHit && prevHit.kind === 'body') {
+        best = MSIM.bodies.find((b) => b.id === prevHit.bodyId && b.state === 'orbit') || null;
       }
       if (best) {
         const vc = window.KNSim.circularizeBody(MSIM, best);
@@ -246,13 +250,34 @@ function MobileApp() {
       downAt = { sx, sy };
       movedSinceDown = false;
 
-      // If aiming-armed: begin aim drag
+      // Aiming-armed (just-placed body/companion): begin the slingshot ONLY when
+      // the press starts on that held object; a press elsewhere commits it and
+      // falls through, so it can no longer be flung from empty space.
       if (MSIM.aiming && !MSIM.aiming.isAiming) {
-        MSIM.aiming.isAiming = true;
-        MSIM.aiming.pullSx = sx;
-        MSIM.aiming.pullSy = sy;
-        e.preventDefault();
-        return;
+        let onAimTarget = false;
+        if (MSIM.aiming.kind === 'companion') {
+          const bin = MSIM.binary;
+          if (bin && bin.enabled) {
+            const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, bin.x2, bin.y2);
+            const rr = Math.max(22, starVisualR(bin.M2, bin.Q2, bin.a2, bin.type, bin.R_star2) + 10);
+            onAimTarget = Math.hypot(sx - bx, sy - by) <= rr;
+          }
+        } else {
+          const body = MSIM.bodies.find((b) => b.id === MSIM.aiming.bodyId);
+          if (body) {
+            const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, body.x, body.y);
+            onAimTarget = Math.hypot(sx - bx, sy - by) <= 28;
+          }
+        }
+        if (onAimTarget) {
+          MSIM.aiming.isAiming = true;
+          MSIM.aiming.pullSx = sx;
+          MSIM.aiming.pullSy = sy;
+          e.preventDefault();
+          return;
+        }
+        MSIM.aiming = null;   // pressed off the held object → commit it; handle normally
+        force();
       }
 
       // Grab an existing body / companion: long-press → reposition, drag → re-aim v₀
@@ -366,8 +391,9 @@ function MobileApp() {
       if (!movedSinceDown && !MSIM.placement && !MSIM.aiming) {
         const now = performance.now();
         if (lastTap && now - lastTap.t < 300 && Math.hypot(sx - lastTap.sx, sy - lastTap.sy) < 30) {
+          const prevHit = lastTap.hit;
           lastTap = null;
-          if (handleDoubleTap(sx, sy, w, h)) {
+          if (handleDoubleTap(sx, sy, w, h, prevHit)) {
             clearGrab();
             pan = null;
             suppressTap = true; setTimeout(() => { suppressTap = false; }, 80);
@@ -375,7 +401,9 @@ function MobileApp() {
             return;
           }
         } else {
-          lastTap = { t: now, sx, sy };
+          // Remember what was under the finger so a double-tap still targets it
+          // even after the body drifts away between the two taps.
+          lastTap = { t: now, sx, sy, hit: hitTestGrabbable(sx, sy, w, h) };
         }
       }
 
@@ -389,20 +417,23 @@ function MobileApp() {
             // Default to the barycentre frame so both stars stay framed (switch
             // back via FRAME · FREE).
             MSIM.view.frame = 'com';
-            MSIM.aiming = { kind: 'companion', isAiming: false, pullSx: sx, pullSy: sy };
             const vc = Math.sqrt(MSIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
             window.KNSim.logEv(MSIM, 'good',
               `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`);
           } else {
             const prefix = { planet: 'PL', gas: 'GG', star: 'ST', ship: 'SS', probe: 'PR' }[it.kind];
             const suffix = bumpName(it.kind);
+            // Drop straight onto a stable circular orbit (no pickup/aim step);
+            // drag from the body to fling it, or double-tap to re-stabilise.
+            const rr = Math.max(0.5, Math.hypot(wx, wy));
+            const vc = window.KNphysics.circularSpeed(rr, MSIM.params.M) || Math.sqrt(MSIM.params.M / rr);
+            const dir = Math.sign(MSIM.params.a || 1);
             const id = window.KNSim.addBody(MSIM, {
               name: `${prefix}-${suffix} ${it.name.split(' ')[0]}`,
               kind: it.kind, radius: it.radius, binding: it.binding, charge: it.charge || 0,
-              x: wx, y: wy, vx: 0, vy: 0,
+              x: wx, y: wy, vx: -wy / rr * vc * dir, vy: wx / rr * vc * dir,
             });
             MSIM.selectedId = id;
-            MSIM.aiming = { bodyId: id, isAiming: false, pullSx: sx, pullSy: sy };
             window.KNSim.logEv(MSIM, 'good', `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`);
           }
         } else {

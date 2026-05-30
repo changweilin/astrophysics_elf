@@ -51,6 +51,8 @@ function App() {
     let pan = null;
     let suppressClick = false;
     let downAt = null;
+    let lastDown = null;        // first-press hit {kind,bodyId,sx,sy,t}; lets a
+                                // double-click resolve a body that drifted between clicks
     let grab = null;            // active body/companion grab (hold→move, drag→re-aim)
     let longPressTimer = null;  // fires → enter reposition mode
 
@@ -162,20 +164,23 @@ function App() {
             // Default the camera to the conserved barycentre so both stars stay
             // framed as they orbit (user can switch back via FRAME · FREE).
             SIM.view.frame = 'com';
-            SIM.aiming = { kind: 'companion', isAiming: false, pullSx: sx, pullSy: sy };
             const vc = Math.sqrt(SIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
             window.KNSim.logEv(SIM, 'good',
               `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`);
           } else {
             const prefix = { planet:'PL', gas:'GG', star:'ST', ship:'SS', probe:'PR' }[it.kind];
             const suffix = window.__bumpName(it.kind);
+            // Drop straight onto a stable circular orbit (no pickup/aim step);
+            // drag from the body to fling it, or double-click to re-stabilise.
+            const rr = Math.max(0.5, Math.hypot(wx, wy));
+            const vc = window.KNphysics.circularSpeed(rr, SIM.params.M) || Math.sqrt(SIM.params.M / rr);
+            const dir = Math.sign(SIM.params.a || 1);
             const id = window.KNSim.addBody(SIM, {
               name: `${prefix}-${suffix} ${it.name.split(' ')[0]}`,
               kind: it.kind, radius: it.radius, binding: it.binding, charge: it.charge || 0,
-              x: wx, y: wy, vx: 0, vy: 0,
+              x: wx, y: wy, vx: -wy / rr * vc * dir, vy: wx / rr * vc * dir,
             });
             SIM.selectedId = id;
-            SIM.aiming = { bodyId: id, isAiming: false, pullSx: sx, pullSy: sy };
             window.KNSim.logEv(SIM, 'good', `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`);
           }
         } else {
@@ -250,13 +255,35 @@ function App() {
     function onDown(e) {
       const { sx, sy, w, h } = clientToCanvas(e);
       downAt = { sx, sy };
-      // If aiming-armed (body placed, not yet aimed): start aim drag
+      // Aiming-armed (just-placed body/companion, not yet flung): start the
+      // slingshot ONLY when the press begins on that held object. A press
+      // elsewhere commits it as-is and falls through to normal interaction, so it
+      // can no longer be flung from empty space.
       if (SIM.aiming && !SIM.aiming.isAiming) {
-        SIM.aiming.isAiming = true;
-        SIM.aiming.pullSx = sx;
-        SIM.aiming.pullSy = sy;
-        e.preventDefault();
-        return;
+        let onAimTarget = false;
+        if (SIM.aiming.kind === 'companion') {
+          const bin = SIM.binary;
+          if (bin && bin.enabled) {
+            const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, bin.x2, bin.y2);
+            const rr = Math.max(18, starVisualR(bin.M2, bin.Q2, bin.a2, bin.type, bin.R_star2) + 8);
+            onAimTarget = Math.hypot(sx - bx, sy - by) <= rr;
+          }
+        } else {
+          const body = SIM.bodies.find((b) => b.id === SIM.aiming.bodyId);
+          if (body) {
+            const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, body.x, body.y);
+            onAimTarget = Math.hypot(sx - bx, sy - by) <= 24;
+          }
+        }
+        if (onAimTarget) {
+          SIM.aiming.isAiming = true;
+          SIM.aiming.pullSx = sx;
+          SIM.aiming.pullSy = sy;
+          e.preventDefault();
+          return;
+        }
+        SIM.aiming = null;   // pressed off the held object → commit it; handle normally
+        force();
       }
       // Grab an existing body / companion: long-press → reposition, drag → re-aim v₀
       if (!SIM.placement && !SIM.aiming) {
@@ -264,6 +291,7 @@ function App() {
         if (hit) {
           if (hit.kind === 'body') SIM.selectedId = hit.bodyId;
           grab = { ...hit, startSx: sx, startSy: sy, mode: 'pending' };
+          lastDown = { kind: hit.kind, bodyId: hit.bodyId, sx, sy, t: performance.now() };
           longPressTimer = setTimeout(() => {
             if (grab && grab.mode === 'pending') {
               grab.mode = 'move';
@@ -302,6 +330,10 @@ function App() {
     function onDblClick(e) {
       if (SIM.placement || SIM.aiming) return;
       const { sx, sy, w, h } = clientToCanvas(e);
+      // A body drifts between the two clicks, so a live hit-test at the cursor can
+      // miss it; fall back to whatever the first press hit, if recent and nearby.
+      const recent = lastDown && (performance.now() - lastDown.t < 700)
+        && Math.hypot(sx - lastDown.sx, sy - lastDown.sy) < 44;
       // Binary star first (primary at x1,y1 / companion at x2,y2)
       if (SIM.binary && SIM.binary.enabled) {
         const bin = SIM.binary;
@@ -309,7 +341,8 @@ function App() {
         const r2 = Math.max(14, starVisualR(bin.M2, bin.Q2, bin.a2, bin.type, bin.R_star2) + 4);
         const [c1x, c1y] = window.KNSim.worldToScreen(SIM, w, h, bin.x1, bin.y1);
         const r1 = Math.max(14, starVisualR(SIM.params.M, SIM.params.Q, SIM.params.a, SIM.params.type, SIM.params.R_star) + 4);
-        if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1) {
+        if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1
+            || (recent && lastDown.kind === 'companion')) {
           const vc = window.KNSim.circularizeBinary(SIM);
           window.KNSim.logEv(SIM, 'good', `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`);
           force();
@@ -323,6 +356,9 @@ function App() {
         const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, b.x, b.y);
         const d = Math.hypot(bx - sx, by - sy);
         if (d < bestD) { bestD = d; best = b; }
+      }
+      if (!best && recent && lastDown.kind === 'body') {
+        best = SIM.bodies.find((b) => b.id === lastDown.bodyId && b.state === 'orbit') || null;
       }
       if (best) {
         const vc = window.KNSim.circularizeBody(SIM, best);
