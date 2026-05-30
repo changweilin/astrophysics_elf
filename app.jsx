@@ -184,12 +184,12 @@ function App() {
             SIM.selectedId = id;
             window.KNSim.logEv(SIM, 'good', `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`);
           }
-        } else {
-          window.KNSim.logEv(SIM, 'warn', `placement cancelled`);
+          SIM.placement = null;
+          suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
         }
-        SIM.placement = null;
-        pan = null;   // a click-armed placement (companion) left a stale pan grab
-        suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
+        // Released outside the canvas: keep the item armed so a later click on the
+        // target point drops it (click-to-arm, then click-to-place). ESC cancels.
+        pan = null;
         force();
         return;
       }
