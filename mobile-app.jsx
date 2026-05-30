@@ -27,15 +27,64 @@ function bumpName(kind) {
   return String(mobileNameCounters[kind]).padStart(2, '0');
 }
 
+// Settings-drawer split geometry. The splitter trades vertical space between the
+// universe viewport (above) and the settings cluster (dock + tabs + drawer).
+const M_DRAWER_DEFAULT = 300;  // px — comfortable open height
+const M_VIEW_MIN = 0;          // px — universe may collapse fully (just the top bar)
+
 // ─── Main MobileApp component ─────────────────────────────
 function MobileApp() {
   const [, setTick] = useStateApp(0);
   const [playing, setPlaying] = useStateApp(true);
   const [timescale, setTimescale] = useStateApp(() => isFinite(MSIM.timescale) ? MSIM.timescale : 1);
   const [tab, setTab] = useStateApp('hole'); // hole | objects | spawn | disc
-  const [drawerOpen, setDrawerOpen] = useStateApp(true);
+  const [drawerH, setDrawerH] = useStateApp(M_DRAWER_DEFAULT); // settings-drawer height (px)
+  const [snapping, setSnapping] = useStateApp(false);          // animate height on dbl-tap
   const canvasRef = useRefApp(null);
+  const viewRef = useRefApp(null);
+  const drawerRef = useRefApp(null);
+  const snapTimer = useRefApp(null);
   const force = () => setTick((t) => t + 1);
+
+  // ─── Universe ↔ settings splitter ───────────────────────
+  // The pie is the height shared between the viewport and the drawer; the fixed
+  // chrome (header, chips, splitter, dock, tabs) sits outside it.
+  const drawerPie = () => {
+    const v = viewRef.current, d = drawerRef.current;
+    return (v && d) ? v.offsetHeight + d.offsetHeight : null;
+  };
+  const drawerMax = () => {
+    const pie = drawerPie();
+    return pie == null ? Infinity : Math.max(0, pie - M_VIEW_MIN);
+  };
+  const snapDrawer = (updater) => {
+    setSnapping(true);
+    const max = drawerMax();
+    setDrawerH((h) => {
+      const next = typeof updater === 'function' ? updater(h) : updater;
+      return Math.max(0, Math.min(max, next));
+    });
+    window.clearTimeout(snapTimer.current);
+    snapTimer.current = window.setTimeout(() => setSnapping(false), 260);
+  };
+  const openDrawer = () => snapDrawer((h) => (h > 60 ? h : M_DRAWER_DEFAULT));
+  const onSplitterDown = (e) => {
+    e.preventDefault();
+    setSnapping(false);
+    const max = drawerMax();
+    const startY = e.clientY;
+    const startH = drawerRef.current ? drawerRef.current.offsetHeight : drawerH;
+    const move = (ev) => setDrawerH(Math.max(0, Math.min(max, startH + (startY - ev.clientY))));
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  // Double-tap toggles the two snap extremes: collapsed (show just the tabs) ↔
+  // expanded (universe collapses, show just the top bar).
+  const onSplitterDouble = () => snapDrawer((h) => (h > 4 ? 0 : drawerMax()));
 
   // Persist the chosen configuration so it survives a reload (see app.jsx).
   useEffectApp(() => {
@@ -58,7 +107,7 @@ function MobileApp() {
   const armPlacement = (it) => {
     MSIM.placement = { item: it, wx: 0, wy: 0, inCanvas: false };
     window.KNSim.logEv(MSIM, 'amber', `placing ${it.name}… tap viewport to drop`);
-    setDrawerOpen(false);
+    snapDrawer(0);
     force();
   };
 
@@ -135,7 +184,7 @@ function MobileApp() {
         const r1 = Math.max(18, starVisualR(MSIM.params.M, MSIM.params.Q, MSIM.params.a, MSIM.params.type, MSIM.params.R_star) + 6);
         if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1) {
           const vc = window.KNSim.circularizeBinary(MSIM);
-          window.KNSim.logEv(MSIM, 'good', `binary circularised · v_circ=${vc.toFixed(3)} c · GW inspiral active → orbit will decay`);
+          window.KNSim.logEv(MSIM, 'good', `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`);
           return true;
         }
       }
@@ -522,7 +571,7 @@ function MobileApp() {
       </div>
 
       {/* Viewport */}
-      <div className="m-view">
+      <div className="m-view" ref={viewRef}>
         <canvas ref={canvasRef} />
 
         <div className="m-view-tl">
@@ -588,6 +637,15 @@ function MobileApp() {
         </div>
       </div>
 
+      {/* Splitter — divides the universe viewport from the settings cluster.
+          Drag to resize; double-tap toggles tabs-only ↔ top-bar-only. */}
+      <div className="m-splitter"
+        onPointerDown={onSplitterDown}
+        onDoubleClick={onSplitterDouble}
+        title="拖曳調整宇宙／設定比例 · 雙擊收合或展開">
+        <span className="grip" />
+      </div>
+
       {/* Bottom dock — playback */}
       <div className="m-dock">
         <button className="play" onClick={() => setPlaying(!playing)}>
@@ -603,27 +661,28 @@ function MobileApp() {
       {/* Tab nav */}
       <div className="m-tabs">
         <button className={tab === 'hole' ? 'on' : ''}
-          onClick={() => { setTab('hole'); setDrawerOpen(true); }}>
+          onClick={() => { setTab('hole'); openDrawer(); }}>
           <span className="ic">◉</span>BLACK HOLE
         </button>
         <button className={tab === 'objects' ? 'on' : ''}
-          onClick={() => { setTab('objects'); setDrawerOpen(true); }}>
+          onClick={() => { setTab('objects'); openDrawer(); }}>
           <span className="ic">●</span>OBJECTS
           {MSIM.bodies.length > 0 && <span className="badge">{MSIM.bodies.length}</span>}
         </button>
         <button className={tab === 'spawn' ? 'on' : ''}
-          onClick={() => { setTab('spawn'); setDrawerOpen(true); }}>
+          onClick={() => { setTab('spawn'); openDrawer(); }}>
           <span className="ic">+</span>SPAWN
         </button>
         <button className={tab === 'disc' ? 'on' : ''}
-          onClick={() => { setTab('disc'); setDrawerOpen(true); }}>
+          onClick={() => { setTab('disc'); openDrawer(); }}>
           <span className="ic">◌</span>DISC
           {sim_disc_active(MSIM) && <span className="badge">●</span>}
         </button>
       </div>
 
       {/* Drawer */}
-      <div className={`m-drawer ${drawerOpen ? '' : 'collapsed'}`}>
+      <div className="m-drawer" ref={drawerRef}
+        style={{ height: drawerH, transition: snapping ? 'height 0.22s ease' : 'none' }}>
         <div className="m-drawer-body">
           {tab === 'hole'    && <TabBlackHole sim={MSIM} force={force} />}
           {tab === 'objects' && <TabObjects   sim={MSIM} force={force} />}

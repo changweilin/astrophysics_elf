@@ -311,7 +311,7 @@ function App() {
         const r1 = Math.max(14, starVisualR(SIM.params.M, SIM.params.Q, SIM.params.a, SIM.params.type, SIM.params.R_star) + 4);
         if (Math.hypot(sx - c2x, sy - c2y) <= r2 || Math.hypot(sx - c1x, sy - c1y) <= r1) {
           const vc = window.KNSim.circularizeBinary(SIM);
-          window.KNSim.logEv(SIM, 'good', `binary circularised · v_circ=${vc.toFixed(3)} c · GW inspiral active → orbit will decay`);
+          window.KNSim.logEv(SIM, 'good', `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`);
           force();
           return;
         }

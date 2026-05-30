@@ -60,8 +60,10 @@ html, body {
   flex-direction: column;
   background: var(--bg-0);
   position: relative;
-  padding-top: 56px;       /* clear iOS status bar / dynamic island */
-  padding-bottom: 30px;    /* clear home indicator */
+  /* Respect a real notch/home-indicator, but collapse to nothing in the
+     edge-to-edge browser so no blank band sits above the header. */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
@@ -136,11 +138,31 @@ html, body {
 .m-view {
   position: relative;
   flex: 1;
-  min-height: 220px;
+  min-height: 0;           /* splitter may collapse the universe to show the top bar */
   background: var(--bg-0);
   overflow: hidden;
   touch-action: none;
 }
+
+/* ─── Universe ↔ settings splitter ───────────────────────── */
+.m-splitter {
+  flex-shrink: 0;
+  height: 16px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.m-splitter .grip {
+  width: 38px; height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 0.15s ease;
+}
+.m-splitter:hover .grip { background: var(--fg-3); }
+.m-splitter:active .grip { background: var(--amber); }
 .m-view canvas {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
@@ -414,14 +436,11 @@ html, body {
 .m-drawer {
   flex-shrink: 0;
   background: var(--bg-1);
-  height: 320px;
-  max-height: 50vh;
+  /* height + transition are set inline (splitter-driven); see mobile-app.jsx */
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: height 0.18s ease;
 }
-.m-drawer.collapsed { height: 0; }
 
 .m-drawer-body {
   flex: 1;

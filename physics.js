@@ -275,9 +275,21 @@
     return `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${hue.toFixed(0)} / ${alpha})`;
   }
 
+  // Circular-orbit speed for the single-BH effective potential (see acceleration).
+  // Balancing v²/r against the radial pull M/r² + 3M·(v·r)²/r⁵ for a circular
+  // orbit (where v_t = v) gives  v_circ² = (M/r) / (1 − 3M/r²).
+  // Pure-Newtonian √(M/r) ignores the denominator, so it is too slow for the well
+  // and a body set to it spirals in and merges. Returns 0 where no circular orbit
+  // exists (r ≤ √(3M), inside the effective photon sphere); callers fall back.
+  function circularSpeed(r, M) {
+    const denom = 1 - (3 * G * M) / (r * r);
+    if (denom <= 1e-6) return 0;
+    return Math.sqrt((G * M / r) / denom);
+  }
+
   window.KNphysics = {
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
-    classify, acceleration, tidalStress, r_s, peters, mergerRemnant,
+    classify, acceleration, circularSpeed, tidalStress, r_s, peters, mergerRemnant,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
   };
 })();

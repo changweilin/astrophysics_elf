@@ -198,7 +198,7 @@
     // the binary radiates as a single quadrupole, not two separate sources. The
     // chirp steepens as r shrinks (∝ r⁻⁵). A double-BH pair ends in merger below;
     // other pairs spiral in until their surfaces touch. Strength: inspiralRate.
-    if (vrel > 1e-4) {
+    if (vrel > 1e-4 && !bin.classical) {
       const dEdt = (32 / 5) * M1 * M1 * M2 * M2 * Mt / Math.pow(r, 5);
       const mu = (M1 * M2) / Mt;
       let aDrag = (dEdt / (mu * vrel)) * bin.inspiralRate;
@@ -497,14 +497,16 @@
 
   // ── Double-click → classical stable periodic orbit ────────
   // Regular body: keep the current direction of motion, rescale speed to the
-  // local circular velocity v_circ = sqrt(M / r) about the primary (an at-rest
-  // body gets a tangential kick). Returns the applied speed.
+  // local circular velocity of the demo's GR-augmented potential about the
+  // primary (an at-rest body gets a tangential kick → circle; a moving one keeps
+  // its heading → circle or ellipse). The pure-Newtonian sqrt(M/r) is too slow
+  // for the well and makes the body spiral in and merge. Returns the speed.
   function circularizeBody(sim, b) {
     if (!b) return 0;
     const p = sim.primary;
     const dx = b.x - p.x, dy = b.y - p.y;
     const r = Math.max(0.5, Math.hypot(dx, dy));
-    const vc = Math.sqrt(sim.params.M / r);
+    const vc = window.KNphysics.circularSpeed(r, sim.params.M) || Math.sqrt(sim.params.M / r);
     const sp = Math.hypot(b.vx, b.vy);
     if (sp > 1e-6) {
       b.vx = b.vx / sp * vc;
@@ -530,6 +532,9 @@
     const dx = bin.x2 - bin.x1, dy = bin.y2 - bin.y1;
     const d = Math.max(0.5, Math.hypot(dx, dy));
     bin.d = d;
+    // Settle into a STABLE classical circle: pause the GW inspiral so the pair
+    // holds its separation (re-throwing via setBinaryVelocity resumes inspiral).
+    bin.classical = true;
     const vrel = Math.sqrt(Mt / d);
     const dir = Math.sign(sim.params.a || 1);
     const Vx = -dy / d * vrel * dir;
@@ -546,6 +551,7 @@
     const bin = sim.binary;
     if (!bin || !bin.enabled) return;
     const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
+    bin.classical = false;   // a freshly thrown pair free-inspirals again
     // v₂ = (M1/Mt)·V  ⇒  relative velocity V = v₂·Mt/M1
     splitTwoBody(bin, M1, M2, vx2 * Mt / M1, vy2 * Mt / M1);
     bin.trail1.length = 0;
