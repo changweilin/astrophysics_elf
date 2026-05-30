@@ -293,7 +293,8 @@ function LeftPanel({ sim, force }) {
   const companionAiming  = sim.aiming && sim.aiming.kind === 'companion';
   const companionArmed   = companionPlacing || companionAiming;
 
-  function activateCompanionTab() {
+  function activateCompanionTab(e) {
+    if (e && e.preventDefault) e.preventDefault();   // press-drag like body cards
     setActiveBody('companion');
     if (!bin) return;
     if (bin.enabled) return;
@@ -332,12 +333,12 @@ function LeftPanel({ sim, force }) {
             <span className="g">⦿</span><span className="l">Central Body</span>
           </button>
           <button className={`body-tab companion ${activeBody === 'companion' ? 'on' : ''} ${companionArmed ? 'armed' : ''}`}
-            onClick={activateCompanionTab}
+            onMouseDown={activateCompanionTab}
             title="同 Central Body 的參數，可拖入視圖放置並拖曳設定 v₀">
             <span className="g">{bin && bin.enabled ? '◐' : '+'}</span>
             <span className="l">{bin && bin.enabled ? `Binary Companion · M₂=${bin.M2.toFixed(2)}` : (companionPlacing ? 'Placing…' : 'Binary Companion')}</span>
             {bin && bin.enabled && activeBody === 'companion' && (
-              <span className="companion-x" onClick={removeCompanion} title="remove companion">×</span>
+              <span className="companion-x" onMouseDown={(e) => e.stopPropagation()} onClick={removeCompanion} title="remove companion">×</span>
             )}
           </button>
         </div>
