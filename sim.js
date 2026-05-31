@@ -65,6 +65,7 @@
       a2: 0,             // companion spin (J2 / M2 c)
       R_star2: 3.0,      // companion surface radius (used when type !== 'bh')
       T_eff2: 1e6,       // companion photosphere temperature
+      B2: 0,             // companion magnetic field (drives its own Blandford-Znajek jet)
       d:  18,            // current separation
       d0: 18,            // initial separation (for inspiral progress bar)
       theta: 0,          // orbital phase
@@ -1561,7 +1562,7 @@
     const p = sim.params || {}, d = sim.disc, b = sim.binary, f = sim.flags || {}, v = sim.view || {};
     const binSnap = b ? {
       type: b.type, M2: b.M2, Q2: b.Q2, a2: b.a2,
-      R_star2: b.R_star2, T_eff2: b.T_eff2, d: b.d,
+      R_star2: b.R_star2, T_eff2: b.T_eff2, B2: b.B2, d: b.d,
       _stellarTouched: !!b._stellarTouched,
       enabled: !!b.enabled,
       merged: !!b.merged, eMergerGW: b.eMergerGW || 0,
@@ -1580,6 +1581,7 @@
         _stellarTouched: !!p._stellarTouched,
       },
       disc: d ? { enabled: !!d.enabled, alpha: d.alpha, emissionRate: d.emissionRate } : null,
+      disc2: sim.disc2 ? { enabled: !!sim.disc2.enabled, alpha: sim.disc2.alpha, emissionRate: sim.disc2.emissionRate } : null,
       binary: binSnap,
       flags: { ...f },
       view: { scale: v.scale },
@@ -1637,6 +1639,11 @@
       if (isNum(cfg.disc.alpha)) sim.disc.alpha = cfg.disc.alpha;
       if (isNum(cfg.disc.emissionRate)) sim.disc.emissionRate = cfg.disc.emissionRate;
     }
+    if (cfg.disc2 && sim.disc2) {
+      sim.disc2.enabled = !!cfg.disc2.enabled;
+      if (isNum(cfg.disc2.alpha)) sim.disc2.alpha = cfg.disc2.alpha;
+      if (isNum(cfg.disc2.emissionRate)) sim.disc2.emissionRate = cfg.disc2.emissionRate;
+    }
     if (cfg.binary && sim.binary) {
       const b = cfg.binary, B = sim.binary;
       if (TYPES[b.type]) B.type = b.type;
@@ -1645,6 +1652,7 @@
       if (isNum(b.a2)) B.a2 = b.a2;
       if (isNum(b.R_star2)) B.R_star2 = b.R_star2;
       if (isNum(b.T_eff2)) B.T_eff2 = b.T_eff2;
+      if (isNum(b.B2)) B.B2 = b.B2;
       if (isNum(b.d)) { B.d = b.d; B.d0 = b.d; }
       B._stellarTouched = !!b._stellarTouched;
       B.merged = !!b.merged;

@@ -11,8 +11,8 @@
 (function () {
   const phys = window.KNphysics;
 
-  function initDisc(sim) {
-    sim.disc = {
+  function makeDisc() {
+    return {
       enabled: false,
       particles: [],
       alpha: 0.18,
@@ -27,123 +27,176 @@
       totalAccreted: 0,
       lastFlareT: -10,
     };
+  }
+
+  function initDisc(sim) {
+    sim.disc = makeDisc();   // primary accretion disc
+    sim.disc2 = makeDisc();  // companion accretion disc (binary mode only)
     if (sim.params.B == null) sim.params.B = 0.30;
   }
 
-  function spawnParticle(sim) {
-    const r = sim.disc.outerR + (Math.random() - 0.5) * 3;
+  // Describe the star a disc orbits: world centre + bulk velocity (so the swarm
+  // co-moves with a primary that is itself orbiting the barycentre) plus the
+  // mass/spin/charge/field that set its ISCO, capture radius and jet power.
+  function primaryHost(sim) {
+    const bin = sim.binary, useBin = bin && bin.enabled;
+    const p = sim.primary;
+    return {
+      cx: useBin ? bin.x1 : p.x, cy: useBin ? bin.y1 : p.y,
+      vx: useBin ? bin.vx1 : (p.vx || 0), vy: useBin ? bin.vy1 : (p.vy || 0),
+      M: sim.params.M, Q: sim.params.Q, a: sim.params.a, B: sim.params.B || 0,
+      type: sim.params.type || 'bh', R_star: sim.params.R_star || 3,
+    };
+  }
+  function companionHost(sim) {
+    const bin = sim.binary;
+    if (!bin || !bin.enabled) return null;
+    return {
+      cx: bin.x2, cy: bin.y2, vx: bin.vx2, vy: bin.vy2,
+      M: bin.M2, Q: bin.Q2 || 0, a: bin.a2 || 0, B: bin.B2 || 0,
+      type: bin.type || 'bh', R_star: bin.R_star2 || 3,
+    };
+  }
+
+  function captureRadius(host) {
+    if (host.type !== 'bh') return Math.max(0.4, host.R_star || 3);
+    const { rplus, naked } = phys.horizons(host.M, host.Q, host.a);
+    if (naked) return 0.4;
+    return Math.max(rplus, phys.isco(host.M, host.a) * 0.85);
+  }
+
+  function spawnParticle(disc, host) {
+    const r = disc.outerR + (Math.random() - 0.5) * 3;
     const ang = Math.random() * Math.PI * 2;
-    const sign = sim.params.a >= 0 ? 1 : -1;
-    const vCirc = Math.sqrt(sim.params.M / r);
-    sim.disc.particles.push({
-      x: Math.cos(ang) * r,
-      y: Math.sin(ang) * r,
-      vx: -Math.sin(ang) * sign * vCirc * (0.9 + Math.random() * 0.2),
-      vy:  Math.cos(ang) * sign * vCirc * (0.9 + Math.random() * 0.2),
+    const sign = host.a >= 0 ? 1 : -1;
+    const vCirc = Math.sqrt(host.M / r);
+    // Orbit is built about the host: position offset from the star, velocity is
+    // the star's bulk motion plus the local circular speed (keeps the swarm
+    // gravitationally bound to a moving primary instead of drifting to origin).
+    disc.particles.push({
+      x: host.cx + Math.cos(ang) * r,
+      y: host.cy + Math.sin(ang) * r,
+      vx: host.vx + -Math.sin(ang) * sign * vCirc * (0.9 + Math.random() * 0.2),
+      vy: host.vy +  Math.cos(ang) * sign * vCirc * (0.9 + Math.random() * 0.2),
       t: 0.05,
       age: 0,
     });
   }
 
-  function step(sim, dt) {
-    // age out flares & decay mDot even when disc is off
-    if (!sim.disc.enabled) {
-      sim.disc.mDotInst = 0;
-      sim.disc.mDot *= Math.exp(-dt * 1.5);
-    } else {
-      const { M, Q, a, B } = sim.params;
-      const type = sim.params.type || 'bh';
-      const { rplus, naked } = phys.horizons(M, Q, a);
-      const rIsco = phys.isco(M, a);
-      let cap;
-      if (type !== 'bh') {
-        cap = Math.max(0.4, sim.params.R_star || 3);
-      } else if (naked) {
-        cap = 0.4;
-      } else {
-        cap = Math.max(rplus, rIsco * 0.85);
+  // Advance one disc around its host. All radial quantities (temperature, drag,
+  // capture, escape) are measured from the host's *current* position, and the
+  // viscous drag damps velocity relative to the host's bulk motion — so the disc
+  // tracks the star whatever reference frame the camera is locked to.
+  function stepDisc(sim, disc, host, dt) {
+    if (!disc.enabled || !host) {
+      disc.mDotInst = 0;
+      disc.mDot *= Math.exp(-dt * 1.5);
+      return;
+    }
+    const M = sim.params.M, Q = sim.params.Q, a = sim.params.a;
+    const B = host.B;
+    const cap = captureRadius(host);
+
+    disc.emissionAccum += disc.emissionRate * dt;
+    while (disc.emissionAccum >= 1 && disc.particles.length < disc.maxParticles) {
+      spawnParticle(disc, host);
+      disc.emissionAccum -= 1;
+    }
+
+    disc.mDotInst = 0;
+    const dragCoef = disc.alpha * (0.05 + B * B * 0.7);
+    const mriKick = B * 0.05 * Math.sqrt(dt);
+
+    for (let i = disc.particles.length - 1; i >= 0; i--) {
+      const p = disc.particles[i];
+      // Gravity is the full system field (primary + companion when bound), so a
+      // companion disc feels the primary and vice-versa.
+      const acc = phys.acceleration(p.x, p.y, p.vx, p.vy, M, Q, a, 0, sim.binary || null);
+      p.vx += acc.ax * dt;
+      p.vy += acc.ay * dt;
+
+      const dx = p.x - host.cx, dy = p.y - host.cy;
+      const r = Math.hypot(dx, dy);
+      if (r > 0.5) {
+        const ux = dx / r, uy = dy / r;
+        const tx = -uy, ty = ux;
+        // damp the tangential component of velocity *relative to the host*
+        const rvx = p.vx - host.vx, rvy = p.vy - host.vy;
+        const vt = rvx * tx + rvy * ty;
+        const damp = Math.min(0.6, dragCoef);
+        p.vx -= tx * vt * damp;
+        p.vy -= ty * vt * damp;
       }
-
-      sim.disc.emissionAccum += sim.disc.emissionRate * dt;
-      while (sim.disc.emissionAccum >= 1 && sim.disc.particles.length < sim.disc.maxParticles) {
-        spawnParticle(sim);
-        sim.disc.emissionAccum -= 1;
+      if (B > 0.02) {
+        p.vx += (Math.random() - 0.5) * mriKick;
+        p.vy += (Math.random() - 0.5) * mriKick;
       }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.age += dt;
+      p.t = Math.min(1, Math.max(0, 1 - r / 22));
 
-      sim.disc.mDotInst = 0;
-      const dragCoef = sim.disc.alpha * (0.05 + B * B * 0.7);
-      const mriKick = B * 0.05 * Math.sqrt(dt);
-
-      for (let i = sim.disc.particles.length - 1; i >= 0; i--) {
-        const p = sim.disc.particles[i];
-        const acc = phys.acceleration(p.x, p.y, p.vx, p.vy, M, Q, a, 0, sim.binary || null);
-        p.vx += acc.ax * dt;
-        p.vy += acc.ay * dt;
-
-        const r = Math.hypot(p.x, p.y);
-        if (r > 0.5) {
-          const ux = p.x / r, uy = p.y / r;
-          const tx = -uy, ty = ux;
-          const vt = p.vx * tx + p.vy * ty;
-          const damp = Math.min(0.6, dragCoef);
-          p.vx -= tx * vt * damp;
-          p.vy -= ty * vt * damp;
-        }
-        if (B > 0.02) {
-          p.vx += (Math.random() - 0.5) * mriKick;
-          p.vy += (Math.random() - 0.5) * mriKick;
-        }
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        p.age += dt;
-        p.t = Math.min(1, Math.max(0, 1 - r / 22));
-
-        if (r < cap) {
-          sim.disc.mDotInst += 1;
-          sim.disc.totalAccreted += 1;
-          sim.disc.particles.splice(i, 1);
-        } else if (r > sim.disc.outerR * 2.1) {
-          sim.disc.particles.splice(i, 1);
-        }
+      if (r < cap) {
+        disc.mDotInst += 1;
+        disc.totalAccreted += 1;
+        disc.particles.splice(i, 1);
+      } else if (r > disc.outerR * 2.1) {
+        disc.particles.splice(i, 1);
       }
-      sim.disc.mDot = sim.disc.mDot * 0.93 + (sim.disc.mDotInst / Math.max(dt, 0.001)) * 0.07;
+    }
+    disc.mDot = disc.mDot * 0.93 + (disc.mDotInst / Math.max(dt, 0.001)) * 0.07;
 
-      // Reconnection flares
-      if (B > 0.08 && sim.disc.particles.length > 25) {
-        sim.disc.reconnectAccum += B * B * 0.7 * dt;
-        while (sim.disc.reconnectAccum >= 1) {
-          sim.disc.reconnectAccum -= 1;
-          const seed = sim.disc.particles[Math.floor(Math.random() * sim.disc.particles.length)];
-          if (seed) {
-            sim.disc.reconnects.push({
-              x: seed.x, y: seed.y,
-              ang: Math.atan2(seed.vy, seed.vx),
-              age: 0,
-              life: 0.5 + Math.random() * 0.5,
-              size: 0.6 + B,
-            });
-            sim.disc.lastFlareT = sim.t;
-            if (sim.t - (sim.disc._lastLog || -10) > 1.2) {
-              window.KNSim.logEv(sim, 'amber',
-                `MHD reconnection · r=${Math.hypot(seed.x, seed.y).toFixed(1)} M · ΔE ≈ ${(B*B*5).toFixed(2)}`);
-              sim.disc._lastLog = sim.t;
-            }
+    // Reconnection flares
+    if (B > 0.08 && disc.particles.length > 25) {
+      disc.reconnectAccum += B * B * 0.7 * dt;
+      while (disc.reconnectAccum >= 1) {
+        disc.reconnectAccum -= 1;
+        const seed = disc.particles[Math.floor(Math.random() * disc.particles.length)];
+        if (seed) {
+          disc.reconnects.push({
+            x: seed.x, y: seed.y,
+            ang: Math.atan2(seed.vy - host.vy, seed.vx - host.vx),
+            age: 0,
+            life: 0.5 + Math.random() * 0.5,
+            size: 0.6 + B,
+          });
+          disc.lastFlareT = sim.t;
+          if (sim.t - (disc._lastLog || -10) > 1.2) {
+            window.KNSim.logEv(sim, 'amber',
+              `MHD reconnection · r=${Math.hypot(seed.x - host.cx, seed.y - host.cy).toFixed(1)} M · ΔE ≈ ${(B*B*5).toFixed(2)}`);
+            disc._lastLog = sim.t;
           }
         }
       }
     }
-    for (let i = sim.disc.reconnects.length - 1; i >= 0; i--) {
-      sim.disc.reconnects[i].age += dt;
-      if (sim.disc.reconnects[i].age > sim.disc.reconnects[i].life) {
-        sim.disc.reconnects.splice(i, 1);
+  }
+
+  function ageReconnects(disc, dt) {
+    for (let i = disc.reconnects.length - 1; i >= 0; i--) {
+      disc.reconnects[i].age += dt;
+      if (disc.reconnects[i].age > disc.reconnects[i].life) {
+        disc.reconnects.splice(i, 1);
       }
     }
   }
 
-  function jetMetrics(sim) {
-    const { M, a, B } = sim.params;
+  function step(sim, dt) {
+    stepDisc(sim, sim.disc, primaryHost(sim), dt);
+    ageReconnects(sim.disc, dt);
+    if (sim.disc2) {
+      const cHost = companionHost(sim);
+      // No bound companion → drop any leftover swarm so it doesn't linger.
+      if (!cHost && sim.disc2.particles.length) sim.disc2.particles.length = 0;
+      stepDisc(sim, sim.disc2, cHost, dt);
+      ageReconnects(sim.disc2, dt);
+    }
+  }
+
+  // Jet metrics for a single magnetized, spinning body. mDot is the disc
+  // accretion rate feeding the P_acc term (0 for a body with no disc, e.g. the
+  // binary companion — its jet is then pure Blandford-Znajek from spin × B²).
+  function jetMetricsFor(M, a, B, mDot) {
     const aN = Math.abs(a) / M;
-    const mDot = sim.disc.enabled ? sim.disc.mDot : 0;
     const P_BZ = aN * aN * B * B * 100;
     const P_acc = mDot * 0.45;
     const P = P_BZ + P_acc;
@@ -155,10 +208,26 @@
     return { P, P_BZ, P_acc, gamma, theta, L_disc, eta, mDot };
   }
 
-  function renderDisc(sim, ctx, w, h, worldToScreen) {
-    if (!sim.disc) return;
-    if (sim.disc.enabled) {
-      for (const p of sim.disc.particles) {
+  // Primary BH jet — fed by the accretion disc when it is spun up.
+  function jetMetrics(sim) {
+    const { M, a, B } = sim.params;
+    const mDot = sim.disc.enabled ? sim.disc.mDot : 0;
+    return jetMetricsFor(M, a, B, mDot);
+  }
+
+  // Companion jet (binary mode only): Blandford-Znajek from its own spin × B₂,
+  // plus accretion power from its own disc when that disc is spun up.
+  function companionJetMetrics(sim) {
+    const bin = sim.binary;
+    if (!bin || !bin.enabled) return null;
+    const mDot = (sim.disc2 && sim.disc2.enabled) ? sim.disc2.mDot : 0;
+    return jetMetricsFor(bin.M2, bin.a2 || 0, bin.B2 || 0, mDot);
+  }
+
+  function renderOneDisc(sim, disc, ctx, w, h, worldToScreen) {
+    if (!disc) return;
+    if (disc.enabled) {
+      for (const p of disc.particles) {
         const [px, py] = worldToScreen(sim, w, h, p.x, p.y);
         if (px < -4 || px > w + 4 || py < -4 || py > h + 4) continue;
         const t = p.t;
@@ -171,7 +240,7 @@
       }
     }
     // Reconnection flares
-    for (const f of sim.disc.reconnects) {
+    for (const f of disc.reconnects) {
       const [px, py] = worldToScreen(sim, w, h, f.x, f.y);
       if (px < -40 || px > w + 40 || py < -40 || py > h + 40) continue;
       const t = f.age / f.life;
@@ -196,18 +265,20 @@
     }
   }
 
-  function renderJetCenter(sim, ctx, w, h, worldToScreen) {
-    const m = jetMetrics(sim);
-    if (m.P < 0.3) return;
+  function renderDisc(sim, ctx, w, h, worldToScreen) {
+    renderOneDisc(sim, sim.disc, ctx, w, h, worldToScreen);
+    if (sim.disc2) renderOneDisc(sim, sim.disc2, ctx, w, h, worldToScreen);
+  }
+
+  // Draw one jet glow + readout chip centred on a world position (ox,oy).
+  // worldToScreen resolves the active reference frame, so the glow tracks its
+  // host body whether the camera is locked to the primary, the companion, or
+  // the barycentre — the hole never separates from its halo.
+  function drawJetGlow(sim, ctx, w, h, worldToScreen, ox, oy, m) {
+    if (!m || m.P < 0.3) return;
     const lum = Math.min(1, m.P / 30);
     const flick = 0.85 + 0.15 * Math.sin(sim.t * 7);
     const radius = 5 + lum * 18;
-    // Centre the BZ/jet glow on the primary BH. In binary mode the primary orbits
-    // the barycentre (bin.x1,bin.y1), so the glow must track it instead of sticking
-    // at the world origin — otherwise the hole visibly separates from its halo.
-    const bin = sim.binary;
-    const ox = (bin && bin.enabled) ? bin.x1 : 0;
-    const oy = (bin && bin.enabled) ? bin.y1 : 0;
     const [cx, cy] = worldToScreen(sim, w, h, ox, oy);
     const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 4);
     grd.addColorStop(0, `oklch(0.96 0.18 290 / ${lum * flick * 0.8})`);
@@ -215,7 +286,7 @@
     grd.addColorStop(1, 'oklch(0.1 0 0 / 0)');
     ctx.fillStyle = grd;
     ctx.beginPath(); ctx.arc(cx, cy, radius * 4, 0, Math.PI * 2); ctx.fill();
-    // small chip overlay near BH
+    // small chip overlay near the body
     ctx.fillStyle = `oklch(0.92 0.05 290 / ${0.7})`;
     ctx.font = '9px JetBrains Mono, monospace';
     ctx.fillText(`JET ⊙ ${m.P.toFixed(1)}`, cx + radius + 6, cy - 4);
@@ -223,5 +294,16 @@
     ctx.fillText(`Γ ≈ ${m.gamma.toFixed(1)}`, cx + radius + 6, cy + 7);
   }
 
-  window.KNDisc = { initDisc, step, jetMetrics, renderDisc, renderJetCenter };
+  function renderJetCenter(sim, ctx, w, h, worldToScreen) {
+    const bin = sim.binary;
+    if (bin && bin.enabled) {
+      // Primary orbits the barycentre at (bin.x1,bin.y1); companion at (bin.x2,bin.y2).
+      drawJetGlow(sim, ctx, w, h, worldToScreen, bin.x1, bin.y1, jetMetrics(sim));
+      drawJetGlow(sim, ctx, w, h, worldToScreen, bin.x2, bin.y2, companionJetMetrics(sim));
+    } else {
+      drawJetGlow(sim, ctx, w, h, worldToScreen, 0, 0, jetMetrics(sim));
+    }
+  }
+
+  window.KNDisc = { initDisc, step, jetMetrics, companionJetMetrics, renderDisc, renderJetCenter };
 })();

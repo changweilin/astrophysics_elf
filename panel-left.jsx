@@ -164,6 +164,7 @@ function BodyEditor({ sim, force, role }) {
     type: (bin && bin.type) || 'bh',
     M: (bin && bin.M2) || 0.8, Q: (bin && bin.Q2) || 0, a: (bin && bin.a2) || 0,
     R_star: (bin && bin.R_star2) || 3.0, T_eff: (bin && bin.T_eff2) || 1e6,
+    B: (bin && bin.B2) || 0,
     massUnit: 'M', mMin: 0.1, mMax: 3.5,
   };
 
@@ -177,7 +178,7 @@ function BodyEditor({ sim, force, role }) {
       else if (k === 'R_star') { sim.params.R_star = v; sim.params._stellarTouched = true; }
       else if (k === 'T_eff') { sim.params.T_eff = v; sim.params._stellarTouched = true; }
     } else if (bin) {
-      const m = { M: 'M2', Q: 'Q2', a: 'a2', R_star: 'R_star2', T_eff: 'T_eff2' };
+      const m = { M: 'M2', Q: 'Q2', a: 'a2', R_star: 'R_star2', T_eff: 'T_eff2', B: 'B2' };
       bin[m[k]] = v;
       if (k === 'R_star' || k === 'T_eff') bin._stellarTouched = true;
     }
@@ -248,6 +249,20 @@ function BodyEditor({ sim, force, role }) {
              color="cyan" fmt={(v) => (v >= 0 ? '+' : '') + v.toFixed(2)}
              onChange={(v) => setField('a', v)}
              scaleLabels={['retro', 'non-rot', 'prograde']} />
+
+      {!isCentral && (
+        <Param sym="B₂" name="Magnetic field" val={accessors.B} unit="B₀"
+               min={0} max={1} step={0.01}
+               color="magenta" fmt={(v) => v.toFixed(2)}
+               onChange={(v) => setField('B', v)}
+               scaleLabels={['off', 'BZ jet', 'magnetar']} />
+      )}
+      {!isCentral && sim.disc2 && (
+        <button className={`disc-toggle ${sim.disc2.enabled ? 'on' : ''}`}
+          onClick={() => { sim.disc2.enabled = !sim.disc2.enabled; force(); }}>
+          {sim.disc2.enabled ? 'COMPANION DISC · active' : 'Spin up companion disc'}
+        </button>
+      )}
 
       <div className="stellar-sub">
         <div className="sub-head">
