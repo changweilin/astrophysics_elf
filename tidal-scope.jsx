@@ -14,6 +14,18 @@ function TidalMicroscope({ sim, force }) {
   const sel = sim.bodies.find((b) => b.id === sim.selectedId);
   const body = sel || sim.bodies.find((b) => b.id === pinnedId);
 
+  // Step the inspected target to the previous/next placed body.
+  function cycleBody(dir) {
+    const list = sim.bodies;
+    if (list.length < 2) return;
+    let idx = list.findIndex((b) => b.id === (body ? body.id : null));
+    if (idx < 0) idx = 0;
+    const next = list[(idx + dir + list.length) % list.length];
+    sim.selectedId = next.id;
+    setPinnedId(null);   // an explicit pick overrides the disruption auto-pin
+    force();
+  }
+
   React.useEffect(() => {
     // Pin if a disruption just happened
     const recent = sim.bodies
@@ -69,7 +81,15 @@ function TidalMicroscope({ sim, force }) {
           <span className="mh-title">TIDAL MICROSCOPE</span>
         </div>
         <div className="mh-right">
-          {body ? body.name : '— no target —'}
+          {sim.bodies.length > 1 ? (
+            <span className="mh-switch" onClick={(e) => e.stopPropagation()}>
+              <span className="mh-arrow" onClick={() => cycleBody(-1)} title="previous body">‹</span>
+              <span className="mh-name">{body ? body.name : '— no target —'}</span>
+              <span className="mh-arrow" onClick={() => cycleBody(1)} title="next body">›</span>
+            </span>
+          ) : (
+            <span>{body ? body.name : '— no target —'}</span>
+          )}
         </div>
       </div>
 

@@ -3,8 +3,40 @@
  * Tidal Microscope. Lives in the viewport overlay.
  */
 
+// Does a star have an active MHD engine (disc spun up, or field above the
+// jet-launch threshold)? Used to decide whether the body switch is offered.
+function bodyHasMHD(sim, which) {
+  if (which === 'companion') {
+    const bin = sim.binary;
+    return !!(bin && bin.enabled && ((sim.disc2 && sim.disc2.enabled) || (bin.B2 || 0) >= 0.05));
+  }
+  return !!(sim.disc.enabled || (sim.params.B || 0) >= 0.05);
+}
+
+// Bundle the params / disc / jet metrics for whichever star the monitor shows,
+// so the side elevation + stats render the primary or the companion uniformly.
+function mhdView(sim, which) {
+  const bin = sim.binary;
+  if (which === 'companion') {
+    return {
+      params: { M: bin.M2, Q: bin.Q2 || 0, a: bin.a2 || 0, B: bin.B2 || 0 },
+      disc: sim.disc2,
+      center: { x: bin.x2, y: bin.y2 },
+      m: window.KNDisc.companionJetMetrics(sim) || { P: 0, P_BZ: 0, P_acc: 0, gamma: 1, theta: 26, eta: 0.057, mDot: 0 },
+    };
+  }
+  const center = (bin && bin.enabled) ? { x: bin.x1, y: bin.y1 } : { x: sim.primary.x, y: sim.primary.y };
+  return { params: sim.params, disc: sim.disc, center, m: window.KNDisc.jetMetrics(sim) };
+}
+
 function MHDMonitor({ sim, force }) {
   const [collapsed, setCollapsed] = React.useState(false);
+  const [which, setWhich] = React.useState('primary');
+
+  const companionMHD = bodyHasMHD(sim, 'companion');
+  const bothMHD = bodyHasMHD(sim, 'primary') && companionMHD;
+  // Fall back to the primary if the companion's MHD was switched off.
+  const active = (which === 'companion' && companionMHD) ? 'companion' : 'primary';
   const canvasRef = React.useRef(null);
 
   React.useEffect(() => {
@@ -20,15 +52,15 @@ function MHDMonitor({ sim, force }) {
         c.width = w * dpr; c.height = h * dpr;
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      renderMHDSide(ctx, w, h, sim);
+      renderMHDSide(ctx, w, h, sim, mhdView(sim, active));
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [collapsed]);
+  }, [collapsed, active]);
 
-  const m = window.KNDisc.jetMetrics(sim);
-  const off = !sim.disc.enabled && sim.params.B < 0.05;
+  const m = mhdView(sim, active).m;
+  const off = !bodyHasMHD(sim, active);
 
   return (
     <div className={`microscope mhd-monitor ${collapsed ? 'is-collapsed' : ''}`}>
@@ -38,7 +70,15 @@ function MHDMonitor({ sim, force }) {
           <span className="mh-title">MHD JET MONITOR</span>
         </div>
         <div className="mh-right" style={{color: m.P > 1 ? 'var(--magenta)' : 'var(--fg-3)'}}>
-          {off ? 'INERT' : `P = ${m.P.toFixed(2)}`}
+          {bothMHD && (
+            <span className="mh-switch" onClick={(e) => e.stopPropagation()}>
+              <button className={active === 'primary' ? 'on' : ''}
+                onClick={() => { setWhich('primary'); force(); }}>M₁</button>
+              <button className={active === 'companion' ? 'on' : ''}
+                onClick={() => { setWhich('companion'); force(); }}>M₂</button>
+            </span>
+          )}
+          <span>{off ? 'INERT' : `P = ${m.P.toFixed(2)}`}</span>
         </div>
       </div>
       {collapsed ? (
@@ -87,7 +127,7 @@ function MHDMonitor({ sim, force }) {
               <span className="ms-v">{(m.eta * 100).toFixed(1)}<small>%</small></span>
             </div>
             <div className={`ms-status ${m.P > 5 ? 'crit' : m.P > 1 ? 'warn' : ''}`}>
-              {mhdStatus(sim, m)}
+              {mhdStatus(off, m)}
             </div>
           </div>
         </div>
@@ -96,8 +136,8 @@ function MHDMonitor({ sim, force }) {
   );
 }
 
-function mhdStatus(sim, m) {
-  if (!sim.disc.enabled && sim.params.B < 0.05) return 'inactive — enable disc or raise B';
+function mhdStatus(off, m) {
+  if (off) return 'inactive — enable disc or raise B';
   if (m.P < 0.3)  return 'no collimation · field is sub-critical';
   if (m.P < 3)    return 'weak bipolar outflow · Blandford-Payne regime';
   if (m.P < 15)   return 'collimated jet · relativistic plasma';
@@ -105,7 +145,9 @@ function mhdStatus(sim, m) {
   return '⚠ extreme magnetar/blazar regime · runaway extraction';
 }
 
-function renderMHDSide(ctx, w, h, sim) {
+function renderMHDSide(ctx, w, h, sim, view) {
+  view = view || mhdView(sim, 'primary');
+  const disc = view.disc;
   // Background
   ctx.fillStyle = 'oklch(0.08 0.018 255)';
   ctx.fillRect(0, 0, w, h);
@@ -120,21 +162,23 @@ function renderMHDSide(ctx, w, h, sim) {
   }
 
   const phys = window.KNphysics;
-  const { M, Q, a, B } = sim.params;
-  const m = window.KNDisc.jetMetrics(sim);
+  const { M, Q, a, B } = view.params;
+  const m = view.m;
   const { rplus, naked } = phys.horizons(M, Q, a);
   const rErg = phys.ergosphereEq(M, Q);
   const cx = w / 2, cy = h / 2;
   const scale = h / 50; // 50 M maps to canvas height
 
-  // ── Disc particles projected as edge-on slab
-  if (sim.disc.enabled) {
-    for (const p of sim.disc.particles) {
-      const r = Math.hypot(p.x, p.y);
+  // ── Disc particles projected as edge-on slab (radius measured from the host)
+  const oc = view.center || { x: 0, y: 0 };
+  if (disc && disc.enabled) {
+    for (const p of disc.particles) {
+      const dpx = p.x - oc.x, dpy = p.y - oc.y;
+      const r = Math.hypot(dpx, dpy);
       // radial position in screen x (signed by x), tiny vertical jitter
-      const sgn = p.x >= 0 ? 1 : -1;
+      const sgn = dpx >= 0 ? 1 : -1;
       const sx = cx + sgn * r * scale;
-      const sy = cy + Math.sin(p.x * 1.3 + p.y * 0.9) * Math.max(1.5, scale * 0.6);
+      const sy = cy + Math.sin(dpx * 1.3 + dpy * 0.9) * Math.max(1.5, scale * 0.6);
       if (sx < -4 || sx > w + 4 || sy < -4 || sy > h + 4) continue;
       const t = p.t;
       const hue = 30 + t * 200;
@@ -276,9 +320,10 @@ function renderMHDSide(ctx, w, h, sim) {
   }
 
   // ── Recent reconnection sparkle (along disc plane)
-  for (const f of sim.disc.reconnects) {
-    const sgn = f.x >= 0 ? 1 : -1;
-    const r = Math.hypot(f.x, f.y);
+  for (const f of (disc ? disc.reconnects : [])) {
+    const dfx = f.x - oc.x, dfy = f.y - oc.y;
+    const sgn = dfx >= 0 ? 1 : -1;
+    const r = Math.hypot(dfx, dfy);
     const sx = cx + sgn * r * scale;
     const sy = cy + (Math.sin(f.ang * 2) * 1.5);
     const t = f.age / f.life;

@@ -1137,7 +1137,47 @@ html, body {
   font-size: 9px;
   letter-spacing: 0.08em;
   color: var(--amber);
-  max-width: 140px;
+  max-width: 160px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Clickable body/target switch inside a floating-window header. */
+.mh-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.mh-switch button {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  background: var(--bg-1);
+  color: var(--fg-3);
+  cursor: pointer;
+  line-height: 1.4;
+}
+.mh-switch button:hover { color: var(--fg-0); border-color: var(--fg-3); }
+.mh-switch button.on {
+  color: var(--fg-0);
+  border-color: var(--magenta);
+  background: color-mix(in oklch, var(--magenta) 18%, var(--bg-1));
+}
+.mh-switch .mh-arrow {
+  font-size: 12px;
+  padding: 0 4px;
+  color: var(--fg-3);
+  cursor: pointer;
+}
+.mh-switch .mh-arrow:hover { color: var(--amber); }
+.mh-switch .mh-name {
+  max-width: 96px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
