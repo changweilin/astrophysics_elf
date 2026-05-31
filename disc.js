@@ -202,7 +202,13 @@
     const lum = Math.min(1, m.P / 30);
     const flick = 0.85 + 0.15 * Math.sin(sim.t * 7);
     const radius = 5 + lum * 18;
-    const [cx, cy] = worldToScreen(sim, w, h, 0, 0);
+    // Centre the BZ/jet glow on the primary BH. In binary mode the primary orbits
+    // the barycentre (bin.x1,bin.y1), so the glow must track it instead of sticking
+    // at the world origin — otherwise the hole visibly separates from its halo.
+    const bin = sim.binary;
+    const ox = (bin && bin.enabled) ? bin.x1 : 0;
+    const oy = (bin && bin.enabled) ? bin.y1 : 0;
+    const [cx, cy] = worldToScreen(sim, w, h, ox, oy);
     const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 4);
     grd.addColorStop(0, `oklch(0.96 0.18 290 / ${lum * flick * 0.8})`);
     grd.addColorStop(0.4, `oklch(0.85 0.16 290 / ${lum * 0.25})`);

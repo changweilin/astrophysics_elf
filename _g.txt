@@ -1,0 +1,23 @@
+mobile-app.jsx:167:    function starVisualR(M, Q, a, type, R_star) {
+mobile-app.jsx:182:        const r2 = Math.max(18, starVisualR(bin.M2, bin.Q2, bin.a2, bin.type, bin.R_star2) + 6);
+mobile-app.jsx:184:        const r1 = Math.max(18, starVisualR(MSIM.params.M, MSIM.params.Q, MSIM.params.a, MSIM.params.type, MSIM.params.R_star) + 6);
+mobile-app.jsx:264:            const rr = Math.max(22, starVisualR(bin.M2, bin.Q2, bin.a2, bin.type, bin.R_star2) + 10);
+mobile-app.jsx:562:      window.KNSim.render(MSIM, ctx, cssW, cssH);
+mobile-app.jsx:563:      window.KNSim.renderInteraction(MSIM, ctx, cssW, cssH);
+mobile-app.jsx:567:      raf = requestAnimationFrame(loop);
+mobile-app.jsx:569:    raf = requestAnimationFrame(loop);
+sim.js:760:        const grd1 = ctx.createRadialGradient(bx1, by1, rp1*s*0.3, bx1, by1, rp1*s*1.05);
+sim.js:791:        const grd2 = ctx.createRadialGradient(bx2, by2, rp2*s*0.3, bx2, by2, rp2*s*1.05);
+sim.js:816:        const haloR2 = Math.max(Rs2 * s * 1.5, Rs2 * s + 10);
+sim.js:817:        const grdH2 = ctx.createRadialGradient(bx2, by2, Rs2 * s * 0.8, bx2, by2, haloR2);
+sim.js:821:        ctx.beginPath(); ctx.arc(bx2, by2, haloR2, 0, Math.PI*2); ctx.fill();
+sim.js:822:        const grdS2 = ctx.createRadialGradient(bx2, by2, 0, bx2, by2, Rs2 * s);
+sim.js:863:      // outer corona / glow
+sim.js:864:      const haloR = Math.max(Rs * s * 1.6, Rs * s + 14);
+sim.js:865:      const grdH = ctx.createRadialGradient(cx, cy, Rs * s * 0.8, cx, cy, haloR);
+sim.js:869:      ctx.beginPath(); ctx.arc(cx, cy, haloR, 0, Math.PI * 2); ctx.fill();
+sim.js:871:      const grdS = ctx.createRadialGradient(cx, cy, 0, cx, cy, Rs * s);
+sim.js:914:      const grd = ctx.createRadialGradient(cx, cy, rplus * s * 0.3,
+sim.js:983:      const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+sim.js:1101:    // planets / gas / stars: filled disc + soft glow
+sim.js:1103:    const grd = ctx.createRadialGradient(px, py, 0, px, py, r * 2.5);
