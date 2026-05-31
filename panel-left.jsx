@@ -635,7 +635,7 @@ function BinaryReadout({ sim, force }) {
             <div className="fill" style={{ width: pctDone + '%' }} />
           </div>
           <div className="note">
-            * 依 Peters (1964) 對所有雙星加入切向 GW 阻力 — dE/dt ∝ M₁²M₂²(M₁+M₂)/d⁵，視覺加速 ×{bin.inspiralRate}.
+            * 依 Peters (1964)，雙星軌道半徑按 GW 輻射率收縮 da/dt = −(64/5)M₁M₂(M₁+M₂)/d³（古典軌道曲率不變），視覺加速 ×{bin.inspiralRate}（1 = 真實 GR 速率）.
             {isBHBin
               ? ' 雙黑洞 → 旋近至視界相觸合併。'
               : ' 含非黑洞成員 → 旋近至表面相觸（contact）。'}

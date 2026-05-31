@@ -390,7 +390,7 @@ function TabBlackHole({ sim, force }) {
                   sim.binary.merged = false;
                   sim.binary.trail1.length = 0;
                   sim.binary.trail2.length = 0;
-                  sim.binary.inspiralRate = pr.binary.inspiralRate || 60;
+                  sim.binary.inspiralRate = pr.binary.inspiralRate || 1;
                 } else if (!pr.binary && sim.binary) {
                   sim.binary.enabled = false;
                 }
@@ -526,7 +526,7 @@ function TabBinary({ sim, force }) {
               background: 'linear-gradient(90deg, oklch(0.62 0.18 295), oklch(0.78 0.20 28))'
             }} />
           </div>
-          <div className="note">* visually ×{bin.inspiralRate} faster than physical Peters rate</div>
+          <div className="note">* ×{bin.inspiralRate} the physical Peters rate (1 = true GR)</div>
         </div>
       )}
 
@@ -548,7 +548,7 @@ const M_PRESETS = [
   { name: 'Magnetar regime',       M: 1.5, Q: 0,    a: 1.2,  B: 0.95, disc: true,  glyph: '⚡', tag: 'extreme B' },
   { name: 'Naked singularity',     M: 1.0, Q: 1.0,  a: 0.8,  B: 0,    glyph: '✕', tag: 'unshielded' },
   { name: 'GW150914-like',         M: 1.8, Q: 0,    a: 0.3,  B: 0,    disc: false,
-    binary: { enabled: true, M2: 1.5, d: 14, inspiralRate: 60 },
+    binary: { enabled: true, M2: 1.5, d: 14, inspiralRate: 1 },
     glyph: '◎', tag: 'BBH inspiral' },
   { name: 'Pulsar (NS)',           M: 1.4, Q: 0,    a: 0.5,  B: 0.4,  type: 'ns', R_star: 3.2, T_eff: 8e5, glyph: '◉', tag: 'neutron' },
   { name: 'White dwarf',           M: 1.0, Q: 0,    a: 0.1,  B: 0.05, type: 'wd', R_star: 7.0, T_eff: 2.5e4, glyph: '○', tag: 'compact' },

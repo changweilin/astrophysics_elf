@@ -74,7 +74,7 @@
       y2: 0, x2: 0,      // secondary position
       vx1: 0, vy1: 0,    // primary velocity
       vx2: 0, vy2: 0,    // secondary velocity
-      inspiralRate: 60,  // visual speedup of Peters GW back-reaction
+      inspiralRate: 1,   // ×Peters GW back-reaction (1 = true GR rate; ~4 visible orbits)
       merged: false,
       mergerFlash: 0,
       ringdownPhase: 0,
@@ -186,37 +186,38 @@
 
     const vrel = Math.hypot(Vx, Vy);
 
-    // Peters readout (used for UI + the GW radiation drag below)
+    // Peters readout (used for UI + the GW radiation reaction below)
     const pet = phys.peters(M1, M2, r);
     bin.lastPeters = pet;
 
-    // GW back-reaction for every binary (BH, NS, WD, star): a tangential drag on
-    // the *relative* motion that bleeds orbital energy at the Peters rate
-    // dE/dt = (32/5) M1² M2² (M1+M2) / r⁵ (reduced mass μ = M1 M2 / Mt). The loss
-    // is set by BOTH masses and the drag is split back onto both stars below, so
-    // primary and companion mutually spiral toward the conserved barycentre —
-    // the binary radiates as a single quadrupole, not two separate sources. The
-    // chirp steepens as r shrinks (∝ r⁻⁵). A double-BH pair ends in merger below;
-    // other pairs spiral in until their surfaces touch. Strength: inspiralRate.
-    if (vrel > 1e-4 && !bin.classical) {
-      const dEdt = (32 / 5) * M1 * M1 * M2 * M2 * Mt / Math.pow(r, 5);
-      const mu = (M1 * M2) / Mt;
-      let aDrag = (dEdt / (mu * vrel)) * bin.inspiralRate;
-      // Cap the bleed so the inspiral stays quasi-static — many visible orbits
-      // rather than a half-turn plunge. The damping rate aDrag/vrel is limited
-      // to a small fraction κ of the orbital frequency ω = vrel/r; the orbits
-      // completed before merger scale as ~ln(d₀/r_merge)/κ, so κ=0.012 gives
-      // roughly 5 revolutions even from a close placement and many more from a
-      // wide one. Lower inspiralRate stays below the cap and spirals slower.
-      const aDragMax = 0.012 * vrel * vrel / r;
-      if (aDrag > aDragMax) aDrag = aDragMax;
-      arx -= aDrag * Vx / vrel;
-      ary -= aDrag * Vy / vrel;
-    }
-
-    // Symplectic Euler on the relative coordinate (matches step() substep cadence)
+    // ── Conservative (classical) two-body step ──
+    // The orbital *curvature* is purely Newtonian/Keplerian — same equations the
+    // trajectory preview uses — so the path stays a clean ellipse/circle between
+    // GW losses. Radiation reaction is layered on top as an adiabatic contraction.
     Vx += arx * dt; Vy += ary * dt;
     Dx += Vx * dt;  Dy += Vy * dt;
+
+    // ── GW radiation reaction: Peters (1964), adiabatic ──
+    // A radiating binary follows the orbit-averaged inspiral law
+    //   da/dt = −(64/5) M1 M2 (M1+M2) / a³        (= pet.ddot, geometric units),
+    // visually accelerated ×inspiralRate. Rather than a hand-tuned tangential
+    // drag (which had to be capped, losing both the chirp and the slider), shrink
+    // the separation directly at this rate and keep the pair quasi-circular
+    // (v_circ ∝ 1/√r, so the orbit speeds up — the chirp — as it tightens). Energy
+    // and angular momentum then bleed off at the true GR rate: the spiral steepens
+    // as a⁻³ and the time to merger is (5/256) d⁴ / (M1 M2 (M1+M2)) / inspiralRate.
+    // Loss is set by BOTH masses (the binary radiates as one quadrupole), and the
+    // contraction is split back onto both stars about the conserved barycentre.
+    if (!bin.classical) {
+      const rNow = Math.hypot(Dx, Dy);
+      let scale = 1 + (pet.ddot * bin.inspiralRate * dt) / Math.max(0.05, rNow);
+      if (scale < 0.5) scale = 0.5;   // per-step clamp — never plunge in one step
+      if (scale < 1) {
+        Dx *= scale; Dy *= scale;
+        const vboost = 1 / Math.sqrt(scale);   // v_circ ∝ 1/√r → chirp
+        Vx *= vboost; Vy *= vboost;
+      }
+    }
 
     // Split back onto the two stars about the conserved barycentre.
     const f1 = M2 / Mt, f2 = M1 / Mt;
@@ -442,6 +443,42 @@
         if (!naked && r < rplus) return { pts, fate: 'capture' };
         if (naked && r < 0.4) return { pts, fate: 'capture' };
       }
+    }
+    return { pts, fate: 'bound' };
+  }
+
+  // Classical two-body prediction for a companion drag-launch — NO GW reaction,
+  // so the previewed curvature is pure Newtonian (same convention as the single
+  // body preview). Forward-integrates the separation D = x2 - x1 under the
+  // two-body law D̈ = -(M1+M2)/r³ · D and returns the companion's path about the
+  // conserved barycentre, plus its fate (contact / escape / bound).
+  function predictBinaryTrajectory(sim, vx2, vy2, steps = 240, dt = 0.05) {
+    const bin = sim.binary;
+    if (!bin || !bin.enabled) return { pts: [], fate: 'bound' };
+    const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
+    const f2 = M1 / Mt;
+    const cx = (M1 * bin.x1 + M2 * bin.x2) / Mt;
+    const cy = (M1 * bin.y1 + M2 * bin.y2) / Mt;
+    const { rplus: rp1, naked: n1 } = phys.horizons(M1, sim.params.Q, sim.params.a);
+    const { rplus: rp2, naked: n2 } = phys.horizons(M2, bin.Q2 || 0, bin.a2 || 0);
+    const s1 = (sim.params.type || 'bh') === 'bh' ? (isFinite(rp1) && !n1 ? rp1 : M1) : (sim.params.R_star || 3);
+    const s2 = (bin.type || 'bh') === 'bh' ? (isFinite(rp2) && !n2 ? rp2 : M2) : (bin.R_star2 || 3);
+    const rContact = s1 + s2;
+    let Dx = bin.x2 - bin.x1, Dy = bin.y2 - bin.y1;
+    let Vx = vx2 * Mt / M1, Vy = vy2 * Mt / M1;   // lab v2 -> relative V (barycentre fixed)
+    const pts = [cx + f2 * Dx, cy + f2 * Dy];
+    for (let i = 0; i < steps; i++) {
+      const r2 = Dx * Dx + Dy * Dy, r = Math.sqrt(r2);
+      if (r < 1e-3) break;
+      const inv = 1 / (r * r2);
+      const mx = Dx + Vx * dt * 0.5, my = Dy + Vy * dt * 0.5;   // midpoint position
+      const mr2 = mx * mx + my * my, mr = Math.sqrt(mr2), minv = 1 / (mr * mr2);
+      Vx += -Mt * mx * minv * dt; Vy += -Mt * my * minv * dt;
+      Dx += Vx * dt; Dy += Vy * dt;
+      pts.push(cx + f2 * Dx, cy + f2 * Dy);
+      const rr = Math.hypot(Dx, Dy);
+      if (rr < rContact) return { pts, fate: 'capture' };
+      if (rr > 80) return { pts, fate: 'escape' };
     }
     return { pts, fate: 'bound' };
   }
@@ -1215,7 +1252,9 @@
       const vScale = 0.08;
       const vx = -dx / sim.view.scale * vScale;
       const vy = -dy / sim.view.scale * vScale;
-      const { pts, fate } = predictTrajectory(sim, bodyRef.x, bodyRef.y, vx, vy);
+      const { pts, fate } = isCompanion
+        ? predictBinaryTrajectory(sim, vx, vy)
+        : predictTrajectory(sim, bodyRef.x, bodyRef.y, vx, vy);
       const fateColor = fate === 'capture' ? 'oklch(0.72 0.20 28 / 0.85)' :
                         fate === 'escape'  ? 'oklch(0.85 0.10 130 / 0.8)' :
                                              (isCompanion ? 'oklch(0.78 0.18 295 / 0.8)' : 'oklch(0.78 0.13 210 / 0.8)');
