@@ -67,7 +67,7 @@ function MHDMonitor({ sim, force }) {
       <div className="microscope-head" onClick={() => setCollapsed(!collapsed)}>
         <div className="mh-left">
           <span className="mh-chev">{collapsed ? '▸' : '▾'}</span>
-          <span className="mh-title">MHD JET MONITOR</span>
+          <span className="mh-title">{tr('MHD JET MONITOR', 'MHD 噴流監視器')}</span>
         </div>
         <div className="mh-right" style={{color: m.P > 1 ? 'var(--magenta)' : 'var(--fg-3)'}}>
           {bothMHD && (
@@ -78,13 +78,13 @@ function MHDMonitor({ sim, force }) {
                 onClick={() => { setWhich('companion'); force(); }}>M₂</button>
             </span>
           )}
-          <span>{off ? 'INERT' : `P = ${m.P.toFixed(2)}`}</span>
+          <span>{off ? tr('INERT', '靜止') : `P = ${m.P.toFixed(2)}`}</span>
         </div>
       </div>
       {collapsed ? (
         <div className="microscope-mini">
           <div className="mm-row">
-            <span className="mm-k">jet P</span>
+            <span className="mm-k">{tr('jet P', '噴流 P')}</span>
             <div className="mm-bar">
               <div className="mm-fill"
                 style={{
@@ -98,10 +98,10 @@ function MHDMonitor({ sim, force }) {
       ) : (
         <div className="microscope-body">
           <canvas ref={canvasRef} className="microscope-canvas" style={{height: 200}} />
-          <div className="microscope-overlay-bl">SIDE ELEVATION · Ω ↑↓</div>
+          <div className="microscope-overlay-bl">{tr('SIDE ELEVATION · Ω ↑↓', '側視圖 · Ω ↑↓')}</div>
           <div className="microscope-stats">
             <div className="ms-row">
-              <span className="ms-k">P_jet · total</span>
+              <span className="ms-k">{tr('P_jet · total', 'P_jet · 總計')}</span>
               <span className="ms-v" style={{color: m.P > 1 ? 'var(--magenta)' : 'var(--fg-0)'}}>
                 {m.P.toFixed(2)}
               </span>
@@ -111,19 +111,19 @@ function MHDMonitor({ sim, force }) {
               <span className="ms-v">{m.P_BZ.toFixed(2)}</span>
             </div>
             <div className="ms-row">
-              <span className="ms-k">  ↳ disc accretion</span>
+              <span className="ms-k">  ↳ {tr('disc accretion', '盤吸積')}</span>
               <span className="ms-v">{m.P_acc.toFixed(2)}</span>
             </div>
             <div className="ms-row">
-              <span className="ms-k">Γ bulk Lorentz</span>
+              <span className="ms-k">{tr('Γ bulk Lorentz', 'Γ 整體勞侖茲')}</span>
               <span className="ms-v">{m.gamma.toFixed(1)}</span>
             </div>
             <div className="ms-row">
-              <span className="ms-k">θ opening</span>
+              <span className="ms-k">{tr('θ opening', 'θ 張角')}</span>
               <span className="ms-v">{m.theta.toFixed(1)}<small>°</small></span>
             </div>
             <div className="ms-row">
-              <span className="ms-k">η radiative</span>
+              <span className="ms-k">{tr('η radiative', 'η 輻射效率')}</span>
               <span className="ms-v">{(m.eta * 100).toFixed(1)}<small>%</small></span>
             </div>
             <div className={`ms-status ${m.P > 5 ? 'crit' : m.P > 1 ? 'warn' : ''}`}>
@@ -137,12 +137,12 @@ function MHDMonitor({ sim, force }) {
 }
 
 function mhdStatus(off, m) {
-  if (off) return 'inactive — enable disc or raise B';
-  if (m.P < 0.3)  return 'no collimation · field is sub-critical';
-  if (m.P < 3)    return 'weak bipolar outflow · Blandford-Payne regime';
-  if (m.P < 15)   return 'collimated jet · relativistic plasma';
-  if (m.P < 50)   return 'powerful jet · approaches quasar luminosity';
-  return '⚠ extreme magnetar/blazar regime · runaway extraction';
+  if (off) return tr('inactive — enable disc or raise B', '未啟用 — 開啟吸積盤或提高 B');
+  if (m.P < 0.3)  return tr('no collimation · field is sub-critical', '無準直 · 磁場低於臨界');
+  if (m.P < 3)    return tr('weak bipolar outflow · Blandford-Payne regime', '微弱雙極外流 · Blandford-Payne 區');
+  if (m.P < 15)   return tr('collimated jet · relativistic plasma', '準直噴流 · 相對論性電漿');
+  if (m.P < 50)   return tr('powerful jet · approaches quasar luminosity', '強力噴流 · 逼近類星體光度');
+  return tr('⚠ extreme magnetar/blazar regime · runaway extraction', '⚠ 極端磁星／耀變體區 · 失控萃取');
 }
 
 function renderMHDSide(ctx, w, h, sim, view) {
@@ -339,7 +339,7 @@ function renderMHDSide(ctx, w, h, sim, view) {
   // legend
   ctx.fillStyle = 'oklch(0.42 0.014 255)';
   ctx.font = '8px JetBrains Mono, monospace';
-  ctx.fillText('B field · disc · jet plasma', 10, 12);
+  ctx.fillText(tr('B field · disc · jet plasma', 'B 磁場 · 吸積盤 · 噴流電漿'), 10, 12);
 }
 
 window.MHDMonitor = MHDMonitor;

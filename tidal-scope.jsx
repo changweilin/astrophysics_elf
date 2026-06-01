@@ -62,15 +62,15 @@ function TidalMicroscope({ sim, force }) {
     ? (300 * sim.params.M * (body.radius || 0.4)) / (r * r * r) : 0;
 
   const statusText = (() => {
-    if (!body) return 'no target — click a body or place one';
-    if (body.state === 'captured') return 'past r₊ · world-line terminated';
-    if (body.state === 'escaped')  return 'beyond detector envelope';
-    if (body.state === 'spaghettified') return '⚠ DISRUPTED · streaming debris';
-    if (tidal < 0.15) return 'tidal field negligible · spherical';
-    if (tidal < 0.5)  return 'prolate stretch onset · stable';
-    if (tidal < 0.85) return 'Roche regime · structural strain';
-    if (tidal < 1.0)  return '◢ approaching disruption threshold';
-    return '⚠ CRITICAL · imminent rupture';
+    if (!body) return tr('no target — click a body or place one', '無目標 — 點選或放置一個天體');
+    if (body.state === 'captured') return tr('past r₊ · world-line terminated', '越過 r₊ · 世界線終止');
+    if (body.state === 'escaped')  return tr('beyond detector envelope', '超出偵測範圍');
+    if (body.state === 'spaghettified') return tr('⚠ DISRUPTED · streaming debris', '⚠ 已撕裂 · 碎屑流出');
+    if (tidal < 0.15) return tr('tidal field negligible · spherical', '潮汐場可忽略 · 球形');
+    if (tidal < 0.5)  return tr('prolate stretch onset · stable', '長球拉伸開始 · 穩定');
+    if (tidal < 0.85) return tr('Roche regime · structural strain', 'Roche 區 · 結構應變');
+    if (tidal < 1.0)  return tr('◢ approaching disruption threshold', '◢ 逼近撕裂閾值');
+    return tr('⚠ CRITICAL · imminent rupture', '⚠ 危急 · 即將碎裂');
   })();
 
   return (
@@ -78,17 +78,17 @@ function TidalMicroscope({ sim, force }) {
       <div className="microscope-head" onClick={() => setCollapsed(!collapsed)}>
         <div className="mh-left">
           <span className="mh-chev">{collapsed ? '▸' : '▾'}</span>
-          <span className="mh-title">TIDAL MICROSCOPE</span>
+          <span className="mh-title">{tr('TIDAL MICROSCOPE', '潮汐顯微鏡')}</span>
         </div>
         <div className="mh-right">
           {sim.bodies.length > 1 ? (
             <span className="mh-switch" onClick={(e) => e.stopPropagation()}>
-              <span className="mh-arrow" onClick={() => cycleBody(-1)} title="previous body">‹</span>
-              <span className="mh-name">{body ? body.name : '— no target —'}</span>
-              <span className="mh-arrow" onClick={() => cycleBody(1)} title="next body">›</span>
+              <span className="mh-arrow" onClick={() => cycleBody(-1)} title={tr('previous body', '上一個天體')}>‹</span>
+              <span className="mh-name">{body ? body.name : tr('— no target —', '— 無目標 —')}</span>
+              <span className="mh-arrow" onClick={() => cycleBody(1)} title={tr('next body', '下一個天體')}>›</span>
             </span>
           ) : (
-            <span>{body ? body.name : '— no target —'}</span>
+            <span>{body ? body.name : tr('— no target —', '— 無目標 —')}</span>
           )}
         </div>
       </div>
@@ -96,7 +96,7 @@ function TidalMicroscope({ sim, force }) {
       {collapsed ? (
         <div className="microscope-mini">
           <div className="mm-row">
-            <span className="mm-k">integrity</span>
+            <span className="mm-k">{tr('integrity', '完整性')}</span>
             <div className="mm-bar">
               <div className="mm-fill"
                 style={{
@@ -111,7 +111,7 @@ function TidalMicroscope({ sim, force }) {
       ) : (
         <div className="microscope-body">
           <canvas ref={canvasRef} className="microscope-canvas" />
-          <div className="microscope-overlay-bl">×{(60).toFixed(0)} ZOOM · ROCHE FRAME</div>
+          <div className="microscope-overlay-bl">×{(60).toFixed(0)} {tr('ZOOM · ROCHE FRAME', '放大 · ROCHE 座標')}</div>
           <div className="microscope-stats">
             <div className="ms-row">
               <span className="ms-k">r</span>
@@ -122,7 +122,7 @@ function TidalMicroscope({ sim, force }) {
               <span className="ms-v">{body ? dA.toFixed(3) : '—'}</span>
             </div>
             <div className="ms-row">
-              <span className="ms-k">stretch ratio</span>
+              <span className="ms-k">{tr('stretch ratio', '拉伸比')}</span>
               <span className="ms-v">
                 {body && body.state === 'orbit'
                   ? (1 + Math.min(3.5, tidal * 2.5)).toFixed(2)
@@ -130,7 +130,7 @@ function TidalMicroscope({ sim, force }) {
               </span>
             </div>
             <div className={`ms-row integrity-row ${tidal > 0.85 ? 'crit' : tidal > 0.5 ? 'warn' : ''}`}>
-              <span className="ms-k">integrity</span>
+              <span className="ms-k">{tr('integrity', '完整性')}</span>
               <div className="ms-bar">
                 <div className="ms-fill" style={{ width: (integrity * 100).toFixed(0) + '%' }} />
                 <div className="ms-mark roche" />
@@ -171,7 +171,7 @@ function renderMicroscope(ctx, w, h, body, sim) {
     ctx.fillStyle = 'oklch(0.42 0.014 255)';
     ctx.font = '10px JetBrains Mono, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('NO TARGET ACQUIRED', w/2, h/2 + 4);
+    ctx.fillText(tr('NO TARGET ACQUIRED', '尚未取得目標'), w/2, h/2 + 4);
     ctx.textAlign = 'left';
     return;
   }
@@ -331,7 +331,7 @@ function renderMicroscope(ctx, w, h, body, sim) {
     // label
     ctx.fillStyle = 'oklch(0.72 0.20 28)';
     ctx.font = 'bold 10px JetBrains Mono, monospace';
-    ctx.fillText('SPAGHETTIFIED', 10, h - 10);
+    ctx.fillText(tr('SPAGHETTIFIED', '已拉麵化'), 10, h - 10);
     ctx.fillStyle = 'oklch(0.58 0.012 255)';
     ctx.font = '8px JetBrains Mono, monospace';
     ctx.fillText(`T+${age.toFixed(1)} M`, w - 60, h - 10);
@@ -347,14 +347,14 @@ function renderMicroscope(ctx, w, h, body, sim) {
     ctx.fillStyle = 'oklch(0.62 0.12 75)';
     ctx.font = '9px JetBrains Mono, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('PAST r₊', cx, cy + 3);
-    ctx.fillText('INACCESSIBLE', cx, cy + 14);
+    ctx.fillText(tr('PAST r₊', '越過 r₊'), cx, cy + 3);
+    ctx.fillText(tr('INACCESSIBLE', '不可及'), cx, cy + 14);
     ctx.textAlign = 'left';
   } else if (body.state === 'escaped') {
     ctx.fillStyle = 'oklch(0.42 0.014 255)';
     ctx.font = '9px JetBrains Mono, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('TRACKED OUT OF FRAME', w/2, h/2);
+    ctx.fillText(tr('TRACKED OUT OF FRAME', '已追蹤至畫面外'), w/2, h/2);
     ctx.textAlign = 'left';
   }
 }

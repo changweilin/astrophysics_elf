@@ -5,8 +5,8 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
     <div className="bottom">
       <div className="pane">
         <div className="spawner-head">
-          <h3>Object Library — Drag into viewport</h3>
-          <span className="hint">drag card → release to place · then drag from body to aim launch vector</span>
+          <h3>{tr('Object Library — Drag into viewport', '天體庫 — 拖入視圖')}</h3>
+          <span className="hint">{tr('drag card → release to place · then drag from body to aim launch vector', '拖曳卡片 → 放開以放置 · 再從天體拖曳以瞄準發射向量')}</span>
         </div>
         <div className="spawner">
           {LIBRARY.map((it, i) => {
@@ -16,19 +16,19 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
               onMouseDown={(e) => beginPlacement(sim, it, e, force)}>
               <div className="glyph">
                 <span className="dot" />
-                <span className="nm">{it.name}</span>
+                <span className="nm">{tr(it.name, it.name_zh)}</span>
               </div>
               <div className="meta">
                 <div>R<sub>b</sub> <b>{it.radius.toFixed(2)} M</b></div>
-                <div>bind <b>{it.binding.toFixed(2)}</b>{it.charge ? <> · q <b style={{color:'var(--magenta)'}}>{it.charge > 0 ? '+' : ''}{it.charge}</b></> : null}</div>
-                <div>spawn r <b>{it.spawnR} M</b></div>
+                <div>{tr('bind', '束縛')} <b>{it.binding.toFixed(2)}</b>{it.charge ? <> · q <b style={{color:'var(--magenta)'}}>{it.charge > 0 ? '+' : ''}{it.charge}</b></> : null}</div>
+                <div>{tr('spawn r', '生成 r')} <b>{it.spawnR} M</b></div>
               </div>
             </button>
           );
           })}
         </div>
         <div className="eventlog">
-          {sim.events.length === 0 && <div className="ev"><span className="t">[T+0.0]</span>Awaiting first event…</div>}
+          {sim.events.length === 0 && <div className="ev"><span className="t">[T+0.0]</span>{tr('Awaiting first event…', '等待第一個事件…')}</div>}
           {sim.events.slice(0, 6).map((e, i) => (
             <div key={i} className={`ev ${e.type}`}><span className="t">[T+{e.t}]</span>{e.msg}</div>
           ))}
@@ -42,18 +42,18 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
               <button className="play" onClick={() => setPlaying(!playing)}>
                 {playing ? '❚❚' : '▶'}
               </button>
-              <button onClick={() => { sim.bodies.forEach(b => b.trail.length = 0); force(); }}>CLR TRAILS</button>
-              <button onClick={() => { sim.bodies = []; sim.selectedId = null; sim.events = []; sim.t = 0; sim.moving = null; if (sim.binary) sim.binary.held = false; force(); }}>RESET</button>
+              <button onClick={() => { sim.bodies.forEach(b => b.trail.length = 0); force(); }}>{tr('CLR TRAILS', '清軌跡')}</button>
+              <button onClick={() => { sim.bodies = []; sim.selectedId = null; sim.events = []; sim.t = 0; sim.moving = null; if (sim.binary) sim.binary.held = false; force(); }}>{tr('RESET', '重置')}</button>
             </div>
             <div className="meta-row">
               <span>T <b>{sim.t.toFixed(1)} M</b></span>
               <span>×<b>{timescale.toFixed(2)}</b></span>
-              <span>BODIES <b>{sim.bodies.filter(b => b.state === 'orbit').length}/{sim.bodies.length}</b></span>
+              <span>{tr('BODIES', '天體')} <b>{sim.bodies.filter(b => b.state === 'orbit').length}/{sim.bodies.length}</b></span>
             </div>
             <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
           </div>
           <div className="meta-row">
-            <span style={{color:'var(--fg-3)'}}>Keyboard <span className="kbd">space</span> play · <span className="kbd">R</span> reset · <span className="kbd">·</span></span>
+            <span style={{color:'var(--fg-3)'}}>{tr('Keyboard', '鍵盤')} <span className="kbd">space</span> {tr('play', '播放')} · <span className="kbd">R</span> {tr('reset', '重置')} · <span className="kbd">·</span></span>
           </div>
         </div>
       </div>
@@ -100,7 +100,7 @@ function SpeedScrubber({ timescale, setTimescale }) {
       onPointerMove={(e) => { if (dragging.current) setFromClientX(e.clientX); }}
       onPointerUp={() => { dragging.current = false; }}
       onPointerCancel={() => { dragging.current = false; }}
-      title="拖曳左右切換模擬速度倍率">
+      title={tr('drag left/right to change the simulation speed multiplier', '拖曳左右切換模擬速度倍率')}>
       <div className="track">
         <div className="fill" style={{ width: `${frac * 100}%` }} />
         {SPEED_STEPS.map((s, i) => (
@@ -116,14 +116,14 @@ function SpeedScrubber({ timescale, setTimescale }) {
 window.SpeedScrubber = SpeedScrubber;
 
 const LIBRARY = [
-  { name: 'Rocky planet',  kind: 'planet', radius: 0.30, binding: 2.5, charge: 0,    spawnR: 12 },
-  { name: 'Gas giant',     kind: 'gas',    radius: 0.55, binding: 0.9, charge: 0,    spawnR: 14 },
-  { name: 'Brown dwarf',   kind: 'star',   radius: 0.45, binding: 4.0, charge: 0,    spawnR: 16 },
-  { name: 'Comet',         kind: 'probe',  radius: 0.05, binding: 0.4, charge: 0,    spawnR: 22 },
-  { name: 'Crewed ship',   kind: 'ship',   radius: 0.02, binding: 8.0, charge: 0,    spawnR: 9 },
-  { name: 'Charged probe', kind: 'probe',  radius: 0.05, binding: 5.0, charge: 0.6,  spawnR: 11 },
-  { name: 'Pulsar core',   kind: 'star',   radius: 0.10, binding: 20.0, charge: 0,   spawnR: 18 },
-  { name: 'Dust cloud',    kind: 'gas',    radius: 0.40, binding: 0.25, charge: 0,   spawnR: 25 },
+  { name: 'Rocky planet',  name_zh: '岩質行星', kind: 'planet', radius: 0.30, binding: 2.5, charge: 0,    spawnR: 12 },
+  { name: 'Gas giant',     name_zh: '氣態巨行星', kind: 'gas',    radius: 0.55, binding: 0.9, charge: 0,    spawnR: 14 },
+  { name: 'Brown dwarf',   name_zh: '棕矮星', kind: 'star',   radius: 0.45, binding: 4.0, charge: 0,    spawnR: 16 },
+  { name: 'Comet',         name_zh: '彗星', kind: 'probe',  radius: 0.05, binding: 0.4, charge: 0,    spawnR: 22 },
+  { name: 'Crewed ship',   name_zh: '載人飛船', kind: 'ship',   radius: 0.02, binding: 8.0, charge: 0,    spawnR: 9 },
+  { name: 'Charged probe', name_zh: '帶電探測器', kind: 'probe',  radius: 0.05, binding: 5.0, charge: 0.6,  spawnR: 11 },
+  { name: 'Pulsar core',   name_zh: '波霎核心', kind: 'star',   radius: 0.10, binding: 20.0, charge: 0,   spawnR: 18 },
+  { name: 'Dust cloud',    name_zh: '塵埃雲', kind: 'gas',    radius: 0.40, binding: 0.25, charge: 0,   spawnR: 25 },
 ];
 
 let nameCounters = {};
@@ -134,7 +134,8 @@ function beginPlacement(sim, it, e, force) {
     wx: 0, wy: 0,
     inCanvas: false,
   };
-  window.KNSim.logEv(sim, 'amber', `placing ${it.name}… drop into viewport`);
+  window.KNSim.logEv(sim, 'amber', tr(`placing ${it.name}… drop into viewport`,
+                                      `放置 ${it.name_zh || it.name}… 拖入視圖`));
   force();
 }
 window.__bumpName = function (kind) {

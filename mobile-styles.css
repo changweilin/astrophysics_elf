@@ -105,6 +105,26 @@ html, body {
 }
 .m-head .session .live { color: var(--cyan); }
 
+/* Language toggle (EN / 中) */
+.lang-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.lang-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--fg-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.lang-toggle button + button { border-left: 1px solid var(--line); }
+.lang-toggle button.on { background: var(--cyan); color: var(--bg-0, #0b0d12); }
+
 /* ─── Class chip bar ─────────────────────────────────────── */
 .m-chipbar {
   display: flex;

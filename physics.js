@@ -64,39 +64,53 @@
 
     if (k > 1 + eps) {
       return {
-        name: 'NAKED SINGULARITY',
+        name: tr('NAKED SINGULARITY', '裸奇異點'),
         family: 'kerr-newman',
         warn: true,
-        desc: '宇宙審查假設崩壞 — a² + Q² > M²，事件視界消失。',
-        pill: 'UNSHIELDED'
+        desc: tr('Cosmic censorship breaks down — a² + Q² > M², the event horizon vanishes.',
+                 '宇宙審查假設崩壞 — a² + Q² > M²，事件視界消失。'),
+        pill: tr('UNSHIELDED', '無遮蔽')
       };
     }
     const spinning = Math.abs(aN) > 0.01;
     const charged = Math.abs(qN) > 0.01;
     if (!spinning && !charged) {
       return { name: 'Schwarzschild', family: 'schwarzschild', warn: false,
-        desc: '球對稱、靜止、不帶電。最簡單的真空解。', pill: 'STATIC' };
+        desc: tr('Spherically symmetric, static, uncharged. The simplest vacuum solution.',
+                 '球對稱、靜止、不帶電。最簡單的真空解。'), pill: tr('STATIC', '靜止') };
     }
     if (spinning && !charged) {
       return { name: 'Kerr', family: 'kerr', warn: false,
-        desc: '自旋形成動圈與內外視界。frame dragging 主導附近的測地線。', pill: 'ROTATING' };
+        desc: tr('Spin forms the ergosphere and inner/outer horizons. Frame dragging dominates nearby geodesics.',
+                 '自旋形成動圈與內外視界。frame dragging 主導附近的測地線。'), pill: tr('ROTATING', '自旋') };
     }
     if (!spinning && charged) {
       return { name: 'Reissner-Nordström', family: 'rn', warn: false,
-        desc: '帶電、不自旋。電場排斥同號電荷的測試粒子。', pill: 'CHARGED' };
+        desc: tr('Charged, non-spinning. The electric field repels like-charged test particles.',
+                 '帶電、不自旋。電場排斥同號電荷的測試粒子。'), pill: tr('CHARGED', '帶電') };
     }
     return { name: 'Kerr-Newman', family: 'kn', warn: false,
-      desc: '帶電且自旋的最一般穩態解。具備動圈與電磁交互作用。', pill: 'FULL' };
+      desc: tr('The most general stationary solution: charged and spinning. Has an ergosphere and electromagnetic coupling.',
+               '帶電且自旋的最一般穩態解。具備動圈與電磁交互作用。'), pill: tr('FULL', '完整') };
   }
 
   // Stellar-type metadata used when the central body is not a black hole.
+  // Getters so name/pill/desc re-resolve against the live language. classify
+  // spreads these objects ({ ...info }) at call time, snapshotting the current
+  // language for that render.
   const STELLAR_INFO = {
-    ns: { name: 'Neutron Star',     pill: 'DEGENERATE',
-          desc: '中子簡併壓支撐的極緻密殘骸。半徑 ≈ 3 M，自旋與磁場主導電磁相位現象。' },
-    wd: { name: 'White Dwarf',      pill: 'COMPACT',
-          desc: '電子簡併壓支撐。半徑 ≈ 7 M（壓縮可視化）；無事件視界但仍可被潮汐力擾動。' },
-    ms: { name: 'Main-Sequence Star', pill: 'FUSING',
-          desc: '質子-質子鏈或 CNO 循環活躍。半徑大，r_s 遠遠埋在內部，時空近於牛頓。' },
+    ns: { get name() { return tr('Neutron Star', '中子星'); },
+          get pill() { return tr('DEGENERATE', '簡併'); },
+          get desc() { return tr('Ultra-compact remnant held up by neutron degeneracy pressure. Radius ≈ 3 M; spin and magnetic field drive the electromagnetic phenomena.',
+                                 '中子簡併壓支撐的極緻密殘骸。半徑 ≈ 3 M，自旋與磁場主導電磁相位現象。'); } },
+    wd: { get name() { return tr('White Dwarf', '白矮星'); },
+          get pill() { return tr('COMPACT', '緻密'); },
+          get desc() { return tr('Held up by electron degeneracy pressure. Radius ≈ 7 M (compressed for display); no event horizon, but still perturbed by tidal forces.',
+                                 '電子簡併壓支撐。半徑 ≈ 7 M（壓縮可視化）；無事件視界但仍可被潮汐力擾動。'); } },
+    ms: { get name() { return tr('Main-Sequence Star', '主序星'); },
+          get pill() { return tr('FUSING', '核融合'); },
+          get desc() { return tr('Proton-proton chain or CNO cycle active. Large radius, r_s buried deep inside; spacetime is nearly Newtonian.',
+                                 '質子-質子鏈或 CNO 循環活躍。半徑大，r_s 遠遠埋在內部，時空近於牛頓。'); } },
   };
 
   // Default stellar radii (geometric units, M) and surface temperatures (K).

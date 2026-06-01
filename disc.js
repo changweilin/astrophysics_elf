@@ -289,7 +289,7 @@
     // small chip overlay near the body
     ctx.fillStyle = `oklch(0.92 0.05 290 / ${0.7})`;
     ctx.font = '9px JetBrains Mono, monospace';
-    ctx.fillText(`JET ⊙ ${m.P.toFixed(1)}`, cx + radius + 6, cy - 4);
+    ctx.fillText(tr(`JET ⊙ ${m.P.toFixed(1)}`, `噴流 ⊙ ${m.P.toFixed(1)}`), cx + radius + 6, cy - 4);
     ctx.fillStyle = `oklch(0.72 0.10 290 / 0.7)`;
     ctx.fillText(`Γ ≈ ${m.gamma.toFixed(1)}`, cx + radius + 6, cy + 7);
   }

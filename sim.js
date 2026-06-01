@@ -54,6 +54,16 @@
     if (sim.events.length > 30) sim.events.pop();
   }
 
+  // Localized name for the surface a body impacts on a non-BH central/companion.
+  // Returns both branches so callers can slot them into bilingual templates.
+  function surfaceLabel(type) {
+    return {
+      ns: { en: 'neutron crust', zh: '中子星地殼' },
+      wd: { en: 'WD surface',    zh: '白矮星表面' },
+      ms: { en: 'photosphere',   zh: '光球層' },
+    }[type] || { en: 'surface', zh: '表面' };
+  }
+
   // ── Binary companion (placed by user; 2-body integration) ──
   function initBinary(sim) {
     sim.binary = {
@@ -278,21 +288,25 @@
         sim.params.Q = sim.params.Q + (bin.Q2 || 0);
         sim.params.a = rem.af * rem.Mf;   // a = (a/M)·M_f
         bin.enabled = false;
-        logEv(sim, 'warn', `MERGER · η=${rem.eta.toFixed(3)} · M_f=${rem.Mf.toFixed(2)}M · E_GW=${rem.eRad.toFixed(3)} c² (${(rem.eRad / Mt * 100).toFixed(1)}%)`);
-        logEv(sim, 'amber', `ringdown · a_f/M_f → ${rem.af.toFixed(3)}`);
+        logEv(sim, 'warn', tr(
+          `MERGER · η=${rem.eta.toFixed(3)} · M_f=${rem.Mf.toFixed(2)}M · E_GW=${rem.eRad.toFixed(3)} c² (${(rem.eRad / Mt * 100).toFixed(1)}%)`,
+          `合併 · η=${rem.eta.toFixed(3)} · M_f=${rem.Mf.toFixed(2)}M · E_GW=${rem.eRad.toFixed(3)} c² (${(rem.eRad / Mt * 100).toFixed(1)}%)`));
+        logEv(sim, 'amber', tr(`ringdown · a_f/M_f → ${rem.af.toFixed(3)}`,
+                               `衰盪 (ringdown) · a_f/M_f → ${rem.af.toFixed(3)}`));
         return;
       }
     } else {
       // At least one non-BH — collision when surfaces touch.
       if (bin.d < surface1 + surface2) {
         bin.enabled = false;
-        logEv(sim, 'warn', `companion contact at r=${bin.d.toFixed(2)} M`);
+        logEv(sim, 'warn', tr(`companion contact at r=${bin.d.toFixed(2)} M`,
+                              `伴星表面接觸於 r=${bin.d.toFixed(2)} M`));
         return;
       }
     }
     if (bin.d > 80) {
       bin.enabled = false;
-      logEv(sim, 'amber', `companion escaped binary system`);
+      logEv(sim, 'amber', tr(`companion escaped binary system`, `伴星逃離雙星系統`));
     }
   }
 
@@ -335,22 +349,25 @@
         if (b.stress > b.stressPeak) b.stressPeak = b.stress;
         if (b.kind !== 'probe' && b.kind !== 'ship' && b.stress > 1.15) {
           b.state = 'spaghettified'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', `${b.name} — spaghettified between binary pair`);
+          logEv(sim, 'warn', tr(`${b.name} — spaghettified between binary pair`,
+                                `${b.name} — 在雙星之間被拉麵化`));
           continue;
         }
         // Primary capture / surface impact
         if (cType === 'bh') {
           if (!n1 && r1 < (isFinite(r1plus) ? r1plus : M)) {
             b.state = 'captured'; b.consumedAt = sim.t;
-            logEv(sim, 'warn', `${b.name} — captured by primary BH`);
+            logEv(sim, 'warn', tr(`${b.name} — captured by primary BH`,
+                                  `${b.name} — 被主黑洞捕獲`));
             continue;
           }
         } else {
           const Rs1 = sim.params.R_star || 3;
           if (r1 < Rs1) {
             b.state = 'captured'; b.consumedAt = sim.t;
-            const label = { ns: 'neutron crust', wd: 'WD surface', ms: 'photosphere' }[cType] || 'surface';
-            logEv(sim, 'warn', `${b.name} — impacted primary ${label}`);
+            const label = surfaceLabel(cType);
+            logEv(sim, 'warn', tr(`${b.name} — impacted primary ${label.en}`,
+                                  `${b.name} — 撞上主天體的${label.zh}`));
             continue;
           }
         }
@@ -358,21 +375,24 @@
         if (sType === 'bh') {
           if (!n2 && r2 < (isFinite(r2plus) ? r2plus : bin.M2)) {
             b.state = 'captured'; b.consumedAt = sim.t;
-            logEv(sim, 'warn', `${b.name} — captured by companion BH`);
+            logEv(sim, 'warn', tr(`${b.name} — captured by companion BH`,
+                                  `${b.name} — 被伴星黑洞捕獲`));
             continue;
           }
         } else {
           const Rs2 = bin.R_star2 || 3;
           if (r2 < Rs2) {
             b.state = 'captured'; b.consumedAt = sim.t;
-            const label = { ns: 'neutron crust', wd: 'WD surface', ms: 'photosphere' }[sType] || 'surface';
-            logEv(sim, 'warn', `${b.name} — impacted companion ${label}`);
+            const label = surfaceLabel(sType);
+            logEv(sim, 'warn', tr(`${b.name} — impacted companion ${label.en}`,
+                                  `${b.name} — 撞上伴星的${label.zh}`));
             continue;
           }
         }
         if (r > 50) {
           b.state = 'escaped'; b.consumedAt = sim.t;
-          logEv(sim, 'amber', `${b.name} — ejected by binary`);
+          logEv(sim, 'amber', tr(`${b.name} — ejected by binary`,
+                                 `${b.name} — 被雙星彈射`));
         }
         continue;  // skip single-BH checks below
       }
@@ -385,7 +405,8 @@
       if (tidal > b.stressPeak) b.stressPeak = tidal;
       if (b.kind !== 'probe' && b.kind !== 'ship' && tidal > 1.15) {
         b.state = 'spaghettified'; b.consumedAt = sim.t;
-        logEv(sim, 'warn', `${b.name} — spaghettified at r = ${r.toFixed(2)} M`);
+        logEv(sim, 'warn', tr(`${b.name} — spaghettified at r = ${r.toFixed(2)} M`,
+                              `${b.name} — 在 r = ${r.toFixed(2)} M 處被拉麵化`));
         continue;
       }
       // Surface impact for stellar centrals
@@ -393,25 +414,29 @@
         const Rs = sim.params.R_star || 3;
         if (r < Rs) {
           b.state = 'captured'; b.consumedAt = sim.t;
-          const label = { ns: 'neutron crust', wd: 'WD surface', ms: 'photosphere' }[type] || 'surface';
-          logEv(sim, 'warn', `${b.name} — impacted ${label} at r = ${r.toFixed(2)} M`);
+          const label = surfaceLabel(type);
+          logEv(sim, 'warn', tr(`${b.name} — impacted ${label.en} at r = ${r.toFixed(2)} M`,
+                                `${b.name} — 在 r = ${r.toFixed(2)} M 處撞上${label.zh}`));
           continue;
         }
       } else {
         if (!naked && r < rplus) {
           b.state = 'captured'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', `${b.name} — crossed r₊, mass added to BH`);
+          logEv(sim, 'warn', tr(`${b.name} — crossed r₊, mass added to BH`,
+                                `${b.name} — 越過 r₊，質量併入黑洞`));
           continue;
         }
         if (naked && r < 0.4) {
           b.state = 'captured'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', `${b.name} — annihilated at naked singularity`);
+          logEv(sim, 'warn', tr(`${b.name} — annihilated at naked singularity`,
+                                `${b.name} — 於裸奇異點湮滅`));
           continue;
         }
       }
       if (r > 50) {
         b.state = 'escaped'; b.consumedAt = sim.t;
-        logEv(sim, 'amber', `${b.name} — escaped beyond detector range`);
+        logEv(sim, 'amber', tr(`${b.name} — escaped beyond detector range`,
+                               `${b.name} — 逃逸至偵測範圍之外`));
       }
     }
   }
@@ -709,7 +734,7 @@
       ctx.ellipse(cx, cy, rErg * s, polar * s, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      labelRing(ctx, cx, cy, rErg * s, 'ergosphere');
+      labelRing(ctx, cx, cy, rErg * s, tr('ergosphere', '動圈'));
     }
 
     // Event horizon (and binary companion if active)
@@ -993,7 +1018,7 @@
         ctx.fillStyle = `oklch(0.96 0.10 75 / ${(t - 0.6) * 2.5 * alpha})`;
         ctx.font = 'bold 11px JetBrains Mono, monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('GW MERGER · RINGDOWN', cx, cy - 14);
+        ctx.fillText(tr('GW MERGER · RINGDOWN', '重力波合併 · 衰盪'), cx, cy - 14);
         ctx.font = '9px JetBrains Mono, monospace';
         ctx.fillStyle = `oklch(0.75 0.10 295 / ${(t - 0.6) * 2.5 * alpha})`;
         ctx.fillText(`M_f = ${sim.params.M.toFixed(2)} M`, cx, cy);
@@ -1140,7 +1165,7 @@
       let mx = null, my = null, label = '';
       if (sim.moving.kind === 'companion' && sim.binary && sim.binary.enabled) {
         [mx, my] = worldToScreen(sim, w, h, sim.binary.x2, sim.binary.y2);
-        label = 'companion';
+        label = tr('companion', '伴星');
       } else {
         const b = sim.bodies.find((x) => x.id === sim.moving.bodyId);
         if (b) { [mx, my] = worldToScreen(sim, w, h, b.x, b.y); label = b.name; }
@@ -1159,7 +1184,7 @@
         ctx.stroke();
         ctx.fillStyle = 'oklch(0.85 0.16 130)';
         ctx.font = '10px JetBrains Mono, monospace';
-        ctx.fillText(`moving · ${label}`, mx + 24, my - 8);
+        ctx.fillText(tr(`moving · ${label}`, `移動中 · ${label}`), mx + 24, my - 8);
       }
     }
 
@@ -1198,7 +1223,7 @@
       ctx.setLineDash([]);
       ctx.fillStyle = isCompanion ? 'oklch(0.82 0.14 295)' : 'oklch(0.80 0.16 75)';
       ctx.font = '10px JetBrains Mono, monospace';
-      ctx.fillText(isCompanion ? 'release → place companion' : 'release → place', px + 22, py - 4);
+      ctx.fillText(isCompanion ? tr('release → place companion', '放開 → 放置伴星') : tr('release → place', '放開 → 放置'), px + 22, py - 4);
       ctx.fillStyle = 'oklch(0.58 0.012 255)';
       ctx.font = '9px JetBrains Mono, monospace';
       const r = Math.hypot(p.wx, p.wy);
@@ -1230,9 +1255,9 @@
         ctx.beginPath(); ctx.arc(bx, by, 16 + pulse * 8, 0, Math.PI * 2); ctx.stroke();
         ctx.fillStyle = isCompanion ? 'oklch(0.82 0.14 295)' : 'oklch(0.80 0.16 75)';
         ctx.font = '10px JetBrains Mono, monospace';
-        ctx.fillText(isCompanion ? 'drag from companion → custom v₀' : 'drag from body → launch', bx + 22, by - 6);
+        ctx.fillText(isCompanion ? tr('drag from companion → custom v₀', '從伴星拖曳 → 自訂 v₀') : tr('drag from body → launch', '從天體拖曳 → 發射'), bx + 22, by - 6);
         ctx.fillStyle = 'oklch(0.58 0.012 255)';
-        ctx.fillText(isCompanion ? 'release at body → keep stable v_circ' : 'release at body for v = 0', bx + 22, by + 8);
+        ctx.fillText(isCompanion ? tr('release at body → keep stable v_circ', '在伴星上放開 → 保持穩定 v_circ') : tr('release at body for v = 0', '在天體上放開 → v = 0'), bx + 22, by + 8);
         return;
       }
       // Active pull
@@ -1286,7 +1311,8 @@
       ctx.fillText(`v0 = ${v.toFixed(3)} c`, px + 10, py - 4);
       ctx.fillStyle = fateColor;
       ctx.font = '9px JetBrains Mono, monospace';
-      ctx.fillText(`fate: ${fate.toUpperCase()}`, px + 10, py + 9);
+      const fateZh = { capture: '落入', escape: '逃逸', bound: '束縛' }[fate] || fate;
+      ctx.fillText(tr(`fate: ${fate.toUpperCase()}`, `結局：${fateZh}`), px + 10, py + 9);
     }
   }
 

@@ -25,6 +25,9 @@ function App() {
   const force = () => setTick((t) => t + 1);
   const canvasRef = useR(null);
 
+  // Re-render the whole tree when the UI language changes.
+  useE(() => window.KNi18n.subscribe(force), []);
+
   // Persist the chosen configuration so it survives a reload. saveConfig diffs
   // internally, so the 1 s timer only writes when something actually changed;
   // visibility/pagehide flushes capture edits made right before leaving.
@@ -83,7 +86,7 @@ function App() {
           ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * SIM.view.scale)
           : Math.max(6, (bin.R_star2 || 3) * SIM.view.scale * 0.7);
         const hitR = Math.max(14, visualR + 4);
-        if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: 'companion' };
+        if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: tr('companion', '伴星') };
       }
       return null;
     }
@@ -166,8 +169,9 @@ function App() {
             // framed as they orbit (user can switch back via FRAME · FREE).
             SIM.view.frame = 'com';
             const vc = Math.sqrt(SIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
-            window.KNSim.logEv(SIM, 'good',
-              `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`);
+            window.KNSim.logEv(SIM, 'good', tr(
+              `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`,
+              `伴星已放置於 r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — 拖曳可覆寫`));
           } else {
             const prefix = { planet:'PL', gas:'GG', star:'ST', ship:'SS', probe:'PR' }[it.kind];
             const suffix = window.__bumpName(it.kind);
@@ -182,7 +186,9 @@ function App() {
               x: wx, y: wy, vx: -wy / rr * vc * dir, vy: wx / rr * vc * dir,
             });
             SIM.selectedId = id;
-            window.KNSim.logEv(SIM, 'good', `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`);
+            window.KNSim.logEv(SIM, 'good', tr(
+              `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`,
+              `${it.name_zh || it.name} 已放置於 r=${Math.hypot(wx,wy).toFixed(2)} M — 從天體拖曳以發射`));
           }
           SIM.placement = null;
           suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
@@ -208,9 +214,10 @@ function App() {
               const vy2 = -dy / SIM.view.scale * vScale;
               window.KNSim.setBinaryVelocity(SIM, vx2, vy2);
               const v = Math.hypot(bin.vx2, bin.vy2);
-              window.KNSim.logEv(SIM, 'good', `companion launched · v₀ = ${v.toFixed(3)} c (primary recoils)`);
+              window.KNSim.logEv(SIM, 'good', tr(`companion launched · v₀ = ${v.toFixed(3)} c (primary recoils)`,
+                                                 `伴星已發射 · v₀ = ${v.toFixed(3)} c（主天體反衝）`));
             } else {
-              window.KNSim.logEv(SIM, 'good', `companion retains stable v_circ`);
+              window.KNSim.logEv(SIM, 'good', tr(`companion retains stable v_circ`, `伴星維持穩定 v_circ`));
             }
           }
         } else {
@@ -223,7 +230,8 @@ function App() {
             body.vx = -dx / SIM.view.scale * vScale;
             body.vy = -dy / SIM.view.scale * vScale;
             const v = Math.hypot(body.vx, body.vy);
-            window.KNSim.logEv(SIM, 'good', `${body.name} launched · v₀ = ${v.toFixed(3)} c`);
+            window.KNSim.logEv(SIM, 'good', tr(`${body.name} launched · v₀ = ${v.toFixed(3)} c`,
+                                               `${body.name} 已發射 · v₀ = ${v.toFixed(3)} c`));
           }
         }
         setPlaying(true);   // fling committed → resume play
@@ -239,7 +247,8 @@ function App() {
           let r = 0;
           if (grab.kind === 'companion') { r = SIM.binary ? SIM.binary.d : 0; }
           else { const b = SIM.bodies.find((x) => x.id === grab.bodyId); r = b ? Math.hypot(b.x, b.y) : 0; }
-          window.KNSim.logEv(SIM, 'good', `${grab.label} repositioned · r = ${r.toFixed(2)} M`);
+          window.KNSim.logEv(SIM, 'good', tr(`${grab.label} repositioned · r = ${r.toFixed(2)} M`,
+                                             `${grab.label} 已重新定位 · r = ${r.toFixed(2)} M`));
           suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
         }
         clearGrab();
@@ -300,7 +309,8 @@ function App() {
               if (grab.kind === 'companion') { if (SIM.binary) SIM.binary.held = true; }
               else { const b = SIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = true; }
               SIM.moving = { kind: grab.kind, bodyId: grab.bodyId };
-              window.KNSim.logEv(SIM, 'amber', `${grab.label} — hold-drag to reposition`);
+              window.KNSim.logEv(SIM, 'amber', tr(`${grab.label} — hold-drag to reposition`,
+                                                  `${grab.label} — 長按拖曳以重新定位`));
               force();
             }
           }, 300);
@@ -347,7 +357,9 @@ function App() {
             || (recent && lastDown.kind === 'companion')) {
           const vc = window.KNSim.circularizeBinary(SIM);
           setPlaying(true);   // double-click → resume play
-          window.KNSim.logEv(SIM, 'good', `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`);
+          window.KNSim.logEv(SIM, 'good', tr(
+            `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`,
+            `雙星 → 穩定圓軌道 · v_rel=${vc.toFixed(3)} c · 重力波衰減暫停（重新拋投以旋近）`));
           force();
           return;
         }
@@ -367,7 +379,9 @@ function App() {
         const vc = window.KNSim.circularizeBody(SIM, best);
         setPlaying(true);   // double-click → resume play
         SIM.selectedId = best.id;
-        window.KNSim.logEv(SIM, 'good', `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`);
+        window.KNSim.logEv(SIM, 'good', tr(
+          `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`,
+          `${best.name} → 穩定週期軌道 · |v|=${vc.toFixed(3)} c（保持方向）`));
         force();
       }
     }
@@ -450,15 +464,15 @@ function App() {
     function onKey(e) {
       if (e.key === ' ') { setPlaying((p) => !p); e.preventDefault(); }
       if (e.key === 'Escape') {
-        if (SIM.placement) { SIM.placement = null; window.KNSim.logEv(SIM, 'warn', 'placement cancelled'); force(); }
+        if (SIM.placement) { SIM.placement = null; window.KNSim.logEv(SIM, 'warn', tr('placement cancelled', '已取消放置')); force(); }
         else if (SIM.aiming) {
           if (SIM.aiming.kind === 'companion') {
             // If user never customised velocity & companion still on default, remove it.
             if (!SIM.aiming.isAiming) {
               window.KNSim.removeCompanion(SIM);
-              window.KNSim.logEv(SIM, 'warn', 'companion placement cancelled');
+              window.KNSim.logEv(SIM, 'warn', tr('companion placement cancelled', '已取消伴星放置'));
             } else {
-              window.KNSim.logEv(SIM, 'warn', 'aim cancelled · companion kept at default v_circ');
+              window.KNSim.logEv(SIM, 'warn', tr('aim cancelled · companion kept at default v_circ', '已取消瞄準 · 伴星保留預設 v_circ'));
             }
           } else {
             // remove the un-launched body if velocity never set
@@ -466,7 +480,7 @@ function App() {
             if (body && !SIM.aiming.isAiming && body.vx === 0 && body.vy === 0) {
               SIM.bodies = SIM.bodies.filter((b) => b.id !== body.id);
             }
-            window.KNSim.logEv(SIM, 'warn', 'aim cancelled');
+            window.KNSim.logEv(SIM, 'warn', tr('aim cancelled', '已取消瞄準'));
           }
           SIM.aiming = null;
           force();
@@ -491,16 +505,17 @@ function App() {
       <div className="topbar">
         <div className="brand">
           <img className="logo" src="/logos/icon-192.png" alt="Astro ELF" width="24" height="24" />
-          <span className="wordmark"><strong>ASTRO ELF</strong><span className="suffix">BLACK HOLE LAB</span></span>
+          <span className="wordmark"><strong>ASTRO ELF</strong><span className="suffix">{tr('BLACK HOLE LAB', '黑洞實驗室')}</span></span>
         </div>
         <div className="crumbs">
-          INSTRUMENT <span>/</span> SANDBOX <span>/</span> <span>session 04C</span>
+          {tr('INSTRUMENT', '儀器')} <span>/</span> {tr('SANDBOX', '沙盒')} <span>/</span> <span>{tr('session 04C', '工作階段 04C')}</span>
         </div>
         <div className="session">
-          <span>SOLVER <b>RK2-MID</b></span>
-          <span>SUBSTEP <b>4×</b></span>
-          <span>FRAME <b>BL-COORDS</b></span>
-          <span className="ok">● LIVE</span>
+          <span>{tr('SOLVER', '解算器')} <b>RK2-MID</b></span>
+          <span>{tr('SUBSTEP', '子步')} <b>4×</b></span>
+          <span>{tr('FRAME', '座標系')} <b>BL-COORDS</b></span>
+          <span className="ok">● {tr('LIVE', '即時')}</span>
+          <LangToggle force={force} />
         </div>
       </div>
 
@@ -509,46 +524,46 @@ function App() {
       <div className="viewport" style={{ cursor: SIM.placement ? 'crosshair' : SIM.moving ? 'move' : (SIM.aiming && !SIM.aiming.isAiming) ? 'grab' : 'default' }}>
         <canvas ref={canvasRef} />
         <div className="overlay-tl">
-          <div className="frame-id">Equatorial slice · θ = π/2</div>
-          <div className="frame-coord">scale: 1 px = {(1 / SIM.view.scale).toFixed(3)} M · drag to pan · scroll to zoom</div>
+          <div className="frame-id">{tr('Equatorial slice · θ = π/2', '赤道切面 · θ = π/2')}</div>
+          <div className="frame-coord">{tr('scale', '比例')}: 1 px = {(1 / SIM.view.scale).toFixed(3)} M · {tr('drag to pan · scroll to zoom', '拖曳平移 · 滾輪縮放')}</div>
           {SIM.placement && (
             <div className="frame-coord" style={{color: SIM.placement.item.isCompanion ? 'oklch(0.82 0.14 295)' : 'var(--amber)'}}>
-              ● PLACEMENT · {SIM.placement.item.name} · ESC to cancel
+              ● {tr('PLACEMENT', '放置')} · {SIM.placement.item.name} · {tr('ESC to cancel', 'ESC 取消')}
             </div>
           )}
           {SIM.aiming && !SIM.aiming.isAiming && (
             <div className="frame-coord" style={{color: SIM.aiming.kind === 'companion' ? 'oklch(0.82 0.14 295)' : 'var(--amber)'}}>
-              ● AIM · {SIM.aiming.kind === 'companion' ? 'drag from companion to override v_circ' : 'drag from body to launch'} · ESC to cancel
+              ● {tr('AIM', '瞄準')} · {SIM.aiming.kind === 'companion' ? tr('drag from companion to override v_circ', '從伴星拖曳以覆寫 v_circ') : tr('drag from body to launch', '從天體拖曳以發射')} · {tr('ESC to cancel', 'ESC 取消')}
             </div>
           )}
           {SIM.aiming && SIM.aiming.isAiming && (
             <div className="frame-coord" style={{color: SIM.aiming.kind === 'companion' ? 'oklch(0.82 0.14 295)' : 'var(--amber)'}}>
-              ● AIMING… release to commit v₀
+              ● {tr('AIMING… release to commit v₀', '瞄準中… 放開以送出 v₀')}
             </div>
           )}
         </div>
         <div className="overlay-tr">
-          <div className="chip">CLASS · <b>{cls.name}</b></div>
+          <div className="chip">{tr('CLASS', '類別')} · <b>{cls.name}</b></div>
           <div className="chip">M=<b>{SIM.params.M.toFixed(2)}</b> · Q=<b>{SIM.params.Q.toFixed(2)}</b> · a=<b>{SIM.params.a.toFixed(2)}</b>
             {SIM.params.type && SIM.params.type !== 'bh' && <> · R★=<b>{(SIM.params.R_star || 3).toFixed(2)}</b></>}
           </div>
         </div>
         <div className="overlay-bl">
           <div className="view-toggles">
-            <ToggleBtn label="HORIZON"  k="showHorizon" sim={SIM} force={force} />
-            <ToggleBtn label="ERGO"     k="showErgo" sim={SIM} force={force} />
-            <ToggleBtn label="ISCO"     k="showISCO" sim={SIM} force={force} />
-            <ToggleBtn label="PHOTON"   k="showPhoton" sim={SIM} force={force} />
-            <ToggleBtn label="DRAG"     k="showDragField" sim={SIM} force={force} />
-            <ToggleBtn label="GW"       k="showGW" sim={SIM} force={force} />
-            <ToggleBtn label="TRAILS"   k="showOrbits" sim={SIM} force={force} />
-            <ToggleBtn label="TIDAL"    k="showTidal" sim={SIM} force={force} />
-            <ToggleBtn label="LABELS"   k="showLabels" sim={SIM} force={force} />
+            <ToggleBtn label={tr('HORIZON', '視界')}  k="showHorizon" sim={SIM} force={force} />
+            <ToggleBtn label={tr('ERGO', '動圈')}     k="showErgo" sim={SIM} force={force} />
+            <ToggleBtn label={tr('ISCO', 'ISCO')}     k="showISCO" sim={SIM} force={force} />
+            <ToggleBtn label={tr('PHOTON', '光子')}   k="showPhoton" sim={SIM} force={force} />
+            <ToggleBtn label={tr('DRAG', '拖曳')}     k="showDragField" sim={SIM} force={force} />
+            <ToggleBtn label={tr('GW', '重力波')}     k="showGW" sim={SIM} force={force} />
+            <ToggleBtn label={tr('TRAILS', '軌跡')}   k="showOrbits" sim={SIM} force={force} />
+            <ToggleBtn label={tr('TIDAL', '潮汐')}    k="showTidal" sim={SIM} force={force} />
+            <ToggleBtn label={tr('LABELS', '標籤')}   k="showLabels" sim={SIM} force={force} />
           </div>
           <FrameLock sim={SIM} force={force} />
         </div>
         <div className="overlay-br">
-          <div>RENDER · CANVAS2D · {Math.round(SIM.view.scale)}px/M</div>
+          <div>{tr('RENDER', '繪製')} · CANVAS2D · {Math.round(SIM.view.scale)}px/M</div>
         </div>
 
         <TidalMicroscope sim={SIM} force={force} />
@@ -569,22 +584,35 @@ function FrameLock({ sim, force }) {
   const cur = sim.view.frame || 'free';
   const hasBin = !!(sim.binary && sim.binary.enabled);
   const opts = [
-    ['free', 'FREE', true],
+    ['free', tr('FREE', '自由'), true],
     ['m1', 'M1', true],
     ['m2', 'M2', hasBin],
     ['com', 'COM', hasBin],
   ];
   return (
     <div className="view-toggles frame-lock">
-      <span className="vt-label">FRAME</span>
+      <span className="vt-label">{tr('FRAME', '座標系')}</span>
       {opts.map(([k, lbl, on]) => (
         <button key={k} className={cur === k ? 'on' : ''} disabled={!on}
-          title={on ? `lock camera to ${lbl}` : 'place a companion first'}
+          title={on ? tr(`lock camera to ${lbl}`, `將鏡頭鎖定至 ${lbl}`) : tr('place a companion first', '請先放置伴星')}
           onClick={() => { sim.view.frame = k; force(); }}>
           {lbl}
         </button>
       ))}
     </div>
+  );
+}
+
+// EN / 中 language switch. Shared visual style (.lang-toggle) lives in styles.css.
+function LangToggle({ force }) {
+  const lang = window.KNi18n.lang;
+  return (
+    <span className="lang-toggle" role="group" aria-label="language">
+      <button className={lang === 'en' ? 'on' : ''}
+        onClick={() => { window.KNi18n.setLang('en'); force(); }}>EN</button>
+      <button className={lang === 'zh' ? 'on' : ''}
+        onClick={() => { window.KNi18n.setLang('zh'); force(); }}>中</button>
+    </span>
   );
 }
 

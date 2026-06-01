@@ -46,6 +46,9 @@ function MobileApp() {
   const snapTimer = useRefApp(null);
   const force = () => setTick((t) => t + 1);
 
+  // Re-render when the UI language changes.
+  useEffectApp(() => window.KNi18n.subscribe(force), []);
+
   // ─── Universe ↔ settings splitter ───────────────────────
   // The pie is the height shared between the viewport and the drawer; the fixed
   // chrome (header, chips, splitter, dock, tabs) sits outside it.
@@ -106,7 +109,8 @@ function MobileApp() {
   // Arm placement and switch to viewport (collapse drawer for clarity)
   const armPlacement = (it) => {
     MSIM.placement = { item: it, wx: 0, wy: 0, inCanvas: false };
-    window.KNSim.logEv(MSIM, 'amber', `placing ${it.name}… tap viewport to drop`);
+    window.KNSim.logEv(MSIM, 'amber', tr(`placing ${it.name}… tap viewport to drop`,
+                                         `放置 ${it.name_zh || it.name}… 點視圖放下`));
     snapDrawer(0);
     force();
   };
@@ -158,7 +162,7 @@ function MobileApp() {
           ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * MSIM.view.scale)
           : Math.max(6, (bin.R_star2 || 3) * MSIM.view.scale * 0.7);
         const hitR = Math.max(18, visualR + 6);
-        if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: 'companion' };
+        if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: tr('companion', '伴星') };
       }
       return null;
     }
@@ -186,7 +190,9 @@ function MobileApp() {
             || (prevHit && prevHit.kind === 'companion')) {
           const vc = window.KNSim.circularizeBinary(MSIM);
           setPlaying(true);   // double-tap → resume play
-          window.KNSim.logEv(MSIM, 'good', `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`);
+          window.KNSim.logEv(MSIM, 'good', tr(
+            `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`,
+            `雙星 → 穩定圓軌道 · v_rel=${vc.toFixed(3)} c · 重力波衰減暫停（重新拋投以旋近）`));
           return true;
         }
       }
@@ -204,7 +210,9 @@ function MobileApp() {
         const vc = window.KNSim.circularizeBody(MSIM, best);
         setPlaying(true);   // double-tap → resume play
         MSIM.selectedId = best.id;
-        window.KNSim.logEv(MSIM, 'good', `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`);
+        window.KNSim.logEv(MSIM, 'good', tr(
+          `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`,
+          `${best.name} → 穩定週期軌道 · |v|=${vc.toFixed(3)} c（保持方向）`));
         return true;
       }
       return false;
@@ -294,7 +302,8 @@ function MobileApp() {
               if (grab.kind === 'companion') { if (MSIM.binary) MSIM.binary.held = true; }
               else { const b = MSIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = true; }
               MSIM.moving = { kind: grab.kind, bodyId: grab.bodyId };
-              window.KNSim.logEv(MSIM, 'amber', `${grab.label} — hold-drag to reposition`);
+              window.KNSim.logEv(MSIM, 'amber', tr(`${grab.label} — hold-drag to reposition`,
+                                                   `${grab.label} — 長按拖曳以重新定位`));
               force();
             }
           }, 350);
@@ -421,8 +430,9 @@ function MobileApp() {
             // back via FRAME · FREE).
             MSIM.view.frame = 'com';
             const vc = Math.sqrt(MSIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
-            window.KNSim.logEv(MSIM, 'good',
-              `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`);
+            window.KNSim.logEv(MSIM, 'good', tr(
+              `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`,
+              `伴星已放置於 r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — 拖曳可覆寫`));
           } else {
             const prefix = { planet: 'PL', gas: 'GG', star: 'ST', ship: 'SS', probe: 'PR' }[it.kind];
             const suffix = bumpName(it.kind);
@@ -437,10 +447,12 @@ function MobileApp() {
               x: wx, y: wy, vx: -wy / rr * vc * dir, vy: wx / rr * vc * dir,
             });
             MSIM.selectedId = id;
-            window.KNSim.logEv(MSIM, 'good', `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`);
+            window.KNSim.logEv(MSIM, 'good', tr(
+              `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`,
+              `${it.name_zh || it.name} 已放置於 r=${Math.hypot(wx,wy).toFixed(2)} M — 從天體拖曳以發射`));
           }
         } else {
-          window.KNSim.logEv(MSIM, 'warn', `placement cancelled`);
+          window.KNSim.logEv(MSIM, 'warn', tr(`placement cancelled`, `已取消放置`));
         }
         MSIM.placement = null;
         pan = null;
@@ -463,9 +475,10 @@ function MobileApp() {
               const vy2 = -dy / MSIM.view.scale * vScale;
               window.KNSim.setBinaryVelocity(MSIM, vx2, vy2);
               const v = Math.hypot(bin.vx2, bin.vy2);
-              window.KNSim.logEv(MSIM, 'good', `companion launched · v₀ = ${v.toFixed(3)} c (primary recoils)`);
+              window.KNSim.logEv(MSIM, 'good', tr(`companion launched · v₀ = ${v.toFixed(3)} c (primary recoils)`,
+                                                  `伴星已發射 · v₀ = ${v.toFixed(3)} c（主天體反衝）`));
             } else {
-              window.KNSim.logEv(MSIM, 'good', `companion retains stable v_circ`);
+              window.KNSim.logEv(MSIM, 'good', tr(`companion retains stable v_circ`, `伴星維持穩定 v_circ`));
             }
           }
         } else {
@@ -478,7 +491,8 @@ function MobileApp() {
             body.vx = -dx / MSIM.view.scale * vScale;
             body.vy = -dy / MSIM.view.scale * vScale;
             const v = Math.hypot(body.vx, body.vy);
-            window.KNSim.logEv(MSIM, 'good', `${body.name} launched · v₀ = ${v.toFixed(3)} c`);
+            window.KNSim.logEv(MSIM, 'good', tr(`${body.name} launched · v₀ = ${v.toFixed(3)} c`,
+                                                `${body.name} 已發射 · v₀ = ${v.toFixed(3)} c`));
           }
         }
         setPlaying(true);   // fling committed → resume play
@@ -492,7 +506,7 @@ function MobileApp() {
       // Grab release: commit reposition (drag→re-aim already handed off above)
       if (grab) {
         if (grab.mode === 'move') {
-          window.KNSim.logEv(MSIM, 'good', `${grab.label} repositioned`);
+          window.KNSim.logEv(MSIM, 'good', tr(`${grab.label} repositioned`, `${grab.label} 已重新定位`));
           suppressTap = true; setTimeout(() => { suppressTap = false; }, 80);
         }
         clearGrab();
@@ -586,14 +600,15 @@ function MobileApp() {
         </div>
         <div className="session">
           <span>BL · RK2</span>
-          <span className="live">● LIVE</span>
+          <span className="live">● {tr('LIVE', '即時')}</span>
+          <LangToggle force={force} />
         </div>
       </div>
 
       {/* Class chip bar */}
       <div className="m-chipbar">
         <div className={`m-chip class ${cls.warn ? 'warn' : ''}`}>
-          CLASS · <b>{cls.name}</b>
+          {tr('CLASS', '類別')} · <b>{cls.name}</b>
         </div>
         <div className="m-chip">M <b>{MSIM.params.M.toFixed(2)}</b></div>
         <div className="m-chip">Q <b>{(MSIM.params.Q >= 0 ? '+' : '') + MSIM.params.Q.toFixed(2)}</b></div>
@@ -604,7 +619,7 @@ function MobileApp() {
             BBH <b>d={MSIM.binary.d.toFixed(1)}</b>
           </div>
         )}
-        <div className="m-chip">BODIES <b>{orbitCount}/{MSIM.bodies.length}</b></div>
+        <div className="m-chip">{tr('BODIES', '天體')} <b>{orbitCount}/{MSIM.bodies.length}</b></div>
       </div>
 
       {/* Viewport */}
@@ -623,31 +638,31 @@ function MobileApp() {
         {/* Floating placement / aim hints */}
         {MSIM.placement && (
           <div className="m-hint">
-            ● PLACE · {MSIM.placement.item.name}
+            ● {tr('PLACE', '放置')} · {MSIM.placement.item.name}
             <span className="x" onClick={() => {
               MSIM.placement = null;
-              window.KNSim.logEv(MSIM, 'warn', 'placement cancelled');
+              window.KNSim.logEv(MSIM, 'warn', tr('placement cancelled', '已取消放置'));
               force();
             }}>✕</span>
           </div>
         )}
         {MSIM.aiming && !MSIM.aiming.isAiming && (
           <div className="m-hint">
-            ● AIM · drag from body
+            ● {tr('AIM · drag from body', '瞄準 · 從天體拖曳')}
             <span className="x" onClick={() => {
               const body = MSIM.bodies.find((b) => b.id === MSIM.aiming.bodyId);
               if (body && body.vx === 0 && body.vy === 0) {
                 MSIM.bodies = MSIM.bodies.filter((b) => b.id !== body.id);
               }
               MSIM.aiming = null;
-              window.KNSim.logEv(MSIM, 'warn', 'aim cancelled');
+              window.KNSim.logEv(MSIM, 'warn', tr('aim cancelled', '已取消瞄準'));
               force();
             }}>✕</span>
           </div>
         )}
         {MSIM.aiming && MSIM.aiming.isAiming && (
           <div className="m-hint">
-            ● AIMING · release to launch
+            ● {tr('AIMING · release to launch', '瞄準中 · 放開以發射')}
           </div>
         )}
 
@@ -656,15 +671,15 @@ function MobileApp() {
 
         {/* Layer toggles scroll strip */}
         <div className="m-view-bl">
-          <MToggle label="HORIZON" k="showHorizon" sim={MSIM} force={force} />
-          <MToggle label="ERGO"    k="showErgo"    sim={MSIM} force={force} />
-          <MToggle label="ISCO"    k="showISCO"    sim={MSIM} force={force} />
-          <MToggle label="PHOTON"  k="showPhoton"  sim={MSIM} force={force} />
-          <MToggle label="DRAG"    k="showDragField" sim={MSIM} force={force} />
-          <MToggle label="GW"      k="showGW"      sim={MSIM} force={force} />
-          <MToggle label="TRAILS"  k="showOrbits"  sim={MSIM} force={force} />
-          <MToggle label="TIDAL"   k="showTidal"   sim={MSIM} force={force} />
-          <MToggle label="LABELS"  k="showLabels"  sim={MSIM} force={force} />
+          <MToggle label={tr('HORIZON', '視界')} k="showHorizon" sim={MSIM} force={force} />
+          <MToggle label={tr('ERGO', '動圈')}    k="showErgo"    sim={MSIM} force={force} />
+          <MToggle label={tr('ISCO', 'ISCO')}    k="showISCO"    sim={MSIM} force={force} />
+          <MToggle label={tr('PHOTON', '光子')}  k="showPhoton"  sim={MSIM} force={force} />
+          <MToggle label={tr('DRAG', '拖曳')}    k="showDragField" sim={MSIM} force={force} />
+          <MToggle label={tr('GW', '重力波')}    k="showGW"      sim={MSIM} force={force} />
+          <MToggle label={tr('TRAILS', '軌跡')}  k="showOrbits"  sim={MSIM} force={force} />
+          <MToggle label={tr('TIDAL', '潮汐')}   k="showTidal"   sim={MSIM} force={force} />
+          <MToggle label={tr('LABELS', '標籤')}  k="showLabels"  sim={MSIM} force={force} />
         </div>
 
         {/* Zoom buttons */}
@@ -679,7 +694,7 @@ function MobileApp() {
       <div className="m-splitter"
         onPointerDown={onSplitterDown}
         onDoubleClick={onSplitterDouble}
-        title="拖曳調整宇宙／設定比例 · 雙擊收合或展開">
+        title={tr('drag to adjust universe/settings split · double-tap to collapse or expand', '拖曳調整宇宙／設定比例 · 雙擊收合或展開')}>
         <span className="grip" />
       </div>
 
@@ -691,7 +706,7 @@ function MobileApp() {
         <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
         <div className="meta">
           <span className="t">T+{MSIM.t.toFixed(1)}</span>
-          <span><b>{orbitCount}</b>/{MSIM.bodies.length} BOD</span>
+          <span><b>{orbitCount}</b>/{MSIM.bodies.length} {tr('BOD', '天體')}</span>
         </div>
       </div>
 
@@ -699,20 +714,20 @@ function MobileApp() {
       <div className="m-tabs">
         <button className={tab === 'hole' ? 'on' : ''}
           onClick={() => { setTab('hole'); openDrawer(); }}>
-          <span className="ic">◉</span>BLACK HOLE
+          <span className="ic">◉</span>{tr('BLACK HOLE', '黑洞')}
         </button>
         <button className={tab === 'objects' ? 'on' : ''}
           onClick={() => { setTab('objects'); openDrawer(); }}>
-          <span className="ic">●</span>OBJECTS
+          <span className="ic">●</span>{tr('OBJECTS', '天體')}
           {MSIM.bodies.length > 0 && <span className="badge">{MSIM.bodies.length}</span>}
         </button>
         <button className={tab === 'spawn' ? 'on' : ''}
           onClick={() => { setTab('spawn'); openDrawer(); }}>
-          <span className="ic">+</span>SPAWN
+          <span className="ic">+</span>{tr('SPAWN', '生成')}
         </button>
         <button className={tab === 'disc' ? 'on' : ''}
           onClick={() => { setTab('disc'); openDrawer(); }}>
-          <span className="ic">◌</span>DISC
+          <span className="ic">◌</span>{tr('DISC', '吸積盤')}
           {sim_disc_active(MSIM) && <span className="badge">●</span>}
         </button>
       </div>
@@ -746,14 +761,14 @@ function MFrameLock({ sim, force }) {
   const cur = sim.view.frame || 'free';
   const hasBin = !!(sim.binary && sim.binary.enabled);
   const opts = [
-    ['free', 'FREE', true],
+    ['free', tr('FREE', '自由'), true],
     ['m1', 'M1', true],
     ['m2', 'M2', hasBin],
     ['com', 'COM', hasBin],
   ];
   return (
     <div className="m-view-frame">
-      <span className="lbl">FRAME</span>
+      <span className="lbl">{tr('FRAME', '座標系')}</span>
       {opts.map(([k, lbl, on]) => (
         <button key={k} className={cur === k ? 'on' : ''} disabled={!on}
           onClick={() => { sim.view.frame = k; force(); }}>
