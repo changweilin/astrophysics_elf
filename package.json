@@ -4,6 +4,8 @@
   "private": true,
   "description": "Kerr-Newman Black Hole Laboratory browser demo, served as static files behind tailscale serve.",
   "type": "module",
+  "license": "GPL-3.0-or-later",
+  "author": "Chang Wei Lin",
   "scripts": {
     "dev": "node serve.mjs",
     "start": "node serve.mjs"
