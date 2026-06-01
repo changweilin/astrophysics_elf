@@ -57,9 +57,43 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
           </div>
         </div>
       </div>
+
+      <AboutMe />
     </div>
   );
 }
+
+// Author card pinned to the bottom strip. Favicons are pulled from Google's
+// favicon service so the links carry their site marks without bundling assets.
+function AboutMe() {
+  const links = [
+    { href: 'https://github.com/changweilin', domain: 'github.com', label: 'GitHub' },
+    { href: 'https://www.linkedin.com/in/wei-lin-chang-ba38049a/', domain: 'linkedin.com', label: 'LinkedIn' },
+    { href: 'https://changweilin.github.io/demo_link/', domain: 'changweilin.github.io', label: 'Portfolio' },
+  ];
+  return (
+    <div className="pane about-me">
+      <div className="spawner-head">
+        <h3>{tr('About Me', '關於我')}</h3>
+      </div>
+      <div className="about-name">Chang Wei Lin</div>
+      <div className="about-quote">
+        <div className="zh">我愛星空至深，無懼黑夜。</div>
+        <div className="en">We have loved the stars too fondly to fear the dark.</div>
+        <div className="src">— <i>The Old Astronomer</i>, Sarah Williams</div>
+      </div>
+      <div className="about-links">
+        {links.map((l) => (
+          <a key={l.domain} href={l.href} target="_blank" rel="noopener noreferrer" title={l.label}>
+            <img src={`https://www.google.com/s2/favicons?domain=${l.domain}&sz=32`}
+                 alt={l.label} width="16" height="16" loading="lazy" />
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+window.AboutMe = AboutMe;
 
 // Discrete simulation-speed multipliers. Wider range + finer steps than before;
 // step() now advances multiple macro-steps per frame so the high end is real

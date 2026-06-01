@@ -748,6 +748,7 @@ function MobileApp() {
           {tab === 'objects' && <TabObjects   sim={MSIM} force={force} />}
           {tab === 'spawn'   && <TabSpawn     sim={MSIM} force={force} onArm={armPlacement} />}
           {tab === 'disc'    && <TabDisc      sim={MSIM} force={force} />}
+          <MAboutMe />
         </div>
       </div>
     </div>

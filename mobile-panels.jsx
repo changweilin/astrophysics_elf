@@ -980,6 +980,37 @@ function TabSpawn({ sim, force, onArm }) {
   );
 }
 
+// Author card shown under every mobile tab (rendered once in the drawer body).
+function MAboutMe() {
+  return (
+    <div className="m-sec">
+      <div className="m-sec-head">
+        <h3>{tr('About Me', '關於我')}</h3>
+      </div>
+      <div className="m-about">
+        <div className="about-name">Chang Wei Lin</div>
+        <div className="about-quote">
+          <div className="zh">我愛星空至深，無懼黑夜。</div>
+          <div className="en">We have loved the stars too fondly to fear the dark.</div>
+          <div className="src">— <i>The Old Astronomer</i>, Sarah Williams</div>
+        </div>
+        <div className="about-links">
+          {[
+            { href: 'https://github.com/changweilin', domain: 'github.com', label: 'GitHub' },
+            { href: 'https://www.linkedin.com/in/wei-lin-chang-ba38049a/', domain: 'linkedin.com', label: 'LinkedIn' },
+            { href: 'https://changweilin.github.io/demo_link/', domain: 'changweilin.github.io', label: 'Portfolio' },
+          ].map((l) => (
+            <a key={l.domain} href={l.href} target="_blank" rel="noopener noreferrer" title={l.label}>
+              <img src={`https://www.google.com/s2/favicons?domain=${l.domain}&sz=32`}
+                   alt={l.label} width="18" height="18" loading="lazy" />
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── DISC tab ──────────────────────────────────────────────
 function TabDisc({ sim, force }) {
   const p = sim.params;
@@ -1040,5 +1071,5 @@ function TabDisc({ sim, force }) {
 }
 
 Object.assign(window, {
-  TabBlackHole, TabObjects, TabSpawn, TabDisc, TabBinary, MParam, MObjectParams, M_LIBRARY,
+  TabBlackHole, TabObjects, TabSpawn, TabDisc, TabBinary, MParam, MObjectParams, M_LIBRARY, MAboutMe,
 });

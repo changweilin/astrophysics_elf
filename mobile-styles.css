@@ -1212,6 +1212,31 @@ html, body {
 .m-eventlog .ev.good { color: var(--cyan); }
 .m-eventlog .ev.amber { color: var(--amber); }
 
+/* ─── About Me ───────────────────────────────────────────── */
+.m-about { display: flex; flex-direction: column; gap: 8px; }
+.m-about .about-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--fg-0);
+}
+.m-about .about-quote { line-height: 1.45; }
+.m-about .about-quote .zh { font-size: 12px; color: var(--fg-1); letter-spacing: 0.04em; }
+.m-about .about-quote .en { font-size: 11px; color: var(--fg-2); font-style: italic; }
+.m-about .about-quote .src { font-size: 10px; color: var(--fg-3); margin-top: 3px; letter-spacing: 0.04em; }
+.m-about .about-links { display: flex; gap: 12px; margin-top: 2px; }
+.m-about .about-links a {
+  display: inline-flex;
+  width: 32px; height: 32px;
+  align-items: center; justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-0);
+  opacity: 0.82;
+}
+.m-about .about-links a:active { opacity: 1; border-color: var(--cyan-dim); }
+.m-about .about-links img { display: block; border-radius: 2px; }
+
 /* ─── Empty inspector ────────────────────────────────────── */
 .m-empty {
   padding: 22px 14px;

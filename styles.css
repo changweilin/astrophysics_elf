@@ -918,11 +918,51 @@ html, body {
   background: var(--bg-1);
   border-top: 1px solid var(--line);
   display: grid;
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: 1fr 280px 256px;
   gap: 1px;
   background-color: var(--line);
 }
 .bottom > .pane { background: var(--bg-1); padding: 12px 16px; }
+
+/* ---------- About Me (bottom strip author card) ---------- */
+.about-me { display: flex; flex-direction: column; gap: 5px; overflow: hidden; padding: 10px 16px; }
+.about-me .spawner-head { margin-bottom: 3px; }
+.about-me .about-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--fg-0);
+}
+.about-me .about-quote { line-height: 1.35; }
+.about-me .about-quote .zh {
+  font-size: 11px;
+  color: var(--fg-1);
+  letter-spacing: 0.04em;
+}
+.about-me .about-quote .en {
+  font-size: 10px;
+  color: var(--fg-2);
+  font-style: italic;
+}
+.about-me .about-quote .src {
+  font-size: 9px;
+  color: var(--fg-3);
+  margin-top: 2px;
+  letter-spacing: 0.04em;
+}
+.about-me .about-links { display: flex; gap: 10px; margin-top: auto; }
+.about-me .about-links a {
+  display: inline-flex;
+  width: 24px; height: 24px;
+  align-items: center; justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg-0);
+  opacity: 0.78;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+.about-me .about-links a:hover { opacity: 1; border-color: var(--cyan-dim); }
+.about-me .about-links img { display: block; border-radius: 2px; }
 
 .spawner-head {
   display: flex; justify-content: space-between; align-items: baseline;
