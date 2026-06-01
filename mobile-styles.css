@@ -285,6 +285,34 @@ html, body {
 .m-view-frame button.on { color: var(--amber); }
 .m-view-frame button:disabled { color: var(--fg-3); opacity: 0.4; }
 
+/* cross-section ("剖面圖") controls live in the frame strip; the diagram opens
+   as a centred stage over the universe (geometry below). */
+.m-view-frame .lbl-sep { border-left: 1px solid var(--line); }
+.m-view-frame .prof-sw {
+  display: flex; align-items: center; gap: 5px;
+  color: var(--amber);
+}
+.m-view-frame .prof-name {
+  max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.m-view-frame .prof-cyc { color: var(--fg-3); font-size: 11px; }
+
+/* Centred cross-section stage. Symmetric left/right and top/bottom margins keep
+   it centred on the crosshair and clear of every overlay (info readouts top,
+   zoom buttons right, the frame/profile strip and layer toggles bottom). It
+   sits below the controls (z-index 1) so it can never hide a button or readout. */
+.m-profile-stage {
+  position: absolute;
+  top: 78px; bottom: 78px; left: 50px; right: 50px;
+  z-index: 1; pointer-events: auto;
+  display: flex;
+  background: oklch(0.10 0.018 255 / 0.80);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  overflow: hidden;
+}
+.m-profile-stage .mp-canvas { flex: 1; display: block; width: 100%; height: 100%; }
+
 /* zoom buttons stacked right */
 .m-zoom {
   position: absolute;

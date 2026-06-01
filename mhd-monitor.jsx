@@ -343,3 +343,6 @@ function renderMHDSide(ctx, w, h, sim, view) {
 }
 
 window.MHDMonitor = MHDMonitor;
+// Exposed so the mobile cross-section panel can reuse the jet renderer/view.
+window.renderMHDSide = renderMHDSide;
+window.mhdView = mhdView;

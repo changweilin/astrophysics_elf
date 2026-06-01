@@ -672,8 +672,9 @@ function MobileApp() {
           </div>
         )}
 
-        {/* Reference-frame lock */}
-        <MFrameLock sim={MSIM} force={force} />
+        {/* Bottom-left control cluster: frame cycle + cross-section ("剖面圖").
+            The cross-section opens as a centred stage over the universe. */}
+        <MViewControls sim={MSIM} force={force} />
 
         {/* Layer toggles scroll strip */}
         <div className="m-view-bl">
@@ -762,26 +763,102 @@ function MToggle({ label, k, sim, force }) {
   );
 }
 
-// Reference-frame switch: lock the camera to m1 / m2 / barycenter, or free pan.
-function MFrameLock({ sim, force }) {
-  const cur = sim.view.frame || 'free';
+// Bottom-left control cluster: the reference-frame cycle button plus the
+// cross-section ("剖面圖") controls sitting to its right. Both controls live in
+// one strip so they never cover the universe; the cross-section itself opens as
+// a centred stage over the viewport (see the .m-profile-stage geometry).
+//
+//  • FRAME button  — taps cycle the camera lock (free → m1 → m2 → com → …).
+//  • PROFILE ▸/▾   — expand/collapse the cross-section stage.
+//  • target ⟳      — tap cycles the inspected target through every placed body
+//                    (tidal close-up via renderMicroscope) and the MHD jet
+//                    side-view(s) (via renderMHDSide); also opens if collapsed.
+function MViewControls({ sim, force }) {
+  const [profOpen, setProfOpen] = useStateApp(false);
+  const [profKey, setProfKey] = useStateApp(null);
+  const canvasRef = useRefApp(null);
   const hasBin = !!(sim.binary && sim.binary.enabled);
-  const opts = [
-    ['free', tr('FREE', '自由'), true],
-    ['m1', 'M1', true],
-    ['m2', 'M2', hasBin],
-    ['com', 'COM', hasBin],
-  ];
+
+  // ── Reference frame ──
+  const fopts = hasBin
+    ? [['free', tr('FREE', '自由')], ['m1', 'M1'], ['m2', 'M2'], ['com', 'COM']]
+    : [['free', tr('FREE', '自由')], ['m1', 'M1']];
+  const fcur = sim.view.frame || 'free';
+  let fidx = fopts.findIndex(([k]) => k === fcur);
+  if (fidx < 0) fidx = 0; // a stale lock (e.g. companion removed) reads as free
+  const cycleFrame = () => {
+    sim.view.frame = fopts[(fidx + 1) % fopts.length][0];
+    force();
+  };
+
+  // ── Cross-section targets (rebuilt each render so the list tracks the scene) ──
+  const targets = [];
+  for (const b of sim.bodies) {
+    targets.push({ key: 'body:' + b.id, kind: 'body', body: b, label: b.name });
+  }
+  targets.push({ key: 'mhd:primary', kind: 'mhd', which: 'primary',
+                 label: tr('MHD JET · M1', 'MHD 噴流 · M1') });
+  if (hasBin) {
+    targets.push({ key: 'mhd:companion', kind: 'mhd', which: 'companion',
+                   label: tr('MHD JET · M2', 'MHD 噴流 · M2') });
+  }
+  let tidx = targets.findIndex((t) => t.key === profKey);
+  if (tidx < 0) tidx = 0;
+  const cur = targets[tidx] || null;
+
+  const cycleTarget = () => {
+    if (!targets.length) return;
+    const next = targets[(tidx + 1) % targets.length];
+    setProfKey(next.key);
+    if (next.kind === 'body') sim.selectedId = next.body.id; // mirror to scene selection
+    if (!profOpen) setProfOpen(true);  // first tap also opens the stage
+    force();
+  };
+
+  useEffectApp(() => {
+    if (!profOpen || !cur) return;
+    const c = canvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    let raf;
+    function tick() {
+      const dpr = window.devicePixelRatio || 1;
+      const w = c.clientWidth, h = c.clientHeight;
+      if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (cur.kind === 'body') renderMicroscope(ctx, w, h, cur.body, sim);
+      else renderMHDSide(ctx, w, h, sim, mhdView(sim, cur.which));
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [profOpen, cur ? cur.key : null]);
+
+  const tlabel = cur ? cur.label : tr('— no target —', '— 無目標 —');
   return (
-    <div className="m-view-frame">
-      <span className="lbl">{tr('FRAME', '座標系')}</span>
-      {opts.map(([k, lbl, on]) => (
-        <button key={k} className={cur === k ? 'on' : ''} disabled={!on}
-          onClick={() => { sim.view.frame = k; force(); }}>
-          {lbl}
+    <React.Fragment>
+      <div className="m-view-frame">
+        <span className="lbl">{tr('FRAME', '座標系')}</span>
+        <button className={fcur === 'free' ? '' : 'on'} onClick={cycleFrame}
+          title={tr('tap to switch reference frame', '點一下切換座標系')}>
+          {fopts[fidx][1]}
         </button>
-      ))}
-    </div>
+        <span className="lbl lbl-sep">{tr('PROFILE', '剖面圖')}</span>
+        <button className={profOpen ? 'on' : ''} onClick={() => setProfOpen(!profOpen)}
+          title={tr('expand/collapse cross-section', '展開／收合剖面圖')}>
+          {profOpen ? '▾' : '▸'}
+        </button>
+        <button className="prof-sw" onClick={cycleTarget}
+          title={tr('tap to switch cross-section target', '點一下切換剖面目標')}>
+          <span className="prof-name">{tlabel}</span><span className="prof-cyc">⟳</span>
+        </button>
+      </div>
+      {profOpen && cur && (
+        <div className="m-profile-stage">
+          <canvas ref={canvasRef} className="mp-canvas" />
+        </div>
+      )}
+    </React.Fragment>
   );
 }
 

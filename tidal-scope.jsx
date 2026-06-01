@@ -377,3 +377,5 @@ function msArrow(ctx, x0, y0, x1, y1) {
 }
 
 window.TidalMicroscope = TidalMicroscope;
+// Exposed so the mobile cross-section panel can reuse the same renderer.
+window.renderMicroscope = renderMicroscope;
