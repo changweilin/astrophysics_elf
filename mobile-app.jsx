@@ -38,7 +38,10 @@ function MobileApp() {
   const [playing, setPlaying] = useStateApp(true);
   const [timescale, setTimescale] = useStateApp(() => isFinite(MSIM.timescale) ? MSIM.timescale : 1);
   const [tab, setTab] = useStateApp('hole'); // hole | objects | spawn | disc
-  const [drawerH, setDrawerH] = useStateApp(M_DRAWER_DEFAULT); // settings-drawer height (px)
+  // Default splitter position sits just above the tab bar (drawer collapsed, so
+  // only the object tabs show beneath the divider). A stored height — remembered
+  // across reloads via the sim config — overrides this default.
+  const [drawerH, setDrawerH] = useStateApp(() => Number.isFinite(MSIM.mDrawerH) ? MSIM.mDrawerH : 0); // settings-drawer height (px)
   const [snapping, setSnapping] = useStateApp(false);          // animate height on dbl-tap
   const canvasRef = useRefApp(null);
   const viewRef = useRefApp(null);
@@ -48,6 +51,10 @@ function MobileApp() {
 
   // Re-render when the UI language changes.
   useEffectApp(() => window.KNi18n.subscribe(force), []);
+
+  // Mirror the splitter height into the sim so saveConfig persists it (the
+  // divider position is remembered across reloads).
+  useEffectApp(() => { MSIM.mDrawerH = drawerH; }, [drawerH]);
 
   // ─── Universe ↔ settings splitter ───────────────────────
   // The pie is the height shared between the viewport and the drawer; the fixed
@@ -93,7 +100,10 @@ function MobileApp() {
   useEffectApp(() => {
     // Re-read on mount so a layout swap (desktop→mobile) picks up edits the
     // other root flushed on unmount, not just the page-load snapshot.
-    if (window.KNSim.applyConfig(MSIM)) force();
+    if (window.KNSim.applyConfig(MSIM)) {
+      if (Number.isFinite(MSIM.mDrawerH)) setDrawerH(MSIM.mDrawerH);
+      force();
+    }
     const id = setInterval(() => window.KNSim.saveConfig(MSIM), 1000);
     const flush = () => window.KNSim.saveConfig(MSIM);
     window.addEventListener('pagehide', flush);

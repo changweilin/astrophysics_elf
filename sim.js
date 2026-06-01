@@ -1602,6 +1602,8 @@
       view: { scale: v.scale },
       timescale: sim.timescale,
       t: sim.t,
+      // Mobile layout: remembered universe/settings splitter height (px).
+      mDrawerH: isNum(sim.mDrawerH) ? sim.mDrawerH : undefined,
       // Live bodies the user spawned/launched — only the ones still orbiting.
       bodies: (sim.bodies || []).filter((bd) => bd.state === 'orbit').map((bd) => ({
         id: bd.id, name: bd.name, kind: bd.kind,
@@ -1699,6 +1701,7 @@
     }
     if (isNum(cfg.timescale)) sim.timescale = cfg.timescale;
     if (isNum(cfg.t)) sim.t = cfg.t;
+    if (isNum(cfg.mDrawerH)) sim.mDrawerH = cfg.mDrawerH;
     // Restore the live bodies the user built up (replacing the default seed).
     // A present-but-empty array means "the user cleared the scene" — honour it.
     if (Array.isArray(cfg.bodies)) {
