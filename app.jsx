@@ -3,6 +3,7 @@
 const { useState: useS, useEffect: useE, useRef: useR } = React;
 
 const SIM = window.KNSim.createSim();
+window.SIM = SIM;
 window.KNDisc.initDisc(SIM);
 window.KNSim.initBinary(SIM);
 // seed a couple of bodies so the first frame is interesting

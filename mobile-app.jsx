@@ -7,6 +7,7 @@ const { useState: useStateApp, useEffect: useEffectApp, useRef: useRefApp } = Re
 
 // ─── Bootstrap simulation ──────────────────────────────────
 const MSIM = window.KNSim.createSim();
+window.MSIM = MSIM;
 window.KNDisc.initDisc(MSIM);
 window.KNSim.initBinary(MSIM);
 (function seed() {
