@@ -134,8 +134,7 @@ function beginPlacement(sim, it, e, force) {
     wx: 0, wy: 0,
     inCanvas: false,
   };
-  window.KNSim.logEv(sim, 'amber', tr(`placing ${it.name}… drop into viewport`,
-                                      `放置 ${it.name_zh || it.name}… 拖入視圖`));
+  window.KNSim.logEv(sim, 'amber', trp('placing {name}… drop into viewport', { name: tr(it.name, it.name_zh) }));
   force();
 }
 window.__bumpName = function (kind) {

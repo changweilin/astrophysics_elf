@@ -288,25 +288,23 @@
         sim.params.Q = sim.params.Q + (bin.Q2 || 0);
         sim.params.a = rem.af * rem.Mf;   // a = (a/M)·M_f
         bin.enabled = false;
-        logEv(sim, 'warn', tr(
-          `MERGER · η=${rem.eta.toFixed(3)} · M_f=${rem.Mf.toFixed(2)}M · E_GW=${rem.eRad.toFixed(3)} c² (${(rem.eRad / Mt * 100).toFixed(1)}%)`,
-          `合併 · η=${rem.eta.toFixed(3)} · M_f=${rem.Mf.toFixed(2)}M · E_GW=${rem.eRad.toFixed(3)} c² (${(rem.eRad / Mt * 100).toFixed(1)}%)`));
-        logEv(sim, 'amber', tr(`ringdown · a_f/M_f → ${rem.af.toFixed(3)}`,
-                               `衰盪 (ringdown) · a_f/M_f → ${rem.af.toFixed(3)}`));
+        logEv(sim, 'warn', trp(
+          'MERGER · η={eta} · M_f={mf}M · E_GW={egw} c² ({pct}%)',
+          { eta: rem.eta.toFixed(3), mf: rem.Mf.toFixed(2), egw: rem.eRad.toFixed(3), pct: (rem.eRad / Mt * 100).toFixed(1) }));
+        logEv(sim, 'amber', trp('ringdown · a_f/M_f → {af}', { af: rem.af.toFixed(3) }));
         return;
       }
     } else {
       // At least one non-BH — collision when surfaces touch.
       if (bin.d < surface1 + surface2) {
         bin.enabled = false;
-        logEv(sim, 'warn', tr(`companion contact at r=${bin.d.toFixed(2)} M`,
-                              `伴星表面接觸於 r=${bin.d.toFixed(2)} M`));
+        logEv(sim, 'warn', trp('companion contact at r={r} M', { r: bin.d.toFixed(2) }));
         return;
       }
     }
     if (bin.d > 80) {
       bin.enabled = false;
-      logEv(sim, 'amber', tr(`companion escaped binary system`, `伴星逃離雙星系統`));
+      logEv(sim, 'amber', tr('companion escaped binary system', '伴星逃離雙星系統'));
     }
   }
 
@@ -349,16 +347,14 @@
         if (b.stress > b.stressPeak) b.stressPeak = b.stress;
         if (b.kind !== 'probe' && b.kind !== 'ship' && b.stress > 1.15) {
           b.state = 'spaghettified'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', tr(`${b.name} — spaghettified between binary pair`,
-                                `${b.name} — 在雙星之間被拉麵化`));
+          logEv(sim, 'warn', trp('{name} — spaghettified between binary pair', { name: b.name }));
           continue;
         }
         // Primary capture / surface impact
         if (cType === 'bh') {
           if (!n1 && r1 < (isFinite(r1plus) ? r1plus : M)) {
             b.state = 'captured'; b.consumedAt = sim.t;
-            logEv(sim, 'warn', tr(`${b.name} — captured by primary BH`,
-                                  `${b.name} — 被主黑洞捕獲`));
+            logEv(sim, 'warn', trp('{name} — captured by primary BH', { name: b.name }));
             continue;
           }
         } else {
@@ -366,8 +362,7 @@
           if (r1 < Rs1) {
             b.state = 'captured'; b.consumedAt = sim.t;
             const label = surfaceLabel(cType);
-            logEv(sim, 'warn', tr(`${b.name} — impacted primary ${label.en}`,
-                                  `${b.name} — 撞上主天體的${label.zh}`));
+            logEv(sim, 'warn', trp('{name} — impacted primary {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
             continue;
           }
         }
@@ -375,8 +370,7 @@
         if (sType === 'bh') {
           if (!n2 && r2 < (isFinite(r2plus) ? r2plus : bin.M2)) {
             b.state = 'captured'; b.consumedAt = sim.t;
-            logEv(sim, 'warn', tr(`${b.name} — captured by companion BH`,
-                                  `${b.name} — 被伴星黑洞捕獲`));
+            logEv(sim, 'warn', trp('{name} — captured by companion BH', { name: b.name }));
             continue;
           }
         } else {
@@ -384,15 +378,13 @@
           if (r2 < Rs2) {
             b.state = 'captured'; b.consumedAt = sim.t;
             const label = surfaceLabel(sType);
-            logEv(sim, 'warn', tr(`${b.name} — impacted companion ${label.en}`,
-                                  `${b.name} — 撞上伴星的${label.zh}`));
+            logEv(sim, 'warn', trp('{name} — impacted companion {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
             continue;
           }
         }
         if (r > 50) {
           b.state = 'escaped'; b.consumedAt = sim.t;
-          logEv(sim, 'amber', tr(`${b.name} — ejected by binary`,
-                                 `${b.name} — 被雙星彈射`));
+          logEv(sim, 'amber', trp('{name} — ejected by binary', { name: b.name }));
         }
         continue;  // skip single-BH checks below
       }
@@ -405,8 +397,7 @@
       if (tidal > b.stressPeak) b.stressPeak = tidal;
       if (b.kind !== 'probe' && b.kind !== 'ship' && tidal > 1.15) {
         b.state = 'spaghettified'; b.consumedAt = sim.t;
-        logEv(sim, 'warn', tr(`${b.name} — spaghettified at r = ${r.toFixed(2)} M`,
-                              `${b.name} — 在 r = ${r.toFixed(2)} M 處被拉麵化`));
+        logEv(sim, 'warn', trp('{name} — spaghettified at r = {r} M', { name: b.name, r: r.toFixed(2) }));
         continue;
       }
       // Surface impact for stellar centrals
@@ -415,28 +406,24 @@
         if (r < Rs) {
           b.state = 'captured'; b.consumedAt = sim.t;
           const label = surfaceLabel(type);
-          logEv(sim, 'warn', tr(`${b.name} — impacted ${label.en} at r = ${r.toFixed(2)} M`,
-                                `${b.name} — 在 r = ${r.toFixed(2)} M 處撞上${label.zh}`));
+          logEv(sim, 'warn', trp('{name} — impacted {surface} at r = {r} M', { name: b.name, surface: tr(label.en, label.zh), r: r.toFixed(2) }));
           continue;
         }
       } else {
         if (!naked && r < rplus) {
           b.state = 'captured'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', tr(`${b.name} — crossed r₊, mass added to BH`,
-                                `${b.name} — 越過 r₊，質量併入黑洞`));
+          logEv(sim, 'warn', trp('{name} — crossed r₊, mass added to BH', { name: b.name }));
           continue;
         }
         if (naked && r < 0.4) {
           b.state = 'captured'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', tr(`${b.name} — annihilated at naked singularity`,
-                                `${b.name} — 於裸奇異點湮滅`));
+          logEv(sim, 'warn', trp('{name} — annihilated at naked singularity', { name: b.name }));
           continue;
         }
       }
       if (r > 50) {
         b.state = 'escaped'; b.consumedAt = sim.t;
-        logEv(sim, 'amber', tr(`${b.name} — escaped beyond detector range`,
-                               `${b.name} — 逃逸至偵測範圍之外`));
+        logEv(sim, 'amber', trp('{name} — escaped beyond detector range', { name: b.name }));
       }
     }
   }
@@ -1184,7 +1171,7 @@
         ctx.stroke();
         ctx.fillStyle = 'oklch(0.85 0.16 130)';
         ctx.font = '10px JetBrains Mono, monospace';
-        ctx.fillText(tr(`moving · ${label}`, `移動中 · ${label}`), mx + 24, my - 8);
+        ctx.fillText(trp('moving · {label}', { label }), mx + 24, my - 8);
       }
     }
 
@@ -1311,8 +1298,8 @@
       ctx.fillText(`v0 = ${v.toFixed(3)} c`, px + 10, py - 4);
       ctx.fillStyle = fateColor;
       ctx.font = '9px JetBrains Mono, monospace';
-      const fateZh = { capture: '落入', escape: '逃逸', bound: '束縛' }[fate] || fate;
-      ctx.fillText(tr(`fate: ${fate.toUpperCase()}`, `結局：${fateZh}`), px + 10, py + 9);
+      const fateWord = tr(fate.toUpperCase(), { capture: '落入', escape: '逃逸', bound: '束縛' }[fate] || fate);
+      ctx.fillText(trp('fate: {fate}', { fate: fateWord }), px + 10, py + 9);
     }
   }
 

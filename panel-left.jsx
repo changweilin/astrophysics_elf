@@ -113,7 +113,7 @@ function ValEditor({ val, min, max, step, fmt, onChange, disabled, klass }) {
     <span
       className={`val val-click ${flash ? 'flash-' + flash : ''} ${disabled ? 'disabled' : ''} ${klass || ''}`}
       onClick={start}
-      title={disabled ? '' : tr(`click to type · range [${min}, ${max}]`, `點擊輸入 · 範圍 [${min}, ${max}]`)}
+      title={disabled ? '' : trp('click to type · range [{min}, {max}]', { min, max })}
     >
       {fmt ? fmt(val) : val.toFixed(2)}
     </span>
@@ -170,9 +170,9 @@ function BodyEditor({ sim, force, role }) {
 
   const isBH = accessors.type === 'bh';
   const collapseHint = !isBH && phys.wouldCollapse(accessors.M, accessors.Q, accessors.a, accessors.R_star);
-  const bhLockReason = tr(
-    `${isCentral ? 'Central body' : 'Companion'} is a black hole — no stellar surface parameters inside the horizon`,
-    `${isCentral ? '主天體' : '伴星'}為黑洞 — 視界內無星體表面參數`);
+  const bhLockReason = isCentral
+    ? tr('Central body is a black hole — no stellar surface parameters inside the horizon', '主天體為黑洞 — 視界內無星體表面參數')
+    : tr('Companion is a black hole — no stellar surface parameters inside the horizon', '伴星為黑洞 — 視界內無星體表面參數');
 
   function setField(k, v) {
     if (isCentral) {
@@ -198,11 +198,9 @@ function BodyEditor({ sim, force, role }) {
         }
         if (Math.abs(sim.params.a) > sim.params.M) sim.params.a = Math.sign(sim.params.a) * sim.params.M * 0.5;
         if (Math.abs(sim.params.Q) > sim.params.M) sim.params.Q = Math.sign(sim.params.Q) * sim.params.M * 0.5;
-        window.KNSim.logEv(sim, 'good', tr(`central → ${phys.STELLAR_INFO[newType].name}`,
-                                           `主天體 → ${phys.STELLAR_INFO[newType].name}`));
+        window.KNSim.logEv(sim, 'good', trp('central → {type}', { type: phys.STELLAR_INFO[newType].name }));
       } else {
-        window.KNSim.logEv(sim, 'warn', tr(`central → BLACK HOLE · stellar params locked`,
-                                           `主天體 → 黑洞 · 星體參數已鎖定`));
+        window.KNSim.logEv(sim, 'warn', tr('central → BLACK HOLE · stellar params locked', '主天體 → 黑洞 · 星體參數已鎖定'));
       }
     } else if (bin) {
       bin.type = newType;
@@ -213,10 +211,9 @@ function BodyEditor({ sim, force, role }) {
         }
         if (Math.abs(bin.a2) > bin.M2) bin.a2 = Math.sign(bin.a2 || 1) * bin.M2 * 0.5;
         if (Math.abs(bin.Q2) > bin.M2) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * 0.5;
-        window.KNSim.logEv(sim, 'good', tr(`companion → ${phys.STELLAR_INFO[newType].name}`,
-                                           `伴星 → ${phys.STELLAR_INFO[newType].name}`));
+        window.KNSim.logEv(sim, 'good', trp('companion → {type}', { type: phys.STELLAR_INFO[newType].name }));
       } else {
-        window.KNSim.logEv(sim, 'warn', tr(`companion → BLACK HOLE`, `伴星 → 黑洞`));
+        window.KNSim.logEv(sim, 'warn', tr('companion → BLACK HOLE', '伴星 → 黑洞'));
       }
     }
     force();
@@ -325,8 +322,7 @@ function LeftPanel({ sim, force }) {
       item: { isCompanion: true, kind: 'companion', name: tr('Companion ', '伴星 ') + sType.toUpperCase(), radius: 0.4 },
       wx: 0, wy: 0, inCanvas: false,
     };
-    window.KNSim.logEv(sim, 'amber', tr(`placing companion (${sType.toUpperCase()})… drop into viewport`,
-                                        `放置伴星 (${sType.toUpperCase()})… 拖入視圖`));
+    window.KNSim.logEv(sim, 'amber', trp('placing companion ({type})… drop into viewport', { type: sType.toUpperCase() }));
     force();
   }
 
@@ -343,11 +339,9 @@ function LeftPanel({ sim, force }) {
       <div className="section">
         <div className="section-head">
           <h3>{activeBody === 'central'
-            ? tr(`Central Body — ${isBH ? 'Kerr-Newman Solution' : phys.STELLAR_INFO[type].name}`,
-                 `主天體 — ${isBH ? 'Kerr-Newman 解' : phys.STELLAR_INFO[type].name}`)
+            ? trp('Central Body — {sol}', { sol: isBH ? tr('Kerr-Newman Solution', 'Kerr-Newman 解') : phys.STELLAR_INFO[type].name })
             : (bin && bin.enabled
-                ? tr(`Binary Companion — ${(bin.type === 'bh') ? 'Kerr-Newman' : phys.STELLAR_INFO[bin.type].name}`,
-                     `雙星伴星 — ${(bin.type === 'bh') ? 'Kerr-Newman' : phys.STELLAR_INFO[bin.type].name}`)
+                ? trp('Binary Companion — {sol}', { sol: (bin.type === 'bh') ? 'Kerr-Newman' : phys.STELLAR_INFO[bin.type].name })
                 : tr('Binary Companion — Not placed', '雙星伴星 — 尚未放置'))}</h3>
           <span className="idx">§01</span>
         </div>
@@ -660,9 +654,9 @@ function BinaryReadout({ sim, force }) {
             <div className="fill" style={{ width: pctDone + '%' }} />
           </div>
           <div className="note">
-            {tr(
-              `* Per Peters (1964), the orbital radius shrinks at the GW radiation rate da/dt = −(64/5)M₁M₂(M₁+M₂)/d³ (classical orbit curvature unchanged), visually sped up ×${bin.inspiralRate} (1 = true GR rate).`,
-              `* 依 Peters (1964)，雙星軌道半徑按 GW 輻射率收縮 da/dt = −(64/5)M₁M₂(M₁+M₂)/d³（古典軌道曲率不變），視覺加速 ×${bin.inspiralRate}（1 = 真實 GR 速率）.`)}
+            {trp(
+              '* Per Peters (1964), the orbital radius shrinks at the GW radiation rate da/dt = −(64/5)M₁M₂(M₁+M₂)/d³ (classical orbit curvature unchanged), visually sped up ×{rate} (1 = true GR rate).',
+              { rate: bin.inspiralRate })}
             {isBHBin
               ? tr(' Double black hole → inspirals until the horizons touch and merge.', ' 雙黑洞 → 旋近至視界相觸合併。')
               : tr(' Includes a non-BH member → inspirals until the surfaces make contact.', ' 含非黑洞成員 → 旋近至表面相觸（contact）。')}

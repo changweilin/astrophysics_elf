@@ -73,7 +73,7 @@ function MValEditor({ val, min, max, step, fmt, onChange, disabled }) {
     <span
       className={`val val-click ${flash ? 'flash-' + flash : ''} ${disabled ? 'disabled' : ''}`}
       onClick={start}
-      title={disabled ? '' : tr(`tap to type · [${min}, ${max}]`, `點擊輸入 · [${min}, ${max}]`)}
+      title={disabled ? '' : trp('tap to type · [{min}, {max}]', { min, max })}
     >
       {fmt ? fmt(val) : val.toFixed(2)}
     </span>
@@ -126,9 +126,9 @@ function MBodyEditor({ sim, force, role }) {
   };
   const isBH = A.type === 'bh';
   const collapseHint = !isBH && phys.wouldCollapse(A.M, A.Q, A.a, A.R_star);
-  const bhLockReason = tr(
-    `${isCentral ? 'Central body' : 'Companion'} is a black hole — no stellar surface parameters inside the horizon`,
-    `${isCentral ? '主天體' : '伴星'}為黑洞 — 視界內無星體表面參數`);
+  const bhLockReason = isCentral
+    ? tr('Central body is a black hole — no stellar surface parameters inside the horizon', '主天體為黑洞 — 視界內無星體表面參數')
+    : tr('Companion is a black hole — no stellar surface parameters inside the horizon', '伴星為黑洞 — 視界內無星體表面參數');
 
   function setField(k, v) {
     if (isCentral) {
@@ -152,10 +152,9 @@ function MBodyEditor({ sim, force, role }) {
         if (!sim.params._stellarTouched || oldType !== newType) {
           sim.params.R_star = d.R; sim.params.T_eff = d.T;
         }
-        window.KNSim.logEv(sim, 'good', tr(`central → ${phys.STELLAR_INFO[newType].name}`,
-                                           `主天體 → ${phys.STELLAR_INFO[newType].name}`));
+        window.KNSim.logEv(sim, 'good', trp('central → {type}', { type: phys.STELLAR_INFO[newType].name }));
       } else {
-        window.KNSim.logEv(sim, 'warn', tr(`central → BLACK HOLE`, `主天體 → 黑洞`));
+        window.KNSim.logEv(sim, 'warn', tr('central → BLACK HOLE', '主天體 → 黑洞'));
       }
     } else if (bin) {
       const oldType = bin.type || 'bh';
@@ -165,10 +164,9 @@ function MBodyEditor({ sim, force, role }) {
         if (!bin._stellarTouched || oldType !== newType) {
           bin.R_star2 = d.R; bin.T_eff2 = d.T;
         }
-        window.KNSim.logEv(sim, 'good', tr(`companion → ${phys.STELLAR_INFO[newType].name}`,
-                                           `伴星 → ${phys.STELLAR_INFO[newType].name}`));
+        window.KNSim.logEv(sim, 'good', trp('companion → {type}', { type: phys.STELLAR_INFO[newType].name }));
       } else {
-        window.KNSim.logEv(sim, 'warn', tr(`companion → BLACK HOLE`, `伴星 → 黑洞`));
+        window.KNSim.logEv(sim, 'warn', tr('companion → BLACK HOLE', '伴星 → 黑洞'));
       }
     }
     force();
@@ -270,8 +268,7 @@ function TabBlackHole({ sim, force }) {
       item: { isCompanion: true, kind: 'companion', name: 'Companion ' + sType.toUpperCase(), radius: 0.4 },
       wx: 0, wy: 0, inCanvas: false,
     };
-    window.KNSim.logEv(sim, 'amber', tr(`placing companion (${sType.toUpperCase()})… tap viewport`,
-                                        `放置伴星 (${sType.toUpperCase()})… 點視圖`));
+    window.KNSim.logEv(sim, 'amber', trp('placing companion ({type})… tap viewport', { type: sType.toUpperCase() }));
     force();
   }
   function removeCompanion(e) {
@@ -289,8 +286,7 @@ function TabBlackHole({ sim, force }) {
           <h3>{activeBody === 'central'
             ? (isBH ? tr('Kerr-Newman Parameters', 'Kerr-Newman 參數') : phys.STELLAR_INFO[type].name)
             : (bin && bin.enabled
-                ? tr(`Companion — ${(bin.type === 'bh') ? 'Kerr-Newman' : phys.STELLAR_INFO[bin.type].name}`,
-                     `伴星 — ${(bin.type === 'bh') ? 'Kerr-Newman' : phys.STELLAR_INFO[bin.type].name}`)
+                ? trp('Companion — {sol}', { sol: (bin.type === 'bh') ? 'Kerr-Newman' : phys.STELLAR_INFO[bin.type].name })
                 : tr('Companion — Not placed', '伴星 — 尚未放置'))}</h3>
           <span className="idx">§01</span>
         </div>
@@ -471,9 +467,8 @@ function TabBinary({ sim, force }) {
             bin.mergerFlash = 0;
             bin.d0 = bin.d;
             bin.trail1 = []; bin.trail2 = [];
-            window.KNSim.logEv(sim, 'amber', tr(
-              `binary enabled · M₂=${bin.M2.toFixed(2)} M  d=${bin.d.toFixed(1)} M`,
-              `雙星已啟用 · M₂=${bin.M2.toFixed(2)} M  d=${bin.d.toFixed(1)} M`));
+            window.KNSim.logEv(sim, 'amber', trp(
+              'binary enabled · M₂={m} M  d={d} M', { m: bin.M2.toFixed(2), d: bin.d.toFixed(1) }));
           } else {
             bin.enabled = false;
             window.KNSim.logEv(sim, 'amber', tr('binary disabled', '雙星已停用'));
@@ -549,7 +544,7 @@ function TabBinary({ sim, force }) {
               background: 'linear-gradient(90deg, oklch(0.62 0.18 295), oklch(0.78 0.20 28))'
             }} />
           </div>
-          <div className="note">{tr(`* ×${bin.inspiralRate} the physical Peters rate (1 = true GR)`, `* 物理 Peters 速率的 ×${bin.inspiralRate} 倍（1 = 真實 GR）`)}</div>
+          <div className="note">{trp('* ×{rate} the physical Peters rate (1 = true GR)', { rate: bin.inspiralRate })}</div>
         </div>
       )}
 
@@ -788,7 +783,7 @@ function MDiagnosis({ sim, body, rplus }) {
     }
     if (body.charge && Math.abs(Q) > 0.05) {
       const sign = body.charge * Q > 0 ? tr('repulsive', '排斥') : tr('attractive', '吸引');
-      lines.push({ t: 'note', m: tr(`Coulomb coupling is ${sign}. q·Q = ${(body.charge*Q).toFixed(2)}.`, `庫侖耦合為${sign}。q·Q = ${(body.charge*Q).toFixed(2)}。`) });
+      lines.push({ t: 'note', m: trp('Coulomb coupling is {sign}. q·Q = {qQ}.', { sign, qQ: (body.charge*Q).toFixed(2) }) });
     }
     if (lines.length === 0) lines.push({ t: 'good', m: tr('Stable bound orbit. Geodesic outside critical surfaces.', '穩定束縛軌道。測地線在臨界面之外。') });
   }
@@ -805,8 +800,7 @@ function burn(body, dv, sim) {
   const v = Math.hypot(body.vx, body.vy) || 1;
   body.vx += (body.vx / v) * dv;
   body.vy += (body.vy / v) * dv;
-  window.KNSim.logEv(sim, 'amber', tr(`${body.name} — Δv ${(dv>=0?'+':'')+dv.toFixed(2)}c burn applied`,
-                                      `${body.name} — 已施加 Δv ${(dv>=0?'+':'')+dv.toFixed(2)}c 點火`));
+  window.KNSim.logEv(sim, 'amber', trp('{name} — Δv {dv}c burn applied', { name: body.name, dv: (dv>=0?'+':'')+dv.toFixed(2) }));
 }
 
 // ─── Full-physics-engine diagnostic blocks (mobile) ──────

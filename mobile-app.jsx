@@ -109,8 +109,7 @@ function MobileApp() {
   // Arm placement and switch to viewport (collapse drawer for clarity)
   const armPlacement = (it) => {
     MSIM.placement = { item: it, wx: 0, wy: 0, inCanvas: false };
-    window.KNSim.logEv(MSIM, 'amber', tr(`placing ${it.name}… tap viewport to drop`,
-                                         `放置 ${it.name_zh || it.name}… 點視圖放下`));
+    window.KNSim.logEv(MSIM, 'amber', trp('placing {name}… tap viewport to drop', { name: tr(it.name, it.name_zh) }));
     snapDrawer(0);
     force();
   };
@@ -190,9 +189,9 @@ function MobileApp() {
             || (prevHit && prevHit.kind === 'companion')) {
           const vc = window.KNSim.circularizeBinary(MSIM);
           setPlaying(true);   // double-tap → resume play
-          window.KNSim.logEv(MSIM, 'good', tr(
-            `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`,
-            `雙星 → 穩定圓軌道 · v_rel=${vc.toFixed(3)} c · 重力波衰減暫停（重新拋投以旋近）`));
+          window.KNSim.logEv(MSIM, 'good', trp(
+            'binary → stable circular orbit · v_rel={v} c · GW decay paused (re-throw to inspiral)',
+            { v: vc.toFixed(3) }));
           return true;
         }
       }
@@ -210,9 +209,9 @@ function MobileApp() {
         const vc = window.KNSim.circularizeBody(MSIM, best);
         setPlaying(true);   // double-tap → resume play
         MSIM.selectedId = best.id;
-        window.KNSim.logEv(MSIM, 'good', tr(
-          `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`,
-          `${best.name} → 穩定週期軌道 · |v|=${vc.toFixed(3)} c（保持方向）`));
+        window.KNSim.logEv(MSIM, 'good', trp(
+          '{name} → stable periodic orbit · |v|={v} c (direction kept)',
+          { name: best.name, v: vc.toFixed(3) }));
         return true;
       }
       return false;
@@ -302,8 +301,7 @@ function MobileApp() {
               if (grab.kind === 'companion') { if (MSIM.binary) MSIM.binary.held = true; }
               else { const b = MSIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = true; }
               MSIM.moving = { kind: grab.kind, bodyId: grab.bodyId };
-              window.KNSim.logEv(MSIM, 'amber', tr(`${grab.label} — hold-drag to reposition`,
-                                                   `${grab.label} — 長按拖曳以重新定位`));
+              window.KNSim.logEv(MSIM, 'amber', trp('{label} — hold-drag to reposition', { label: grab.label }));
               force();
             }
           }, 350);
@@ -430,9 +428,9 @@ function MobileApp() {
             // back via FRAME · FREE).
             MSIM.view.frame = 'com';
             const vc = Math.sqrt(MSIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
-            window.KNSim.logEv(MSIM, 'good', tr(
-              `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`,
-              `伴星已放置於 r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — 拖曳可覆寫`));
+            window.KNSim.logEv(MSIM, 'good', trp(
+              'companion placed at r={r} M · v_circ={v} c — drag to override',
+              { r: Math.hypot(wx, wy).toFixed(2), v: vc.toFixed(3) }));
           } else {
             const prefix = { planet: 'PL', gas: 'GG', star: 'ST', ship: 'SS', probe: 'PR' }[it.kind];
             const suffix = bumpName(it.kind);
@@ -447,12 +445,12 @@ function MobileApp() {
               x: wx, y: wy, vx: -wy / rr * vc * dir, vy: wx / rr * vc * dir,
             });
             MSIM.selectedId = id;
-            window.KNSim.logEv(MSIM, 'good', tr(
-              `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`,
-              `${it.name_zh || it.name} 已放置於 r=${Math.hypot(wx,wy).toFixed(2)} M — 從天體拖曳以發射`));
+            window.KNSim.logEv(MSIM, 'good', trp(
+              '{name} placed at r={r} M — drag from body to launch',
+              { name: tr(it.name, it.name_zh), r: Math.hypot(wx,wy).toFixed(2) }));
           }
         } else {
-          window.KNSim.logEv(MSIM, 'warn', tr(`placement cancelled`, `已取消放置`));
+          window.KNSim.logEv(MSIM, 'warn', tr('placement cancelled', '已取消放置'));
         }
         MSIM.placement = null;
         pan = null;
@@ -475,10 +473,9 @@ function MobileApp() {
               const vy2 = -dy / MSIM.view.scale * vScale;
               window.KNSim.setBinaryVelocity(MSIM, vx2, vy2);
               const v = Math.hypot(bin.vx2, bin.vy2);
-              window.KNSim.logEv(MSIM, 'good', tr(`companion launched · v₀ = ${v.toFixed(3)} c (primary recoils)`,
-                                                  `伴星已發射 · v₀ = ${v.toFixed(3)} c（主天體反衝）`));
+              window.KNSim.logEv(MSIM, 'good', trp('companion launched · v₀ = {v} c (primary recoils)', { v: v.toFixed(3) }));
             } else {
-              window.KNSim.logEv(MSIM, 'good', tr(`companion retains stable v_circ`, `伴星維持穩定 v_circ`));
+              window.KNSim.logEv(MSIM, 'good', tr('companion retains stable v_circ', '伴星維持穩定 v_circ'));
             }
           }
         } else {
@@ -491,8 +488,7 @@ function MobileApp() {
             body.vx = -dx / MSIM.view.scale * vScale;
             body.vy = -dy / MSIM.view.scale * vScale;
             const v = Math.hypot(body.vx, body.vy);
-            window.KNSim.logEv(MSIM, 'good', tr(`${body.name} launched · v₀ = ${v.toFixed(3)} c`,
-                                                `${body.name} 已發射 · v₀ = ${v.toFixed(3)} c`));
+            window.KNSim.logEv(MSIM, 'good', trp('{name} launched · v₀ = {v} c', { name: body.name, v: v.toFixed(3) }));
           }
         }
         setPlaying(true);   // fling committed → resume play
@@ -506,7 +502,7 @@ function MobileApp() {
       // Grab release: commit reposition (drag→re-aim already handed off above)
       if (grab) {
         if (grab.mode === 'move') {
-          window.KNSim.logEv(MSIM, 'good', tr(`${grab.label} repositioned`, `${grab.label} 已重新定位`));
+          window.KNSim.logEv(MSIM, 'good', trp('{label} repositioned', { label: grab.label }));
           suppressTap = true; setTimeout(() => { suppressTap = false; }, 80);
         }
         clearGrab();

@@ -213,7 +213,7 @@ function Diagnosis({ sim, body, rplus }) {
     }
     if (body.charge && Math.abs(Q) > 0.05) {
       const sign = body.charge * Q > 0 ? tr('repulsive', '排斥') : tr('attractive', '吸引');
-      lines.push({ t: 'note', m: tr(`Coulomb coupling is ${sign}. q·Q = ${(body.charge*Q).toFixed(2)}.`, `庫侖耦合為${sign}。q·Q = ${(body.charge*Q).toFixed(2)}。`) });
+      lines.push({ t: 'note', m: trp('Coulomb coupling is {sign}. q·Q = {qQ}.', { sign, qQ: (body.charge*Q).toFixed(2) }) });
     }
     if (lines.length === 0) lines.push({ t: 'good', m: tr('Stable bound orbit. Geodesic remains well outside critical surfaces.', '穩定束縛軌道。測地線遠在臨界面之外。') });
   }
@@ -440,8 +440,7 @@ function burnProgrde(body, dv, sim) {
   const v = Math.hypot(body.vx, body.vy) || 1;
   body.vx += (body.vx / v) * dv;
   body.vy += (body.vy / v) * dv;
-  window.KNSim.logEv(sim, 'amber', tr(`${body.name} — Δv ${(dv>=0?'+':'')+dv.toFixed(2)}c burn applied`,
-                                      `${body.name} — 已施加 Δv ${(dv>=0?'+':'')+dv.toFixed(2)}c 點火`));
+  window.KNSim.logEv(sim, 'amber', trp('{name} — Δv {dv}c burn applied', { name: body.name, dv: (dv>=0?'+':'')+dv.toFixed(2) }));
 }
 
 function glyphFor(kind) {

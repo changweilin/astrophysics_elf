@@ -49,8 +49,10 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
-<!-- Bilingual layer (defines window.tr / window.KNi18n) — must load first -->
+<!-- Multilingual layer (defines window.tr / window.trp / window.KNi18n) — must
+     load first; the dictionary loads right after so KN_L10N exists before use. -->
 <script src="i18n.js"></script>
+<script src="i18n-dict.js"></script>
 
 <!-- Shared simulation engine -->
 <script src="physics.js"></script>

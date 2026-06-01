@@ -169,9 +169,9 @@ function App() {
             // framed as they orbit (user can switch back via FRAME · FREE).
             SIM.view.frame = 'com';
             const vc = Math.sqrt(SIM.params.M / Math.max(0.5, Math.hypot(wx, wy)));
-            window.KNSim.logEv(SIM, 'good', tr(
-              `companion placed at r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — drag to override`,
-              `伴星已放置於 r=${Math.hypot(wx, wy).toFixed(2)} M · v_circ=${vc.toFixed(3)} c — 拖曳可覆寫`));
+            window.KNSim.logEv(SIM, 'good', trp(
+              'companion placed at r={r} M · v_circ={v} c — drag to override',
+              { r: Math.hypot(wx, wy).toFixed(2), v: vc.toFixed(3) }));
           } else {
             const prefix = { planet:'PL', gas:'GG', star:'ST', ship:'SS', probe:'PR' }[it.kind];
             const suffix = window.__bumpName(it.kind);
@@ -186,9 +186,9 @@ function App() {
               x: wx, y: wy, vx: -wy / rr * vc * dir, vy: wx / rr * vc * dir,
             });
             SIM.selectedId = id;
-            window.KNSim.logEv(SIM, 'good', tr(
-              `${it.name} placed at r=${Math.hypot(wx,wy).toFixed(2)} M — drag from body to launch`,
-              `${it.name_zh || it.name} 已放置於 r=${Math.hypot(wx,wy).toFixed(2)} M — 從天體拖曳以發射`));
+            window.KNSim.logEv(SIM, 'good', trp(
+              '{name} placed at r={r} M — drag from body to launch',
+              { name: tr(it.name, it.name_zh), r: Math.hypot(wx,wy).toFixed(2) }));
           }
           SIM.placement = null;
           suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
@@ -214,10 +214,9 @@ function App() {
               const vy2 = -dy / SIM.view.scale * vScale;
               window.KNSim.setBinaryVelocity(SIM, vx2, vy2);
               const v = Math.hypot(bin.vx2, bin.vy2);
-              window.KNSim.logEv(SIM, 'good', tr(`companion launched · v₀ = ${v.toFixed(3)} c (primary recoils)`,
-                                                 `伴星已發射 · v₀ = ${v.toFixed(3)} c（主天體反衝）`));
+              window.KNSim.logEv(SIM, 'good', trp('companion launched · v₀ = {v} c (primary recoils)', { v: v.toFixed(3) }));
             } else {
-              window.KNSim.logEv(SIM, 'good', tr(`companion retains stable v_circ`, `伴星維持穩定 v_circ`));
+              window.KNSim.logEv(SIM, 'good', tr('companion retains stable v_circ', '伴星維持穩定 v_circ'));
             }
           }
         } else {
@@ -230,8 +229,7 @@ function App() {
             body.vx = -dx / SIM.view.scale * vScale;
             body.vy = -dy / SIM.view.scale * vScale;
             const v = Math.hypot(body.vx, body.vy);
-            window.KNSim.logEv(SIM, 'good', tr(`${body.name} launched · v₀ = ${v.toFixed(3)} c`,
-                                               `${body.name} 已發射 · v₀ = ${v.toFixed(3)} c`));
+            window.KNSim.logEv(SIM, 'good', trp('{name} launched · v₀ = {v} c', { name: body.name, v: v.toFixed(3) }));
           }
         }
         setPlaying(true);   // fling committed → resume play
@@ -247,8 +245,7 @@ function App() {
           let r = 0;
           if (grab.kind === 'companion') { r = SIM.binary ? SIM.binary.d : 0; }
           else { const b = SIM.bodies.find((x) => x.id === grab.bodyId); r = b ? Math.hypot(b.x, b.y) : 0; }
-          window.KNSim.logEv(SIM, 'good', tr(`${grab.label} repositioned · r = ${r.toFixed(2)} M`,
-                                             `${grab.label} 已重新定位 · r = ${r.toFixed(2)} M`));
+          window.KNSim.logEv(SIM, 'good', trp('{label} repositioned · r = {r} M', { label: grab.label, r: r.toFixed(2) }));
           suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
         }
         clearGrab();
@@ -309,8 +306,7 @@ function App() {
               if (grab.kind === 'companion') { if (SIM.binary) SIM.binary.held = true; }
               else { const b = SIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = true; }
               SIM.moving = { kind: grab.kind, bodyId: grab.bodyId };
-              window.KNSim.logEv(SIM, 'amber', tr(`${grab.label} — hold-drag to reposition`,
-                                                  `${grab.label} — 長按拖曳以重新定位`));
+              window.KNSim.logEv(SIM, 'amber', trp('{label} — hold-drag to reposition', { label: grab.label }));
               force();
             }
           }, 300);
@@ -357,9 +353,9 @@ function App() {
             || (recent && lastDown.kind === 'companion')) {
           const vc = window.KNSim.circularizeBinary(SIM);
           setPlaying(true);   // double-click → resume play
-          window.KNSim.logEv(SIM, 'good', tr(
-            `binary → stable circular orbit · v_rel=${vc.toFixed(3)} c · GW decay paused (re-throw to inspiral)`,
-            `雙星 → 穩定圓軌道 · v_rel=${vc.toFixed(3)} c · 重力波衰減暫停（重新拋投以旋近）`));
+          window.KNSim.logEv(SIM, 'good', trp(
+            'binary → stable circular orbit · v_rel={v} c · GW decay paused (re-throw to inspiral)',
+            { v: vc.toFixed(3) }));
           force();
           return;
         }
@@ -379,9 +375,9 @@ function App() {
         const vc = window.KNSim.circularizeBody(SIM, best);
         setPlaying(true);   // double-click → resume play
         SIM.selectedId = best.id;
-        window.KNSim.logEv(SIM, 'good', tr(
-          `${best.name} → stable periodic orbit · |v|=${vc.toFixed(3)} c (direction kept)`,
-          `${best.name} → 穩定週期軌道 · |v|=${vc.toFixed(3)} c（保持方向）`));
+        window.KNSim.logEv(SIM, 'good', trp(
+          '{name} → stable periodic orbit · |v|={v} c (direction kept)',
+          { name: best.name, v: vc.toFixed(3) }));
         force();
       }
     }
@@ -594,7 +590,7 @@ function FrameLock({ sim, force }) {
       <span className="vt-label">{tr('FRAME', '座標系')}</span>
       {opts.map(([k, lbl, on]) => (
         <button key={k} className={cur === k ? 'on' : ''} disabled={!on}
-          title={on ? tr(`lock camera to ${lbl}`, `將鏡頭鎖定至 ${lbl}`) : tr('place a companion first', '請先放置伴星')}
+          title={on ? trp('lock camera to {lbl}', { lbl }) : tr('place a companion first', '請先放置伴星')}
           onClick={() => { sim.view.frame = k; force(); }}>
           {lbl}
         </button>
@@ -603,16 +599,17 @@ function FrameLock({ sim, force }) {
   );
 }
 
-// EN / 中 language switch. Shared visual style (.lang-toggle) lives in styles.css.
+// Language dropdown (8 locales). Shared style (.lang-select) lives in the
+// stylesheets. Defined once here and reused by the mobile root too.
 function LangToggle({ force }) {
   const lang = window.KNi18n.lang;
   return (
-    <span className="lang-toggle" role="group" aria-label="language">
-      <button className={lang === 'en' ? 'on' : ''}
-        onClick={() => { window.KNi18n.setLang('en'); force(); }}>EN</button>
-      <button className={lang === 'zh' ? 'on' : ''}
-        onClick={() => { window.KNi18n.setLang('zh'); force(); }}>中</button>
-    </span>
+    <select className="lang-select" aria-label="language" value={lang}
+      onChange={(e) => { window.KNi18n.setLang(e.target.value); force(); }}>
+      {window.KNi18n.LANGS.map((l) => (
+        <option key={l.code} value={l.code}>{l.name}</option>
+      ))}
+    </select>
   );
 }
 
