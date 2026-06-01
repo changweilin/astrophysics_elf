@@ -65,7 +65,9 @@
       a2: 0,             // companion spin (J2 / M2 c)
       R_star2: 3.0,      // companion surface radius (used when type !== 'bh')
       T_eff2: 1e6,       // companion photosphere temperature
-      B2: 0,             // companion magnetic field (drives its own Blandford-Znajek jet)
+      B2: 0.30,          // companion magnetic field (matches the primary's default
+                         // so a placed companion is magnetised symmetrically — drives
+                         // its own Blandford-Znajek jet and shows poloidal field lines)
       d:  18,            // current separation
       d0: 18,            // initial separation (for inspiral progress bar)
       theta: 0,          // orbital phase

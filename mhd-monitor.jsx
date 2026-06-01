@@ -198,8 +198,12 @@ function renderMHDSide(ctx, w, h, sim, view) {
   }
 
   // ── Magnetic field lines (poloidal, wrapping around the BH)
-  if (B > 0.02) {
-    const lineAlpha = 0.25 + B * 0.45;
+  // An active accretion disc is threaded by magnetic field, so draw field lines
+  // whenever the disc is spun up — even if this star's explicit B slider is low
+  // or zero (e.g. a companion restored from an older save with B₂ = 0).
+  const Bvis = (disc && disc.enabled) ? Math.max(B, 0.18) : B;
+  if (Bvis > 0.02) {
+    const lineAlpha = 0.25 + Bvis * 0.45;
     ctx.strokeStyle = `oklch(0.70 0.13 200 / ${lineAlpha})`;
     ctx.lineWidth = 1;
     const r0List = [10, 22, 36, 52, 70];
