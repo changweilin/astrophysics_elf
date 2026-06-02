@@ -189,8 +189,20 @@ and file paths stay ASCII-only.
    a kinematic+gravitational estimate (`discShiftApprox`) pending exact per-ray
    `redshiftFactor`; background starfield warp samples truncated "active" rays
    (longer affine budget would convert them to true "escaped" sky directions).
-2. **P6.2 — Bridge.** Add `lensing.js` (`window.KNLensing`) with worker
-   lifecycle, debounce, cache. Still no UI; testable from the console.
+2. **P6.2 — Bridge. DONE.** Added `lensing.js` (`window.KNLensing`) and
+   `lensing-worker-entry.mjs` (module-worker entry that calls
+   `attachLensingWorkerGlobal`). The bridge owns the worker, debounces
+   (~220 ms), caches results per (params, camera, size) with an LRU, renders
+   progressively (coarse then full via a render token that cancels stale work),
+   and falls back to a main-thread dynamic `import()` of `lensing-worker.mjs` if
+   a module worker cannot be created or fails to load. Emits `knlensing-ready`,
+   `knlensing-frame`, and `knlensing-error` events plus an optional `onFrame`
+   callback; results carry `{ buffer, imageData }` ready for canvas blit.
+   Verified: `node --check` on both files; the worker message protocol the
+   bridge consumes (`{id, ok, type, payload, buffer}` + transferred ArrayBuffer,
+   buffer length = w*h*4) confirmed against `handleLensingWorkerMessage`. No
+   physics/facade/unit module changed, so the P6.1 benchmark result still holds.
+   Neither file is referenced by `index.html` yet. *No demo files touched.*
 3. **P6.3 — Panel (desktop).** Add `observer-view.jsx`; wire `index.html` +
    `app.jsx` (mount + toggle). Confirm in the running app via the `run` skill.
 4. **P6.4 — Mobile + i18n.** Wire `mobile-app.jsx`; externalize strings via
