@@ -15,6 +15,9 @@ function TidalMicroscope({ sim, force }) {
   // seconds even after the user clicks elsewhere — TDE is the headline event.
   const sel = sim.bodies.find((b) => b.id === sim.selectedId);
   const body = sel || sim.bodies.find((b) => b.id === pinnedId);
+  // Publish the inspected body so the sidebar readout (panel-right §04c) mirrors
+  // it — the numeric data table now lives there, the window is just the close-up.
+  sim.tidalBodyId = body ? body.id : null;
 
   // Step the inspected target to the previous/next placed body.
   function cycleBody(dir) {
@@ -56,24 +59,12 @@ function TidalMicroscope({ sim, force }) {
     return () => cancelAnimationFrame(raf);
   }, [collapsed, body]);
 
+  // Kept for the collapsed mini integrity bar; the full numeric readout (Δg,
+  // stretch ratio, status) now renders in the right sidebar (panel-right §04c).
   const r = body ? Math.hypot(body.x, body.y) : 0;
   const tidal = body && body.state === 'orbit'
     ? phys.tidalStress(r, sim.params.M, body.radius || 0.4, body.binding || 1) : 0;
   const integrity = body ? Math.max(0, Math.min(1, 1 - tidal)) : 0;
-  const dA = body && r > 0.01
-    ? (300 * sim.params.M * (body.radius || 0.4)) / (r * r * r) : 0;
-
-  const statusText = (() => {
-    if (!body) return tr('no target — click a body or place one', '無目標 — 點選或放置一個天體');
-    if (body.state === 'captured') return tr('past r₊ · world-line terminated', '越過 r₊ · 世界線終止');
-    if (body.state === 'escaped')  return tr('beyond detector envelope', '超出偵測範圍');
-    if (body.state === 'spaghettified') return tr('⚠ DISRUPTED · streaming debris', '⚠ 已撕裂 · 碎屑流出');
-    if (tidal < 0.15) return tr('tidal field negligible · spherical', '潮汐場可忽略 · 球形');
-    if (tidal < 0.5)  return tr('prolate stretch onset · stable', '長球拉伸開始 · 穩定');
-    if (tidal < 0.85) return tr('Roche regime · structural strain', 'Roche 區 · 結構應變');
-    if (tidal < 1.0)  return tr('◢ approaching disruption threshold', '◢ 逼近撕裂閾值');
-    return tr('⚠ CRITICAL · imminent rupture', '⚠ 危急 · 即將碎裂');
-  })();
 
   return (
     <div ref={drag.rootRef}
@@ -122,35 +113,8 @@ function TidalMicroscope({ sim, force }) {
             <canvas ref={canvasRef} className="microscope-canvas" />
             <div className="microscope-overlay-bl">×{(60).toFixed(0)} {tr('ZOOM · ROCHE FRAME', '放大 · ROCHE 座標')}</div>
           </div>
-          <div className="microscope-stats">
-            <div className="ms-row">
-              <span className="ms-k">r</span>
-              <span className="ms-v">{body ? r.toFixed(2) : '—'}<small> M</small></span>
-            </div>
-            <div className="ms-row">
-              <span className="ms-k">Δg across R<sub>b</sub></span>
-              <span className="ms-v">{body ? dA.toFixed(3) : '—'}</span>
-            </div>
-            <div className="ms-row">
-              <span className="ms-k">{tr('stretch ratio', '拉伸比')}</span>
-              <span className="ms-v">
-                {body && body.state === 'orbit'
-                  ? (1 + Math.min(3.5, tidal * 2.5)).toFixed(2)
-                  : '—'}×
-              </span>
-            </div>
-            <div className={`ms-row integrity-row ${tidal > 0.85 ? 'crit' : tidal > 0.5 ? 'warn' : ''}`}>
-              <span className="ms-k">{tr('integrity', '完整性')}</span>
-              <div className="ms-bar">
-                <div className="ms-fill" style={{ width: (integrity * 100).toFixed(0) + '%' }} />
-                <div className="ms-mark roche" />
-              </div>
-              <span className="ms-v">{(integrity * 100).toFixed(0)}<small>%</small></span>
-            </div>
-            <div className={`ms-status ${tidal > 0.85 ? 'crit' : tidal > 0.5 ? 'warn' : ''}`}>
-              {statusText}
-            </div>
-          </div>
+          {/* Numeric readout (Δg, stretch, integrity, status) moved to the right
+              sidebar (panel-right §04c). */}
         </div>
       )}
       {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}

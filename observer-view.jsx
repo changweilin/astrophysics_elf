@@ -73,13 +73,12 @@ function ObserverView({ sim }) {
   const cycleIncl = () => setInclIdx((inclIdx + 1) % INCL.length);
   const cycleAzim = () => setAzIdx((azIdx + 1) % AZIM.length);
 
-  // Base trace resolution (the cost — full GR ray tracing is ~1.4 ms/ray) and the
-  // larger DISPLAY resolution the LUT is shaded to. Decoupling them is the point
-  // of the deflection-LUT path: trace stays cheap, the panel image stays smooth.
-  const BW = 72;
-  const BH = 40;
-  const DW = 180;
-  const DH = 100;
+  // Display + trace resolution and FOV are derived per-request from the live
+  // canvas size (see the render effect): resizing the window changes the camera
+  // field of view at a constant angular scale — it reveals more/less sky rather
+  // than stretching the image. REF_H/FOVY0 anchor that scale at the default size.
+  const REF_H = 132;                 // default fs-canvas height (styles.css)
+  const FOVY0 = Math.PI / 2.5;       // vertical FOV at the default height
   // Fast trace tuning for interactive use. targetAffine must stay >= ~30 or the
   // central plunging rays never reach the horizon and the shadow disappears;
   // minStep is left at the integrator default so horizon capture still resolves.
@@ -148,15 +147,26 @@ function ObserverView({ sim }) {
     blit(); // paint placeholder / last frame immediately
     if (!KNL) return undefined;
 
-    const camera = { r: 26, theta: thetaDeg * Math.PI / 180, phi: azDeg * Math.PI / 180, fovY: Math.PI / 2.5 };
     const disc = discOn ? { accretionRate: 0.08, outerR: 18, exposure: 150 } : null;
+
+    // Read the live canvas size so the camera scales by field of view, not by
+    // stretching: at a constant angular scale a bigger window shows more sky.
+    const measure = () => {
+      const c = canvasRef.current;
+      const cw = (c && c.clientWidth) || 246, ch = (c && c.clientHeight) || REF_H;
+      return { cw, ch, aspect: cw / Math.max(1, ch) };
+    };
 
     // Azimuth is in the key so cycling it triggers a request, but it is NOT in the
     // LUT cache key (the bridge omits it), so an azimuth-only change reuses the
-    // cached trace and just re-shades — effectively free.
+    // cached trace and just re-shades — effectively free. The canvas size is
+    // quantised into the key so a resize re-renders at the new FOV (without
+    // thrashing the trace on every pixel of a drag).
     const makeKey = () => {
+      const { cw, ch } = measure();
       const p = sim.params;
-      return [p.M, p.Q, p.a, thetaDeg, azDeg, discOn ? 1 : 0]
+      return [p.M, p.Q, p.a, thetaDeg, azDeg, discOn ? 1 : 0,
+              Math.round(cw / 8), Math.round(ch / 8)]
         .map((x) => (Number(x) || 0).toFixed(3)).join(',');
     };
     const maybeRequest = () => {
@@ -164,13 +174,24 @@ function ObserverView({ sim }) {
       if (k === stateRef.current.key) return;
       stateRef.current.key = k;
       stateRef.current.pending = true;
+      const { aspect, ch } = measure();
+      // Constant angular scale ⇒ FOV grows with the window height (and, via the
+      // matched display aspect, its width). Clamp so a huge window can't request
+      // a degenerate fisheye.
+      const fovY = Math.max(0.4, Math.min(Math.PI * 0.92, FOVY0 * (ch / REF_H)));
+      // Display size tracks the canvas (1:1, so no stretch); trace stays cheap.
+      const dispH = Math.max(60, Math.min(220, Math.round(ch)));
+      const dispW = Math.max(60, Math.round(dispH * aspect));
+      const baseH = Math.max(24, Math.min(60, Math.round(dispH * 0.32)));
+      const baseW = Math.max(24, Math.round(baseH * aspect));
+      const camera = { r: 26, theta: thetaDeg * Math.PI / 180, phi: azDeg * Math.PI / 180, fovY };
       KNL.syncParams(sim.params);
       KNL.requestRenderLUT({
         params: { ...sim.params },
         camera,
         // Trace at the cheap base size (lutWidth/lutHeight); shade to the larger
         // display size (width/height) via the smooth LUT upsample.
-        options: { width: DW, height: DH, lutWidth: BW, lutHeight: BH, disc, ...TRACE },
+        options: { width: dispW, height: dispH, lutWidth: baseW, lutHeight: baseH, disc, ...TRACE },
         progressive: true,
       });
       blit(); // show the "rendering" hint over the previous frame

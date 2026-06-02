@@ -62,6 +62,11 @@ function RightPanel({ sim, force }) {
         <SpacetimeDiagnostics sim={sim} />
       )}
 
+      {/* Readouts for the floating scopes — the windows keep only their canvas
+          and publish their current selection (sim.tidalBodyId / sim.mhdActive). */}
+      <TidalReadout sim={sim} />
+      <MHDReadout sim={sim} />
+
       <div className="section">
         <div className="section-head">
           <h3>{tr('Object Roster', '天體清單')}</h3>
@@ -462,5 +467,97 @@ const btnStyle = {
   fontFamily:'var(--mono)', fontSize:10, padding:'6px 8px', cursor:'pointer',
   letterSpacing:'0.06em', flex:1,
 };
+
+// ── Floating-scope readouts (sidebar) ─────────────────────────────────────
+// The Tidal Microscope / MHD Monitor windows now hold only their canvas; their
+// numeric tables live here, beside the Full-Engine block. Each reads the body /
+// star the window published on `sim`, so the M1/M2 and target switches in the
+// window headers still drive these tables.
+
+function tidalStatusText(body, tidal) {
+  if (!body) return tr('no target — click a body or place one', '無目標 — 點選或放置一個天體');
+  if (body.state === 'captured') return tr('past r₊ · world-line terminated', '越過 r₊ · 世界線終止');
+  if (body.state === 'escaped')  return tr('beyond detector envelope', '超出偵測範圍');
+  if (body.state === 'spaghettified') return tr('⚠ DISRUPTED · streaming debris', '⚠ 已撕裂 · 碎屑流出');
+  if (tidal < 0.15) return tr('tidal field negligible · spherical', '潮汐場可忽略 · 球形');
+  if (tidal < 0.5)  return tr('prolate stretch onset · stable', '長球拉伸開始 · 穩定');
+  if (tidal < 0.85) return tr('Roche regime · structural strain', 'Roche 區 · 結構應變');
+  if (tidal < 1.0)  return tr('◢ approaching disruption threshold', '◢ 逼近撕裂閾值');
+  return tr('⚠ CRITICAL · imminent rupture', '⚠ 危急 · 即將碎裂');
+}
+
+function TidalReadout({ sim }) {
+  const phys = window.KNphysics;
+  if (!phys) return null;
+  const body = sim.bodies.find((b) => b.id === sim.tidalBodyId) || null;
+  const r = body ? Math.hypot(body.x, body.y) : 0;
+  const tidal = body && body.state === 'orbit'
+    ? phys.tidalStress(r, sim.params.M, body.radius || 0.4, body.binding || 1) : 0;
+  const integrity = body ? Math.max(0, Math.min(1, 1 - tidal)) : 0;
+  const dA = body && r > 0.01
+    ? (300 * sim.params.M * (body.radius || 0.4)) / (r * r * r) : 0;
+  const fillColor = tidal > 0.85 ? 'var(--warn)' : tidal > 0.5 ? 'var(--amber)' : 'var(--cyan)';
+  return (
+    <div className="section">
+      <div className="section-head">
+        <h3>{tr('Tidal Microscope', '潮汐顯微鏡')}{body ? ` — ${body.name}` : ''}</h3>
+        <span className="idx">§04c</span>
+      </div>
+      <div className="telem">
+        <div className="item"><span className="k">r</span>
+          <span className="v">{body ? r.toFixed(2) : '—'}<small>M</small></span></div>
+        <div className="item"><span className="k">Δg across R<sub>b</sub></span>
+          <span className="v">{body ? dA.toFixed(3) : '—'}</span></div>
+        <div className="item"><span className="k">{tr('stretch ratio', '拉伸比')}</span>
+          <span className="v">{body && body.state === 'orbit' ? (1 + Math.min(3.5, tidal * 2.5)).toFixed(2) : '—'}×</span></div>
+        <div className="item"><span className="k">{tr('integrity', '完整性')}</span>
+          <span className="v" style={{color: fillColor}}>{body ? (integrity * 100).toFixed(0) : '—'}<small>%</small></span></div>
+      </div>
+      <div className="bar-wrap" style={{marginTop:8}}>
+        <div className="bar">
+          <div className="fill" style={{width: (integrity * 100).toFixed(0) + '%', background: fillColor}} />
+        </div>
+      </div>
+      <div style={{fontFamily:'var(--mono)', fontSize:9, marginTop:6, lineHeight:1.5, letterSpacing:'0.06em',
+                   color: tidal > 0.85 ? 'var(--warn)' : tidal > 0.5 ? 'var(--amber)' : 'var(--fg-3)'}}>
+        {tidalStatusText(body, tidal)}
+      </div>
+    </div>
+  );
+}
+
+function MHDReadout({ sim }) {
+  if (!window.mhdView || !window.KNDisc) return null;
+  const which = sim.mhdActive || 'primary';
+  const view = window.mhdView(sim, which);
+  const m = view.m;
+  const off = window.bodyHasMHD ? !window.bodyHasMHD(sim, which) : false;
+  const pColor = m.P > 5 ? 'var(--warn)' : m.P > 1 ? 'var(--amber)' : 'var(--fg-3)';
+  return (
+    <div className="section">
+      <div className="section-head">
+        <h3>{tr('MHD Jet Monitor', 'MHD 噴流監視器')}{which === 'companion' ? ' — M₂' : ''}</h3>
+        <span className="idx">§04d</span>
+      </div>
+      <div className="telem">
+        <div className="item"><span className="k">{tr('P_jet · total', 'P_jet · 總計')}</span>
+          <span className="v" style={{color: m.P > 1 ? 'var(--magenta)' : 'var(--fg-0)'}}>{off ? tr('INERT', '靜止') : m.P.toFixed(2)}</span></div>
+        <div className="item"><span className="k">  ↳ Blandford-Znajek</span>
+          <span className="v">{m.P_BZ.toFixed(2)}</span></div>
+        <div className="item"><span className="k">  ↳ {tr('disc accretion', '盤吸積')}</span>
+          <span className="v">{m.P_acc.toFixed(2)}</span></div>
+        <div className="item"><span className="k">{tr('Γ bulk Lorentz', 'Γ 整體勞侖茲')}</span>
+          <span className="v">{m.gamma.toFixed(1)}</span></div>
+        <div className="item"><span className="k">{tr('θ opening', 'θ 張角')}</span>
+          <span className="v">{m.theta.toFixed(1)}<small>°</small></span></div>
+        <div className="item"><span className="k">{tr('η radiative', 'η 輻射效率')}</span>
+          <span className="v">{(m.eta * 100).toFixed(1)}<small>%</small></span></div>
+      </div>
+      <div style={{fontFamily:'var(--mono)', fontSize:9, marginTop:6, lineHeight:1.5, letterSpacing:'0.06em', color: pColor}}>
+        {window.mhdStatus ? window.mhdStatus(off, m) : ''}
+      </div>
+    </div>
+  );
+}
 
 window.RightPanel = RightPanel;

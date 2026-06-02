@@ -63,6 +63,9 @@ function MHDMonitor({ sim, force }) {
 
   const m = mhdView(sim, active).m;
   const off = !bodyHasMHD(sim, active);
+  // Publish the active star so the sidebar readout (panel-right §04d) mirrors the
+  // window's M1/M2 switch — the data table now lives there, the window is canvas.
+  sim.mhdActive = active;
 
   return (
     <div ref={drag.rootRef}
@@ -109,37 +112,7 @@ function MHDMonitor({ sim, force }) {
             <canvas ref={canvasRef} className="microscope-canvas mhd-canvas" />
             <div className="microscope-overlay-bl">{tr('SIDE ELEVATION · Ω ↑↓', '側視圖 · Ω ↑↓')}</div>
           </div>
-          <div className="microscope-stats">
-            <div className="ms-row">
-              <span className="ms-k">{tr('P_jet · total', 'P_jet · 總計')}</span>
-              <span className="ms-v" style={{color: m.P > 1 ? 'var(--magenta)' : 'var(--fg-0)'}}>
-                {m.P.toFixed(2)}
-              </span>
-            </div>
-            <div className="ms-row">
-              <span className="ms-k">  ↳ Blandford-Znajek</span>
-              <span className="ms-v">{m.P_BZ.toFixed(2)}</span>
-            </div>
-            <div className="ms-row">
-              <span className="ms-k">  ↳ {tr('disc accretion', '盤吸積')}</span>
-              <span className="ms-v">{m.P_acc.toFixed(2)}</span>
-            </div>
-            <div className="ms-row">
-              <span className="ms-k">{tr('Γ bulk Lorentz', 'Γ 整體勞侖茲')}</span>
-              <span className="ms-v">{m.gamma.toFixed(1)}</span>
-            </div>
-            <div className="ms-row">
-              <span className="ms-k">{tr('θ opening', 'θ 張角')}</span>
-              <span className="ms-v">{m.theta.toFixed(1)}<small>°</small></span>
-            </div>
-            <div className="ms-row">
-              <span className="ms-k">{tr('η radiative', 'η 輻射效率')}</span>
-              <span className="ms-v">{(m.eta * 100).toFixed(1)}<small>%</small></span>
-            </div>
-            <div className={`ms-status ${m.P > 5 ? 'crit' : m.P > 1 ? 'warn' : ''}`}>
-              {mhdStatus(off, m)}
-            </div>
-          </div>
+          {/* Numeric jet readout moved to the right sidebar (panel-right §04d). */}
         </div>
       )}
       {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}
@@ -178,7 +151,11 @@ function renderMHDSide(ctx, w, h, sim, view) {
   const { rplus, naked } = phys.horizons(M, Q, a);
   const rErg = phys.ergosphereEq(M, Q);
   const cx = w / 2, cy = h / 2;
-  const scale = h / 50; // 50 M maps to canvas height
+  // Fixed display scale + extents, referenced to the 200px default canvas height,
+  // so resizing the window reveals more/less of the side view instead of zooming
+  // the same region. 50 M mapped that default height ⇒ 4 px/M.
+  const H0 = 200;
+  const scale = H0 / 50; // px per M (constant; was h/50)
 
   // ── Disc particles projected as edge-on slab (radius measured from the host)
   const oc = view.center || { x: 0, y: 0 };
@@ -223,7 +200,7 @@ function renderMHDSide(ctx, w, h, sim, view) {
         ctx.beginPath();
         for (let t = 0; t <= 1.0001; t += 0.04) {
           const yFrac = (t - 0.5) * 2;
-          const yPix = cy + yFrac * h * 0.55;
+          const yPix = cy + yFrac * H0 * 0.55;
           const compress = 1 - Math.exp(-(yFrac * yFrac) * 3) * 0.55;
           const xPix = cx + side * r0 * compress;
           if (t === 0) ctx.moveTo(xPix, yPix);
@@ -239,7 +216,7 @@ function renderMHDSide(ctx, w, h, sim, view) {
       const dirSign = Math.sign(a);
       for (let k = 0; k < 8; k++) {
         const phase = (sim.t * dirSign * 0.6 + k * Math.PI / 4) % (Math.PI * 2);
-        const yPix = cy + Math.sin(phase) * h * 0.4;
+        const yPix = cy + Math.sin(phase) * H0 * 0.4;
         const xOff = Math.cos(phase) * 18;
         ctx.beginPath();
         ctx.moveTo(cx + xOff - 5, yPix);
@@ -253,7 +230,7 @@ function renderMHDSide(ctx, w, h, sim, view) {
   if (m.P > 0.3) {
     const lum = Math.min(1, m.P / 30);
     const opening = m.theta * Math.PI / 180;
-    const len = h * 0.45;
+    const len = H0 * 0.45;
     const baseR = 4 + lum * 3;
     const tipR = baseR + Math.tan(opening) * len * 1.2;
     const flick = 0.85 + 0.15 * Math.sin(sim.t * 9);
@@ -354,6 +331,9 @@ function renderMHDSide(ctx, w, h, sim, view) {
 }
 
 window.MHDMonitor = MHDMonitor;
-// Exposed so the mobile cross-section panel can reuse the jet renderer/view.
+// Exposed so the mobile cross-section panel can reuse the jet renderer/view, and
+// so the right-sidebar readout (panel-right §04d) can mirror the jet metrics.
 window.renderMHDSide = renderMHDSide;
 window.mhdView = mhdView;
+window.bodyHasMHD = bodyHasMHD;
+window.mhdStatus = mhdStatus;

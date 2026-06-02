@@ -99,8 +99,13 @@ function renderFieldSection(ctx, w, h, kind, sim) {
 
   const cell = 6;
   const cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
-  const aspect = h / w;
-  const spanX = span, spanY = span * aspect;
+  // Fixed display scale (px per M), referenced to the window's default width, so
+  // resizing the window widens/narrows the visible field of view rather than
+  // zooming the same patch. `span` is the half-FOV (in M) at that default width.
+  const REF_W = 248;                       // .field-section default width (styles.css)
+  const pxPerM = REF_W / (2 * span);
+  const spanX = w / (2 * pxPerM);
+  const spanY = h / (2 * pxPerM);
 
   // GW visualisation constants (match sim.js renderGWGrid).
   let kGW = 0, omegaVis = 0;
@@ -159,11 +164,10 @@ function renderFieldSection(ctx, w, h, kind, sim) {
   }
 
   // Overlay: scale rings + centre marker + axis caption.
-  const cx = w / 2, cy = h / 2;
-  const pxPerM = w / (2 * spanX);   // uniform (spanY tracks aspect) → circular rings
+  const cx = w / 2, cy = h / 2;   // pxPerM is fixed above → circular rings
   ctx.strokeStyle = 'oklch(0.62 0.02 255 / 0.18)';
   ctx.lineWidth = 1;
-  for (let rm = 5; rm <= span; rm += 5) {
+  for (let rm = 5; rm <= Math.max(spanX, spanY); rm += 5) {
     ctx.beginPath();
     ctx.arc(cx, cy, rm * pxPerM, 0, Math.PI * 2);
     ctx.stroke();
@@ -175,7 +179,7 @@ function renderFieldSection(ctx, w, h, kind, sim) {
   ctx.fillStyle = 'oklch(0.58 0.012 255)';
   ctx.font = '8px JetBrains Mono, monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('±' + span + ' M', 6, h - 6);
+  ctx.fillText('±' + spanX.toFixed(0) + ' M', 6, h - 6);
 }
 
 // ── Desktop: single draggable, viewport-clamped window with view tabs ──────
