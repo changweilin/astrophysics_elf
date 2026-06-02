@@ -178,10 +178,17 @@ and file paths stay ASCII-only.
 
 ## 8. Phased rollout with checkpoints
 
-1. **P6.1 — Add-only core.** Write `lensing-worker.mjs` + `run-lensing-sample.mjs`.
-   Verify with `node .\full-physics\run-lensing-sample.mjs` and re-run
-   `node .\full-physics\run-benchmarks.mjs` (must stay green — no numerics
-   changed, but confirm imports don't perturb anything). *No demo files touched.*
+1. **P6.1 — Add-only core. DONE.** Added `lensing-worker.mjs`
+   (`renderLensingImage` pure renderer + `attachLensingWorkerGlobal` worker
+   boundary, DOM-light, no auto-attach) and `run-lensing-sample.mjs` (prints ray
+   counts, photon-ring radius, and an ASCII class map + luminance preview).
+   Verified: smoke runner renders a centered shadow ringed by the photon ring
+   inside a lensed disc that arcs over the top; `run-benchmarks.mjs` 26/26 pass;
+   `run-rendering-prep-sample.mjs` / `run-sample.mjs` / `run-units-sample.mjs`
+   still exit 0. *No demo files touched.* Known approximation: disc Doppler uses
+   a kinematic+gravitational estimate (`discShiftApprox`) pending exact per-ray
+   `redshiftFactor`; background starfield warp samples truncated "active" rays
+   (longer affine budget would convert them to true "escaped" sky directions).
 2. **P6.2 — Bridge.** Add `lensing.js` (`window.KNLensing`) with worker
    lifecycle, debounce, cache. Still no UI; testable from the console.
 3. **P6.3 — Panel (desktop).** Add `observer-view.jsx`; wire `index.html` +
