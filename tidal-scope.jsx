@@ -75,7 +75,8 @@ function TidalMicroscope({ sim, force }) {
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
-          <span className="mh-title">{tr('TIDAL MICROSCOPE', '潮汐顯微鏡')}</span>
+          <span className="mh-title"
+                onPointerUp={() => { if (!drag.movedRef.current) setCollapsed(!collapsed); }}>{tr('TIDAL MICROSCOPE', '潮汐顯微鏡')}</span>
         </div>
         <div className="mh-right">
           {sim.bodies.length > 1 ? (

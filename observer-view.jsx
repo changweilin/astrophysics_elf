@@ -63,7 +63,19 @@ function ObserverView({ sim }) {
   const canvasRef = React.useRef(null);
   const offRef = React.useRef(null);              // offscreen buffer for scaling
   const stateRef = React.useRef({ key: null, result: null, pending: false });
+  const traceCanvasRef = React.useRef(null);      // lower pane: bent-ray curves
+  const traceRef = React.useRef(null);            // cached equatorial-ray polylines
   const drag = knUseDragMove('observer', { x: 14, y: 300 });
+
+  // Lower pane lens = the system monopole: total mass M1+M2 (charges add; spin is
+  // the mass-weighted mean, kept sub-extremal), the self-consistent far-field
+  // picture that also fixes the lens centre at the barycentre.
+  const bin = sim.binary;
+  const useBin = !!(bin && bin.enabled);
+  const M1 = sim.params.M, M2 = useBin ? (bin.M2 || 0) : 0;
+  const totM = M1 + M2;
+  const totQ = sim.params.Q + (useBin ? (bin.Q2 || 0) : 0);
+  const totA = (useBin && totM > 0) ? (M1 * sim.params.a + M2 * (bin.a2 || 0)) / totM : sim.params.a;
 
   // Persist the settings whenever they change (window position persists itself).
   React.useEffect(() => { knWriteLensPrefs({ inclIdx, discOn, azIdx }); }, [inclIdx, discOn, azIdx]);
@@ -211,6 +223,37 @@ function ObserverView({ sim }) {
     };
   }, [collapsed, inclIdx, discOn, azIdx, blit]);
 
+  // Lower pane: fetch (and cache) the bent-ray polylines for the monopole, then
+  // draw them in their own canvas stacked under the lensed image.
+  React.useEffect(() => {
+    if (collapsed) return undefined;
+    const KNL = window.KNLensing;
+    if (!KNL || !KNL.equatorialRays) return undefined;
+    let cancelled = false;
+    KNL.equatorialRays({ M: totM, Q: totQ, a: totA, B: sim.params.B }, { count: 17, cameraR: 42 })
+      .then((d) => { if (!cancelled) traceRef.current = d; })
+      .catch(() => { /* keep last good curves */ });
+    return () => { cancelled = true; };
+  }, [collapsed, totM, totQ, totA, sim.params.B]);
+
+  React.useEffect(() => {
+    if (collapsed) return undefined;
+    const c = traceCanvasRef.current;
+    if (!c) return undefined;
+    const ctx = c.getContext('2d');
+    let raf;
+    function tick() {
+      const dpr = window.devicePixelRatio || 1;
+      const w = c.clientWidth, h = c.clientHeight;
+      if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      renderLensTrace(ctx, w, h, traceRef.current);
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [collapsed]);
+
   return (
     <div ref={drag.rootRef}
          className={`field-section kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''} ${drag.resized ? 'kn-resized' : ''}`}
@@ -220,7 +263,8 @@ function ObserverView({ sim }) {
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
-          <span className="mh-title">{tr('OBSERVER VIEW', '觀測者視角')}</span>
+          <span className="mh-title"
+                onPointerUp={() => { if (!drag.movedRef.current) setCollapsed(!collapsed); }}>{tr('GRAVITATIONAL LENS', '重力透鏡')}</span>
         </div>
         <div className="mh-right">
           <span className="mh-switch" onPointerDown={(e) => e.stopPropagation()}>
@@ -235,6 +279,10 @@ function ObserverView({ sim }) {
         <React.Fragment>
           <div className="fs-body">
             <canvas ref={canvasRef} className="fs-canvas" />
+          </div>
+          {/* Lower pane: bent-ray light-bending curves (system monopole). */}
+          <div className="fs-body lt-body" style={{ borderTop: '1px solid var(--line)' }}>
+            <canvas ref={traceCanvasRef} className="fs-canvas" />
           </div>
           <div className="view-toggles" style={{ borderTop: '1px solid var(--line)' }}>
             <button className={discOn ? 'on' : ''} onClick={() => setDiscOn(!discOn)}
@@ -255,6 +303,73 @@ function ObserverView({ sim }) {
       {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}
     </div>
   );
+}
+
+// Lower-pane renderer: self-contained, lens-centred plot of the bent equatorial
+// geodesics + the critical-impact-parameter circle. Fixed px-per-M scale, so
+// resizing the window widens the field of view rather than zooming the curves.
+function renderLensTrace(ctx, w, h, data) {
+  ctx.fillStyle = 'oklch(0.08 0.018 255)';
+  ctx.fillRect(0, 0, w, h);
+  if (w < 2 || h < 2) return;
+
+  const cx = w / 2, cy = h / 2;
+  const PX_PER_M = 1.5;   // fixed scale (≈ fits the ±42 M ray fan at default size)
+
+  ctx.strokeStyle = 'oklch(0.20 0.022 255 / 0.5)';
+  ctx.lineWidth = 0.5;
+  for (let x = (cx % 22); x < w; x += 22) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  for (let y = (cy % 22); y < h; y += 22) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+  if (!data || !data.rays) {
+    ctx.fillStyle = 'oklch(0.46 0.014 255)';
+    ctx.font = '10px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(window.KNLensing ? tr('tracing…', '追跡中…') : tr('lensing engine offline', '透鏡引擎離線'), cx, cy + 4);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // Critical impact parameter: rays aimed within b_crit of the centre fall in.
+  if (data.bCrit > 0) {
+    ctx.setLineDash([2, 4]);
+    ctx.strokeStyle = 'oklch(0.78 0.10 60 / 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, data.bCrit * PX_PER_M, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Bent geodesics (faint cyan = bends past; faint red = captured).
+  ctx.lineWidth = 1;
+  for (const ray of data.rays) {
+    const pts = ray.points;
+    if (!pts || pts.length < 4) continue;
+    ctx.strokeStyle = ray.captured
+      ? 'oklch(0.62 0.13 28 / 0.45)'
+      : 'oklch(0.72 0.09 210 / 0.4)';
+    ctx.beginPath();
+    ctx.moveTo(cx + pts[0] * PX_PER_M, cy - pts[1] * PX_PER_M);
+    for (let i = 2; i < pts.length; i += 2) {
+      ctx.lineTo(cx + pts[i] * PX_PER_M, cy - pts[i + 1] * PX_PER_M);
+    }
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = 'oklch(0.78 0.16 75 / 0.9)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'oklch(0.58 0.012 255)';
+  ctx.font = '8px JetBrains Mono, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('±' + (w / (2 * PX_PER_M)).toFixed(0) + ' M', 6, h - 6);
+  if (data.bCrit > 0) {
+    ctx.fillStyle = 'oklch(0.72 0.09 60 / 0.8)';
+    ctx.fillText('b_crit ' + data.bCrit.toFixed(2) + ' M', 6, 12);
+  }
 }
 
 window.ObserverView = ObserverView;

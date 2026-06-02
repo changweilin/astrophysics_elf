@@ -1455,6 +1455,8 @@ html, body {
    pointer; the chevron keeps a pointer cursor since it stays a click target. */
 .kn-draggable .microscope-head { cursor: grab; }
 .kn-draggable .microscope-head .mh-chev { cursor: pointer; }
+/* The title doubles as a collapse toggle (single click; a drag still moves). */
+.kn-draggable .microscope-head .mh-title { cursor: pointer; }
 .kn-draggable.is-dragging .microscope-head { cursor: grabbing; }
 /* Gentle armed-drag highlight (muted, not glary). */
 .kn-draggable.is-dragging {
@@ -1496,6 +1498,9 @@ html, body {
    position:absolute / height:100%, collapsing it to 0 height. Override it with a
    higher-specificity selector and pin a static, fixed-height box. */
 .fs-body { position: relative; height: 132px; }
+/* Lower pane of the Gravitational Lens window (bent-ray trace), a touch shorter
+   than the lensed-image pane; both panes flex to share height when resized. */
+.fs-body.lt-body { height: 104px; }
 .field-section .fs-canvas {
   position: static; inset: auto;
   width: 100%; height: 132px;

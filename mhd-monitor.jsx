@@ -76,7 +76,8 @@ function MHDMonitor({ sim, force }) {
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
-          <span className="mh-title">{tr('MHD JET MONITOR', 'MHD 噴流監視器')}</span>
+          <span className="mh-title"
+                onPointerUp={() => { if (!drag.movedRef.current) setCollapsed(!collapsed); }}>{tr('MHD JET MONITOR', 'MHD 噴流監視器')}</span>
         </div>
         <div className="mh-right" style={{color: m.P > 1 ? 'var(--magenta)' : 'var(--fg-3)'}}>
           {bothMHD && (

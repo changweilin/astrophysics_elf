@@ -236,7 +236,8 @@ function FieldScope({ sim }) {
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
-          <span className="mh-title">{tr('FIELD PROFILE', '場剖面圖')}</span>
+          <span className="mh-title"
+                onPointerUp={() => { if (!drag.movedRef.current) setCollapsed(!collapsed); }}>{tr('FIELD PROFILE', '場剖面圖')}</span>
         </div>
         <div className="mh-right">
           <span className="mh-switch" onPointerDown={(e) => e.stopPropagation()}>

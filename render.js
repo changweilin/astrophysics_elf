@@ -103,12 +103,9 @@
     // Disc particles (under frame dragging arrows, over distance rings)
     if (window.KNDisc) window.KNDisc.renderDisc(sim, ctx, w, h, worldToScreenInto);
 
-    // Gravitational-lensing overlay (opt-in via LENS): bent equatorial null
-    // geodesics + critical-impact-parameter circle. Drawing lives in lensing.js;
-    // the geodesics are computed off-thread and cached per (M,Q,a).
-    if (sim.flags.showLensing && window.KNLensing && window.KNLensing.renderOverlay) {
-      window.KNLensing.renderOverlay(sim, ctx, w, h, worldToScreen);
-    }
+    // Gravitational-lensing bent-ray curves used to overlay here; they now live
+    // in the lower pane of the Gravitational Lens window (observer-view.jsx),
+    // stacked under the lensed image, so the top-down canvas stays uncluttered.
 
     // Photon sphere
     if (isBH && sim.flags.showPhoton && rPh > 0 && !(sim.binary && sim.binary.enabled)) {

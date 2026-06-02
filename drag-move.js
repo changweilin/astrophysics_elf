@@ -65,6 +65,10 @@ function knUseDragMove(id, initial, opts) {
   var z = zState[0], setZ = zState[1];
   var rootRef = React.useRef(null);
   var grab = React.useRef(null);
+  // True once a press on the handle has turned into an actual move; lets a
+  // header title distinguish a click (toggle) from a drag (move) — read it in
+  // an onPointerUp/onClick and skip the toggle when a drag just happened.
+  var moved = React.useRef(false);
 
   function clamp(x, y) {
     var el = rootRef.current;
@@ -138,6 +142,7 @@ function knUseDragMove(id, initial, opts) {
       dx: e.clientX - pr.left - base.x, dy: e.clientY - pr.top - base.y,
       sx: e.clientX, sy: e.clientY, armed: false,
     };
+    moved.current = false;   // fresh gesture — assume click until it travels
     function cancel() {
       grab.current = null;
       setDragging(false);
@@ -153,6 +158,7 @@ function knUseDragMove(id, initial, opts) {
         // it stays a click (chevron / view-switch taps), so taps never nudge.
         if (Math.hypot(ev.clientX - g.sx, ev.clientY - g.sy) <= 4) return;
         g.armed = true;
+        moved.current = true;
         setDragging(true);
       }
       var pr2 = el.parentElement.getBoundingClientRect();
@@ -199,7 +205,7 @@ function knUseDragMove(id, initial, opts) {
     if (z != null) style.zIndex = z;
   }
   return {
-    rootRef: rootRef, dragging: dragging, resized: !!size,
+    rootRef: rootRef, dragging: dragging, resized: !!size, movedRef: moved,
     onHeadDown: onHeadDown, onResizeDown: onResizeDown, reclamp: reclamp, style: style,
   };
 }
