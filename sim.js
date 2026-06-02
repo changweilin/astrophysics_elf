@@ -653,31 +653,51 @@
     }
     ctx.setLineDash([]);
 
-    // frame dragging field
-    if (sim.flags.showDragField && Math.abs(a) > 0.02) {
-      const ringCount = 4;
-      ctx.strokeStyle = 'oklch(0.55 0.10 210 / 0.35)';
-      ctx.lineWidth = 1;
-      // center on primary position (offset in binary mode)
-      const bin = sim.binary;
-      const dragCx = (bin && bin.enabled) ? cx + bin.x1 * s : cx;
-      const dragCy = (bin && bin.enabled) ? cy + bin.y1 * s : cy;
-      for (let i = 1; i <= ringCount; i++) {
-        const baseR = isBH ? (rplus || 1) : Math.max(rplus || 0, sim.params.R_star || 3);
-        const r = baseR + i * 2.2;
-        const N = 28;
-        for (let k = 0; k < N; k++) {
-          const ang = (k / N) * Math.PI * 2 + (sim.t * 0.05 * Math.sign(a)) / (i);
-          const x = dragCx + Math.cos(ang) * r * s;
-          const y = dragCy + Math.sin(ang) * r * s;
-          const tx = -Math.sin(ang) * Math.sign(a);
-          const ty =  Math.cos(ang) * Math.sign(a);
-          const len = 6;
-          ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + tx * len, y + ty * len);
-          ctx.stroke();
+    // frame dragging field — each spinning body drags spacetime around it, so in
+    // binary mode both stars contribute their own swirl. They are drawn as
+    // separate concentric ring sets centred on each body; visually the two fields
+    // read as superimposed where they overlap (each segment is alpha-blended).
+    if (sim.flags.showDragField) {
+      const drawDragField = (dragCx, dragCy, spin, baseR) => {
+        if (Math.abs(spin) <= 0.02) return;
+        const ringCount = 4;
+        const sgn = Math.sign(spin);
+        ctx.strokeStyle = 'oklch(0.55 0.10 210 / 0.35)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i <= ringCount; i++) {
+          const r = baseR + i * 2.2;
+          const N = 28;
+          for (let k = 0; k < N; k++) {
+            const ang = (k / N) * Math.PI * 2 + (sim.t * 0.05 * sgn) / (i);
+            const x = dragCx + Math.cos(ang) * r * s;
+            const y = dragCy + Math.sin(ang) * r * s;
+            const tx = -Math.sin(ang) * sgn;
+            const ty =  Math.cos(ang) * sgn;
+            const len = 6;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + tx * len, y + ty * len);
+            ctx.stroke();
+          }
         }
+      };
+
+      const bin = sim.binary;
+      if (bin && bin.enabled) {
+        // Primary swirl about (x1,y1) with spin a; companion swirl about
+        // (x2,y2) with its own spin a2. The two overlapping fields superimpose.
+        const baseR1 = isBH ? (rplus || 1) : Math.max(rplus || 0, sim.params.R_star || 3);
+        const [px1, py1] = worldToScreen(sim, w, h, bin.x1, bin.y1);
+        drawDragField(px1, py1, a, baseR1);
+
+        const compBH = (bin.type || 'bh') === 'bh';
+        const { rplus: rp2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
+        const baseR2 = compBH ? (rp2 || 1) : Math.max(rp2 || 0, bin.R_star2 || 3);
+        const [px2, py2] = worldToScreen(sim, w, h, bin.x2, bin.y2);
+        drawDragField(px2, py2, bin.a2 || 0, baseR2);
+      } else {
+        const baseR = isBH ? (rplus || 1) : Math.max(rplus || 0, sim.params.R_star || 3);
+        drawDragField(cx, cy, a, baseR);
       }
     }
 
@@ -1421,7 +1441,7 @@
 
     // Lattice over the viewport (+margin, so inward-pulled border nodes still
     // cover the edges). Each node is warped and tagged with strain + well depth.
-    const stepPx = 40;
+    const stepPx = 20;
     const margin = stepPx * 3;
     const nx = Math.ceil((w + margin * 2) / stepPx) + 1;
     const ny = Math.ceil((h + margin * 2) / stepPx) + 1;
@@ -1453,7 +1473,7 @@
     };
 
     ctx.save();
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1.5;
     for (let j = 0; j < ny; j++) {            // horizontal lines
       for (let i = 0; i < nx - 1; i++) {
         const k = j * nx + i;
