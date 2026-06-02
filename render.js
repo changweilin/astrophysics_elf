@@ -103,6 +103,13 @@
     // Disc particles (under frame dragging arrows, over distance rings)
     if (window.KNDisc) window.KNDisc.renderDisc(sim, ctx, w, h, worldToScreenInto);
 
+    // Gravitational-lensing overlay (opt-in via LENS): bent equatorial null
+    // geodesics + critical-impact-parameter circle. Drawing lives in lensing.js;
+    // the geodesics are computed off-thread and cached per (M,Q,a).
+    if (sim.flags.showLensing && window.KNLensing && window.KNLensing.renderOverlay) {
+      window.KNLensing.renderOverlay(sim, ctx, w, h, worldToScreen);
+    }
+
     // Photon sphere
     if (isBH && sim.flags.showPhoton && rPh > 0 && !(sim.binary && sim.binary.enabled)) {
       ctx.strokeStyle = 'oklch(0.90 0.10 60 / 0.55)';

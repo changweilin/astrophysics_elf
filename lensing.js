@@ -55,9 +55,11 @@
       this._pending = new Map(); // id -> { resolve, reject, params, camera, options }
       this._seq = 0;
       this._cache = new Map(); // renderKey -> result (LRU by insertion order)
+      this._eqCache = new Map(); // params -> equatorial bent-ray polylines
       this._fallbackModule = null;
       this._debounceTimer = null;
       this._renderToken = 0;
+      this._overlay = { key: null, data: null, requesting: false }; // top-down overlay state
 
       this._initWorker();
     }
@@ -86,7 +88,8 @@
         pend.reject(new Error(data.error?.message || "lensing render failed"));
         return;
       }
-      pend.resolve(this._packResult(data.payload, data.buffer));
+      if (pend.kind === "equatorial") pend.resolve(data.payload);
+      else pend.resolve(this._packResult(data.payload, data.buffer));
     }
 
     /* A module-worker load failure surfaces async via onerror. Disable the
@@ -97,8 +100,10 @@
       const inflight = [...this._pending.values()];
       this._pending.clear();
       for (const pend of inflight) {
-        this._renderViaFallback(pend.params, pend.camera, pend.options)
-          .then(pend.resolve, pend.reject);
+        const retry = pend.kind === "equatorial"
+          ? this._eqViaFallback(pend.params, pend.options)
+          : this._renderViaFallback(pend.params, pend.camera, pend.options);
+        retry.then(pend.resolve, pend.reject);
       }
     }
 
@@ -151,7 +156,7 @@
     _renderViaWorker(params, camera, options) {
       return new Promise((resolve, reject) => {
         const id = ++this._seq;
-        this._pending.set(id, { resolve, reject, params, camera, options });
+        this._pending.set(id, { resolve, reject, params, camera, options, kind: "render" });
         try {
           this._worker.postMessage({
             id,
@@ -162,6 +167,40 @@
           this._pending.delete(id);
           reject(err);
         }
+      });
+    }
+
+    _eqViaWorker(params, options) {
+      return new Promise((resolve, reject) => {
+        const id = ++this._seq;
+        this._pending.set(id, { resolve, reject, params, options, kind: "equatorial" });
+        try {
+          this._worker.postMessage({ id, type: "equatorial-rays", payload: { params, options } });
+        } catch (err) {
+          this._pending.delete(id);
+          reject(err);
+        }
+      });
+    }
+
+    async _eqViaFallback(params, options) {
+      if (!this._fallbackModule) this._fallbackModule = import(FALLBACK_MODULE);
+      const mod = await this._fallbackModule;
+      return mod.traceEquatorialRays(params, options);
+    }
+
+    /* Equatorial bent-ray polylines for the top-down overlay. Cached per params. */
+    equatorialRays(params = this.params, options = {}) {
+      const key = paramsKey(params) + "#eq" + (options.count ?? 13) + "_" + (options.cameraR ?? 40);
+      const cached = this._eqCache.get(key);
+      if (cached) return Promise.resolve(cached);
+      const exec = this._workerOk && this._worker
+        ? this._eqViaWorker(params, options)
+        : this._eqViaFallback(params, options);
+      return exec.then((data) => {
+        this._eqCache.set(key, data);
+        while (this._eqCache.size > CACHE_LIMIT) this._eqCache.delete(this._eqCache.keys().next().value);
+        return data;
       });
     }
 
@@ -190,6 +229,57 @@
         this._cachePut(key, result);
         return result;
       });
+    }
+
+    /* Top-down main-canvas overlay: draws cached equatorial bent geodesics and
+       the critical-impact-parameter circle. Called per frame from render.js, but
+       only recomputes the geodesics (off-thread) when (M, Q, a) changes. */
+    renderOverlay(sim, ctx, w, h, worldToScreen) {
+      if (!sim || !ctx || typeof worldToScreen !== "function") return;
+      const p = sim.params || {};
+      const key = paramsKey(p);
+      if (key !== this._overlay.key) {
+        this._overlay.key = key;
+        const snapshot = { M: p.M, Q: p.Q, a: p.a, B: p.B };
+        clearTimeout(this._overlay.timer);
+        this._overlay.timer = setTimeout(() => {
+          this.equatorialRays(snapshot, { count: 13, cameraR: 40 })
+            .then((data) => { this._overlay.data = data; })
+            .catch(() => { /* leave previous overlay in place */ });
+        }, 200);
+      }
+      const data = this._overlay.data;
+      if (!data || !data.rays) return;
+
+      ctx.save();
+      ctx.lineWidth = 1;
+      for (const ray of data.rays) {
+        const pts = ray.points;
+        if (!pts || pts.length < 4) continue;
+        ctx.strokeStyle = ray.captured
+          ? "oklch(0.62 0.13 28 / 0.30)"   // faint red — light that falls in
+          : "oklch(0.72 0.09 210 / 0.26)"; // faint cyan — light that bends past
+        ctx.beginPath();
+        let s = worldToScreen(sim, w, h, pts[0], pts[1]);
+        ctx.moveTo(s[0], s[1]);
+        for (let i = 2; i < pts.length; i += 2) {
+          s = worldToScreen(sim, w, h, pts[i], pts[i + 1]);
+          ctx.lineTo(s[0], s[1]);
+        }
+        ctx.stroke();
+      }
+      // Critical impact parameter: rays aimed within b_crit of the centre are
+      // captured. Drawn as a faint dashed circle for orientation.
+      if (data.bCrit > 0 && sim.view && sim.view.scale) {
+        const c = worldToScreen(sim, w, h, 0, 0);
+        ctx.setLineDash([2, 4]);
+        ctx.strokeStyle = "oklch(0.78 0.10 60 / 0.26)";
+        ctx.beginPath();
+        ctx.arc(c[0], c[1], data.bCrit * sim.view.scale, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
     }
 
     /* ---- debounced, progressive request used by the UI ---- */

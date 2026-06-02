@@ -233,10 +233,31 @@ and file paths stay ASCII-only.
    renders the shadow+ring (center luminance ~6/255, peak ~150/255), no page or
    console errors. Known cosmetic limit: at the large mobile stage the 64x40
    render upscales blocky — the deflection-LUT path (sec 4.5) is the real fix.
-5. **P6.5 — Optional Option B overlay.** Add the one-line `render.js` hook and
-   the equatorial bent-ray overlay, behind its own toggle.
+5. **P6.5 — Option B overlay. DONE.** Added `traceEquatorialRays` to
+   `lensing-worker.mjs` (a fan of true equatorial null geodesics via the existing
+   integrator, returned as Cartesian polylines + the critical impact parameter)
+   and a `equatorial-rays` worker message. The bridge gained
+   `KNLensing.equatorialRays()` (off-thread, cached per (M,Q,a), main-thread
+   fallback) and `KNLensing.renderOverlay(sim, ctx, w, h, worldToScreen)`, which
+   recomputes the geodesics off-thread only on parameter change (debounced) and
+   each frame draws the cached bent rays (cyan = bends past, red = falls in) plus
+   a dashed critical-impact-parameter circle. `render.js` gained a single hook
+   after the disc draw, gated by `sim.flags.showLensing` (so the LENS toggle now
+   shows both the Observer View panel and this top-down overlay — one unified
+   "lensing" concept rather than a second toggle). Verified: `traceEquatorialRays`
+   returns 13 rays / 4 captured / bCrit ~6.5 in node; in-browser the overlay
+   renders muted bent geodesics + the b_crit circle around the hole with no
+   errors; `run-benchmarks.mjs` 26/26 still pass.
 
 Each checkpoint is independently revertable; stop after any one.
+
+## Status: complete
+
+All of P6.1-P6.5 are implemented and verified. The headline feature (Option A
+Observer View, desktop + mobile, with i18n) and the optional Option B top-down
+overlay are both live behind the opt-in `LENS` toggle. Remaining future work is
+the deflection-LUT fast path (sec 4.5) for higher resolution / smooth camera
+rotation and exact per-ray disc redshift (sec 7) — neither blocks the feature.
 
 ## 9. Verification gate (per CLAUDE.md)
 

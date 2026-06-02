@@ -25,8 +25,10 @@ import {
 import {
   dopplerBoost,
   estimateEquatorialDiscHit,
+  makeCameraRay,
   photonRingSamples,
   traceCameraRays,
+  tracePhotonRay,
 } from "./ray-tracing.mjs";
 import {
   composeFalseColor,
@@ -252,12 +254,65 @@ export function renderLensingImage(params = {}, camera = {}, options = {}) {
   return result;
 }
 
+/* ---- equatorial bent-ray overlay (top-down main view) ------------------ *
+ * Traces a fan of true null geodesics confined to the equatorial plane
+ * (theta = pi/2, no polar component because the camera sits in the plane and we
+ * only vary the in-plane angle). Returns each ray as a flat [x, y, x, y, ...]
+ * polyline in equatorial Cartesian coords for the top-down renderer to draw the
+ * bending of light around the hole. Cheap (~a dozen rays), computed per (M,Q,a)
+ * change off-thread, and cached by the caller.                                 */
+
+export function traceEquatorialRays(params = {}, options = {}) {
+  const p = sanitizeParams(params);
+  const count = Math.max(2, Math.floor(options.count ?? 13));
+  const cameraR = options.cameraR ?? 40;
+  const fovY = options.fovY ?? Math.PI / 3;
+  const camera = { r: cameraR, theta: Math.PI / 2, phi: options.phi ?? 0, fovY };
+  const rays = [];
+  for (let i = 0; i < count; i++) {
+    const x = count > 1 ? (i / (count - 1)) * 2 - 1 : 0; // -1..1 across the FOV
+    // aspect = 1 and y = 0 keep the ray's local direction in the equatorial
+    // plane (no theta component), so theta stays pi/2 along the geodesic.
+    const ray = makeCameraRay(p, camera, { x, y: 0, pixelX: i, pixelY: 0 }, { aspect: 1, fovY });
+    const traced = tracePhotonRay(p, ray, {
+      targetAffine: options.targetAffine ?? 70,
+      initialStep: options.initialStep ?? 0.05,
+      maxStep: options.maxStep ?? 0.2,
+      recordEvery: options.recordEvery ?? 3,
+      escapeRadius: options.escapeRadius ?? cameraR + 8,
+      stopAtHorizon: true,
+    });
+    const frames = traced.result?.frames ?? [];
+    const points = [];
+    for (const f of frames) {
+      if (!Number.isFinite(f.r) || !Number.isFinite(f.phi)) continue;
+      points.push(f.r * Math.cos(f.phi), f.r * Math.sin(f.phi));
+    }
+    rays.push({
+      captured: traced.classification?.status === "captured",
+      points,
+    });
+  }
+  const ring = photonRingSamples(p, { cameraR, count: 4 });
+  const bCrit = Math.abs(
+    Number.isFinite(ring.prograde?.impactParameter)
+      ? ring.prograde.impactParameter
+      : (ring.retrograde?.impactParameter ?? 0),
+  );
+  return { params: p, cameraR, bCrit, rays };
+}
+
 /* ---- Web Worker boundary (browser only; no auto-attach) ---------------- */
 
 export function handleLensingWorkerMessage(rawMessage = {}) {
   const id = rawMessage.id;
   const type = rawMessage.type ?? rawMessage.action ?? "render-lensing";
   try {
+    if (type === "equatorial-rays") {
+      const payload = rawMessage.payload ?? {};
+      const data = traceEquatorialRays(payload.params ?? {}, payload.options ?? {});
+      return { message: { id, type, ok: true, payload: data }, transfer: [] };
+    }
     if (type !== "render-lensing") {
       throw new Error(`Unknown lensing worker message type: ${type}`);
     }
