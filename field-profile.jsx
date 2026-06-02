@@ -261,20 +261,25 @@ function FieldScope({ sim }) {
     <div ref={rootRef}
          className={`field-section ${collapsed ? 'is-collapsed' : ''}`}
          style={{ left: pos.x + 'px', top: pos.y + 'px' }}>
-      {/* Top row: collapse chevron + single-click view switch (shows the
-          current view; click cycles to the next). The row is also the drag
-          handle; the chevron and switch stop the drag so taps don't pan. */}
-      <div className="fs-head" onPointerDown={onHeadDown}>
-        <span className="fs-chev"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
-        <button className="fs-switch"
+      {/* Top row — same format as the MHD monitor header: chevron + title on the
+          left, view switch on the right. Single click on the switch cycles to
+          the next cross-section. The row is the drag handle; the chevron and
+          switch stop the drag so taps don't pan. */}
+      <div className="microscope-head fs-head" onPointerDown={onHeadDown}>
+        <div className="mh-left">
+          <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
-                onClick={cycle}
-                title={tr('click to switch cross-section', '單擊切換剖面')}>
-          <span className="fs-swname">{labelOf(active)}</span>
-          <span className="fs-swcyc">⟳</span>
-        </button>
+                onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
+          <span className="mh-title">{tr('FIELD PROFILE', '場剖面圖')}</span>
+        </div>
+        <div className="mh-right">
+          <span className="mh-switch" onPointerDown={(e) => e.stopPropagation()}>
+            <button className="on" onClick={cycle}
+                    title={tr('click to switch cross-section', '單擊切換剖面')}>
+              <span className="mh-name">{labelOf(active)}</span> ⟳
+            </button>
+          </span>
+        </div>
       </div>
       {!collapsed && (
         <div className="fs-body">
