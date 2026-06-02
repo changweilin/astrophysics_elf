@@ -152,39 +152,13 @@ function MobileApp() {
       };
     }
 
-    // Which orbiting body / companion sits under a screen point (null if none).
-    function hitTestGrabbable(sx, sy, w, h) {
-      let best = null, bestD = 28;
-      for (const b of MSIM.bodies) {
-        if (b.state !== 'orbit') continue;
-        const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, b.x, b.y);
-        const d = Math.hypot(bx - sx, by - sy);
-        if (d < bestD) { bestD = d; best = b; }
-      }
-      if (best) return { kind: 'body', bodyId: best.id, label: best.name };
-      if (MSIM.binary && MSIM.binary.enabled) {
-        const bin = MSIM.binary;
-        const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, bin.x2, bin.y2);
-        const phys = window.KNphysics;
-        const sType = bin.type || 'bh';
-        const { rplus: rp2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
-        const visualR = sType === 'bh'
-          ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * MSIM.view.scale)
-          : Math.max(6, (bin.R_star2 || 3) * MSIM.view.scale * 0.7);
-        const hitR = Math.max(18, visualR + 6);
-        if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: tr('companion', '伴星') };
-      }
-      return null;
-    }
-
-    // Screen radius (px) of a star's drawn body — shared by binary hit-tests.
-    function starVisualR(M, Q, a, type, R_star) {
-      const phys = window.KNphysics;
-      const { rplus, naked } = phys.horizons(M, Q || 0, a || 0);
-      return (type || 'bh') === 'bh'
-        ? Math.max(4, (isFinite(rplus) && !naked ? rplus : M) * MSIM.view.scale)
-        : Math.max(6, (R_star || 3) * MSIM.view.scale * 0.7);
-    }
+    // Hit testing / star radius are shared with the desktop root via
+    // window.KNInteract (interaction-core.js); mobile passes the larger
+    // touch-sized thresholds.
+    const hitTestGrabbable = (sx, sy, w, h) =>
+      window.KNInteract.hitTestGrabbable(MSIM, sx, sy, w, h, { bodyR: 28, compFloor: 18, compPad: 6 });
+    const starVisualR = (M, Q, a, type, R_star) =>
+      window.KNInteract.starVisualR(MSIM, M, Q, a, type, R_star);
 
     // Double-tap → snap onto a classical stable periodic orbit (mobile twin of
     // the desktop dblclick). A binary star circularises the pair; any other body
@@ -228,17 +202,8 @@ function MobileApp() {
       return false;
     }
 
-    // Reposition the grabbed target to a world coordinate (keeps velocity).
-    function moveGrabTo(g, wx, wy) {
-      if (g.kind === 'companion') {
-        const bin = MSIM.binary;
-        if (!bin) return;
-        bin.x2 = wx; bin.y2 = wy;
-      } else {
-        const b = MSIM.bodies.find((x) => x.id === g.bodyId);
-        if (b) { b.x = wx; b.y = wy; }
-      }
-    }
+    // Reposition the grabbed target — shared with desktop via window.KNInteract.
+    const moveGrabTo = (g, wx, wy) => window.KNInteract.moveGrabTo(MSIM, g, wx, wy);
 
     // Release any in-progress grab and unfreeze its target.
     function clearGrab() {

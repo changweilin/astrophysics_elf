@@ -67,42 +67,11 @@ function App() {
         e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom };
     }
 
-    // Which orbiting body / companion sits under a screen point (null if none).
-    function hitTestGrabbable(sx, sy, w, h) {
-      let best = null, bestD = 22;
-      for (const b of SIM.bodies) {
-        if (b.state !== 'orbit') continue;
-        const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, b.x, b.y);
-        const d = Math.hypot(bx - sx, by - sy);
-        if (d < bestD) { bestD = d; best = b; }
-      }
-      if (best) return { kind: 'body', bodyId: best.id, label: best.name };
-      if (SIM.binary && SIM.binary.enabled) {
-        const bin = SIM.binary;
-        const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, bin.x2, bin.y2);
-        const phys = window.KNphysics;
-        const sType = bin.type || 'bh';
-        const { rplus: rp2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
-        const visualR = sType === 'bh'
-          ? Math.max(4, (isFinite(rp2) ? rp2 : bin.M2) * SIM.view.scale)
-          : Math.max(6, (bin.R_star2 || 3) * SIM.view.scale * 0.7);
-        const hitR = Math.max(14, visualR + 4);
-        if (Math.hypot(sx - bx, sy - by) <= hitR) return { kind: 'companion', label: tr('companion', '伴星') };
-      }
-      return null;
-    }
-
-    // Reposition the grabbed target to a world coordinate (keeps velocity).
-    function moveGrabTo(g, wx, wy) {
-      if (g.kind === 'companion') {
-        const bin = SIM.binary;
-        if (!bin) return;
-        bin.x2 = wx; bin.y2 = wy;
-      } else {
-        const b = SIM.bodies.find((x) => x.id === g.bodyId);
-        if (b) { b.x = wx; b.y = wy; }
-      }
-    }
+    // Hit testing / star radius / grab-reposition are shared with the mobile
+    // root via window.KNInteract (interaction-core.js); desktop uses the default
+    // mouse-sized thresholds.
+    const hitTestGrabbable = (sx, sy, w, h) => window.KNInteract.hitTestGrabbable(SIM, sx, sy, w, h);
+    const moveGrabTo = (g, wx, wy) => window.KNInteract.moveGrabTo(SIM, g, wx, wy);
 
     // Release any in-progress grab and unfreeze its target.
     function clearGrab() {
@@ -324,14 +293,8 @@ function App() {
       }
     }
 
-    // Screen radius (px) of a star's drawn body — shared by binary hit-tests.
-    function starVisualR(M, Q, a, type, R_star) {
-      const phys = window.KNphysics;
-      const { rplus, naked } = phys.horizons(M, Q || 0, a || 0);
-      return (type || 'bh') === 'bh'
-        ? Math.max(4, (isFinite(rplus) && !naked ? rplus : M) * SIM.view.scale)
-        : Math.max(6, (R_star || 3) * SIM.view.scale * 0.7);
-    }
+    // Star draw-radius shared with the mobile root via window.KNInteract.
+    const starVisualR = (M, Q, a, type, R_star) => window.KNInteract.starVisualR(SIM, M, Q, a, type, R_star);
 
     // Double-click → snap onto a classical stable periodic orbit.
     //  · a binary star (primary or companion) circularises the whole pair
