@@ -30,15 +30,15 @@ function mhdView(sim, which) {
 }
 
 function MHDMonitor({ sim, force }) {
-  const [collapsed, setCollapsed] = React.useState(false);
-  const [which, setWhich] = React.useState('primary');
+  const [collapsed, setCollapsed] = knUseWinPref('mhd', 'collapsed', false);
+  const [which, setWhich] = knUseWinPref('mhd', 'which', 'primary');
 
   const companionMHD = bodyHasMHD(sim, 'companion');
   const bothMHD = bodyHasMHD(sim, 'primary') && companionMHD;
   // Fall back to the primary if the companion's MHD was switched off.
   const active = (which === 'companion' && companionMHD) ? 'companion' : 'primary';
   const canvasRef = React.useRef(null);
-  const drag = knUseDragMove('mhd');   // long-press drag-to-move (persisted; CSS spot until moved)
+  const drag = knUseDragMove('mhd');   // drag-to-move + resize (persisted; CSS spot until moved)
   React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
   React.useEffect(() => {
@@ -66,7 +66,7 @@ function MHDMonitor({ sim, force }) {
 
   return (
     <div ref={drag.rootRef}
-         className={`microscope mhd-monitor kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''}`}
+         className={`microscope mhd-monitor kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''} ${drag.resized ? 'kn-resized' : ''}`}
          style={drag.style}>
       <div className="microscope-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
@@ -105,8 +105,10 @@ function MHDMonitor({ sim, force }) {
         </div>
       ) : (
         <div className="microscope-body">
-          <canvas ref={canvasRef} className="microscope-canvas" style={{height: 200}} />
-          <div className="microscope-overlay-bl">{tr('SIDE ELEVATION · Ω ↑↓', '側視圖 · Ω ↑↓')}</div>
+          <div className="kn-win-screen">
+            <canvas ref={canvasRef} className="microscope-canvas mhd-canvas" />
+            <div className="microscope-overlay-bl">{tr('SIDE ELEVATION · Ω ↑↓', '側視圖 · Ω ↑↓')}</div>
+          </div>
           <div className="microscope-stats">
             <div className="ms-row">
               <span className="ms-k">{tr('P_jet · total', 'P_jet · 總計')}</span>
@@ -140,6 +142,7 @@ function MHDMonitor({ sim, force }) {
           </div>
         </div>
       )}
+      {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}
     </div>
   );
 }

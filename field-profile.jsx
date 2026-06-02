@@ -180,10 +180,10 @@ function renderFieldSection(ctx, w, h, kind, sim) {
 
 // ── Desktop: single draggable, viewport-clamped window with view tabs ──────
 function FieldScope({ sim }) {
-  const [collapsed, setCollapsed] = React.useState(false);
-  const [tab, setTab] = React.useState('primary');
+  const [collapsed, setCollapsed] = knUseWinPref('field', 'collapsed', false);
+  const [tab, setTab] = knUseWinPref('field', 'tab', 'primary');
   const canvasRef = React.useRef(null);
-  const drag = knUseDragMove('field', { x: 14, y: 70 });   // long-press drag-to-move (persisted)
+  const drag = knUseDragMove('field', { x: 14, y: 70 });   // drag-to-move + resize (persisted)
 
   const hasBin = !!(sim.binary && sim.binary.enabled);
   // Available views (companion only exists in binary mode), cycled by a single
@@ -221,7 +221,7 @@ function FieldScope({ sim }) {
 
   return (
     <div ref={drag.rootRef}
-         className={`field-section kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''}`}
+         className={`field-section kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''} ${drag.resized ? 'kn-resized' : ''}`}
          style={drag.style}>
       {/* Top row — same format as the MHD monitor header: chevron + title on the
           left, view switch on the right. Single click on the switch cycles to
@@ -248,6 +248,7 @@ function FieldScope({ sim }) {
           <canvas ref={canvasRef} className="fs-canvas" />
         </div>
       )}
+      {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}
     </div>
   );
 }

@@ -406,6 +406,16 @@
       const data = this._overlay.data;
       if (!data || !data.rays) return;
 
+      // Anchor the lensing geometry on the system's gravitating centre. The
+      // bent-ray geodesics are computed about a single mass at the origin, so we
+      // offset them to that centre. With a binary that centre is the conserved
+      // barycentre (centre of mass) — a fixed point in the COM frame — so the
+      // rings/geodesics stay put instead of swinging with the orbiting primary
+      // or companion. A lone primary sits at the world origin.
+      const bin = sim.binary;
+      const ox = (bin && bin.enabled) ? (bin.cx || 0) : 0;
+      const oy = (bin && bin.enabled) ? (bin.cy || 0) : 0;
+
       ctx.save();
       ctx.lineWidth = 1;
       for (const ray of data.rays) {
@@ -415,10 +425,10 @@
           ? "oklch(0.62 0.13 28 / 0.30)"   // faint red — light that falls in
           : "oklch(0.72 0.09 210 / 0.26)"; // faint cyan — light that bends past
         ctx.beginPath();
-        let s = worldToScreen(sim, w, h, pts[0], pts[1]);
+        let s = worldToScreen(sim, w, h, ox + pts[0], oy + pts[1]);
         ctx.moveTo(s[0], s[1]);
         for (let i = 2; i < pts.length; i += 2) {
-          s = worldToScreen(sim, w, h, pts[i], pts[i + 1]);
+          s = worldToScreen(sim, w, h, ox + pts[i], oy + pts[i + 1]);
           ctx.lineTo(s[0], s[1]);
         }
         ctx.stroke();
@@ -426,7 +436,7 @@
       // Critical impact parameter: rays aimed within b_crit of the centre are
       // captured. Drawn as a faint dashed circle for orientation.
       if (data.bCrit > 0 && sim.view && sim.view.scale) {
-        const c = worldToScreen(sim, w, h, 0, 0);
+        const c = worldToScreen(sim, w, h, ox, oy);
         ctx.setLineDash([2, 4]);
         ctx.strokeStyle = "oklch(0.78 0.10 60 / 0.26)";
         ctx.beginPath();

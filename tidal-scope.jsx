@@ -4,11 +4,11 @@
  */
 
 function TidalMicroscope({ sim, force }) {
-  const [collapsed, setCollapsed] = React.useState(false);
+  const [collapsed, setCollapsed] = knUseWinPref('tidal', 'collapsed', false);
   const [pinnedId, setPinnedId] = React.useState(null);
   const canvasRef = React.useRef(null);
   const phys = window.KNphysics;
-  const drag = knUseDragMove('tidal');   // long-press drag-to-move (persisted; CSS spot until moved)
+  const drag = knUseDragMove('tidal');   // drag-to-move + resize (persisted; CSS spot until moved)
   React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
   // Track selected, but remember the most-recently-disrupted body for a few
@@ -77,7 +77,7 @@ function TidalMicroscope({ sim, force }) {
 
   return (
     <div ref={drag.rootRef}
-         className={`microscope kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''}`}
+         className={`microscope kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''} ${drag.resized ? 'kn-resized' : ''}`}
          style={drag.style}>
       <div className="microscope-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
@@ -118,8 +118,10 @@ function TidalMicroscope({ sim, force }) {
         </div>
       ) : (
         <div className="microscope-body">
-          <canvas ref={canvasRef} className="microscope-canvas" />
-          <div className="microscope-overlay-bl">×{(60).toFixed(0)} {tr('ZOOM · ROCHE FRAME', '放大 · ROCHE 座標')}</div>
+          <div className="kn-win-screen">
+            <canvas ref={canvasRef} className="microscope-canvas" />
+            <div className="microscope-overlay-bl">×{(60).toFixed(0)} {tr('ZOOM · ROCHE FRAME', '放大 · ROCHE 座標')}</div>
+          </div>
           <div className="microscope-stats">
             <div className="ms-row">
               <span className="ms-k">r</span>
@@ -151,6 +153,7 @@ function TidalMicroscope({ sim, force }) {
           </div>
         </div>
       )}
+      {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}
     </div>
   );
 }

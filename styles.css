@@ -1248,7 +1248,7 @@ html, body {
 }
 .microscope-overlay-bl {
   position: absolute;
-  top: 178px; left: 10px;
+  bottom: 8px; left: 10px;
   font-family: var(--mono);
   font-size: 8px;
   letter-spacing: 0.12em;
@@ -1450,7 +1450,7 @@ html, body {
 }
 .field-section.is-collapsed .microscope-head { border-bottom: none; }
 
-/* ── Long-press drag-to-move (shared by field/tidal/MHD floating windows) ──
+/* ── Drag-to-move + resize (shared by field/tidal/MHD/observer windows) ──
    The header is the drag handle, so show a grab cursor instead of the head's
    pointer; the chevron keeps a pointer cursor since it stays a click target. */
 .kn-draggable .microscope-head { cursor: grab; }
@@ -1461,6 +1461,36 @@ html, body {
   box-shadow: 0 14px 34px -10px oklch(0 0 0 / 0.6),
               0 0 0 1px oklch(0.62 0.10 75 / 0.5);
 }
+/* Bottom-right resize grip. Muted diagonal ticks; only shown while the window
+   is expanded (the JSX omits it when collapsed). */
+.kn-resize-grip {
+  position: absolute;
+  right: 0; bottom: 0;
+  width: 16px; height: 16px;
+  cursor: nwse-resize;
+  z-index: 2;
+  touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 0 6px, oklch(0.55 0.02 255 / 0.5) 6px 7px,
+      transparent 7px 9px, oklch(0.55 0.02 255 / 0.5) 9px 10px, transparent 10px);
+}
+.kn-resize-grip:hover { background:
+    linear-gradient(135deg, transparent 0 6px, oklch(0.78 0.10 75 / 0.75) 6px 7px,
+      transparent 7px 9px, oklch(0.78 0.10 75 / 0.75) 9px 10px, transparent 10px); }
+/* A collapsed window must ignore any saved height (it only shows its header). */
+.kn-draggable.is-collapsed { height: auto !important; }
+/* When a window has been resized, distribute its new height to the canvas pane
+   so the visualization grows with the window (header/stats keep natural size). */
+.kn-win-screen { position: relative; }
+.kn-draggable.kn-resized .microscope-body,
+.kn-draggable.kn-resized .fs-body { flex: 1 1 auto; min-height: 0; }
+.kn-draggable.kn-resized .kn-win-screen { flex: 1 1 auto; min-height: 0; }
+.kn-draggable.kn-resized .microscope-canvas,
+.kn-draggable.kn-resized .field-section .fs-canvas,
+.kn-draggable.kn-resized .fs-canvas { height: 100% !important; min-height: 0; }
+/* MHD side-elevation canvas is a touch taller than the default scope canvas
+   (was an inline height before resize support moved it to CSS). */
+.mhd-monitor .microscope-canvas.mhd-canvas { height: 200px; }
 /* Canvas pane. NB: the global `.viewport canvas` rule (for the main sim canvas)
    is more specific than a bare `.fs-canvas` and would force this panel canvas to
    position:absolute / height:100%, collapsing it to 0 height. Override it with a

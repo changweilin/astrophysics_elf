@@ -48,7 +48,7 @@ function ObserverView({ sim }) {
   const AZIM = [0, 60, 120, 180, 240, 300];
 
   const prefs = React.useMemo(knReadLensPrefs, []); // read saved settings once
-  const [collapsed, setCollapsed] = React.useState(false);
+  const [collapsed, setCollapsed] = knUseWinPref('observer', 'collapsed', false);
   const [inclIdx, setInclIdx] = React.useState(
     () => (prefs && Number.isInteger(prefs.inclIdx) && prefs.inclIdx >= 0 && prefs.inclIdx < INCL.length)
       ? prefs.inclIdx : 2,
@@ -192,7 +192,7 @@ function ObserverView({ sim }) {
 
   return (
     <div ref={drag.rootRef}
-         className={`field-section kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''}`}
+         className={`field-section kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''} ${drag.resized ? 'kn-resized' : ''}`}
          style={drag.style}>
       <div className="microscope-head fs-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
@@ -231,6 +231,7 @@ function ObserverView({ sim }) {
           </div>
         </React.Fragment>
       )}
+      {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}
     </div>
   );
 }
