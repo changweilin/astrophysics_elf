@@ -271,8 +271,31 @@ Verified by `run-lensing-lut-sample.mjs` (LUT base shade == direct render
 byte-for-byte; coherent upsample; cheap azimuth reshade), benchmarks 26/26, and
 desktop+mobile browser drives.
 
-Remaining future work is exact per-ray disc redshift (sec 7) and true asymptotic
-starfield warp (P6.1 note) — neither blocks the feature.
+**Exact per-ray disc redshift (sec 7): DONE.** `discRedshiftExact`
+(`lensing-worker.mjs`) replaces the kinematic `discShiftApprox`. Because Pt and
+Pphi are conserved along the geodesic and both the disc circular-orbit emitter
+and the ZAMO camera observer have only t/phi 4-velocity components, the exact
+g = nu_obs/nu_emit follows from `redshiftFactor()` using just the per-ray
+conserved Pt/Pphi on `finalState` — no integrator/frame change. g is
+azimuth-invariant, so it is cached per pixel in the deflection LUT (`discG`) and
+interpolated on shade; `shadeSample` falls back to the kinematic estimate inside
+the ISCO. Verified: disc g straddles 1 (true Doppler beaming), LUT base shade
+still matches the direct render byte-for-byte, benchmarks 26/26, muted in-browser.
+
+**Starfield warp (P6.1 note): IMPROVED.** The literal fix (longer affine budget
+so rays escape) was measured impractical (10-70 s/build at 72x40, ~0 rays
+escaping). Instead the lensed background is now sampled along the ray's
+`asymptoticSkyDirection` (the velocity HEADING at the endpoint) rather than the
+endpoint position angle: most bending happens near periapsis, already integrated
+by the truncation point, so the heading captures the bulk of the deflection.
+Only the small endpoint->infinity residual bend is dropped; the fully-exact
+asymptotic (elliptic integrals from conserved E/Lz/Carter) is deferred as
+disproportionate for a faint decorative starfield. Verified: all sky samples
+finite, LUT base shade still matches the direct render byte-for-byte, benchmarks
+26/26, coherent in-browser.
+
+All three follow-ups from the Phase 6 note (deflection LUT, exact disc redshift,
+starfield warp) are now addressed.
 
 ## 9. Verification gate (per CLAUDE.md)
 

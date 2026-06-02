@@ -20,13 +20,18 @@
 
 import {
   clamp,
+  contravariantVelocity,
+  metric,
+  orbitalOmegaKerrNewman,
   sanitizeParams,
+  zamoFrame,
 } from "./kn-full-physics.mjs";
 import {
   dopplerBoost,
   estimateEquatorialDiscHit,
   makeCameraRay,
   photonRingSamples,
+  redshiftFactor,
   traceCameraRays,
   tracePhotonRay,
 } from "./ray-tracing.mjs";
@@ -52,6 +57,42 @@ function hashAngle(theta, phi, salt) {
   let h = (u * 73856093) ^ (v * 19349663) ^ (salt * 83492791);
   h = (h ^ (h >>> 13)) >>> 0;
   return (h % 100000) / 100000;
+}
+
+/* The lensed background should be sampled along the direction the ray is HEADING
+ * at its endpoint, not where the ray currently IS. Most of a geodesic's bending
+ * happens near periapsis, which the integration has already captured by the
+ * truncation point (r ~ 40 here), so the endpoint heading captures the bulk of
+ * the deflection and is far closer to the true asymptotic sky direction than the
+ * endpoint POSITION angle (the previous pass used position, which is wrong for
+ * any ray that bent). The small residual bend from the endpoint out to infinity
+ * is dropped — a full asymptotic solve would need elliptic integrals and a vastly
+ * longer affine budget (measured impractical: 10-70 s/build, ~0 rays escaping).
+ * Spin oblateness is ignored (a/r -> 0 at the sky); falls back to the position
+ * angles if the velocity degenerates or the metric is singular near a horizon. */
+function asymptoticSkyDirection(params, state) {
+  const r = state.r;
+  const theta = state.theta;
+  const phi = state.phi;
+  if (!Number.isFinite(r) || !Number.isFinite(theta) || !Number.isFinite(phi)) {
+    return { theta: Math.PI / 2, phi: 0 };
+  }
+  let u;
+  try { u = contravariantVelocity(params, state); } catch (e) { return { theta, phi }; }
+  const ur = u[1];
+  const ut = u[2];
+  const up = u[3];
+  const st = Math.sin(theta);
+  const ct = Math.cos(theta);
+  const sp = Math.sin(phi);
+  const cp = Math.cos(phi);
+  // d/dlambda of the Cartesian position in spherical coords (heading vector).
+  const vx = ur * st * cp + r * ut * ct * cp - r * up * st * sp;
+  const vy = ur * st * sp + r * ut * ct * sp + r * up * st * cp;
+  const vz = ur * ct - r * ut * st;
+  const n = Math.hypot(vx, vy, vz);
+  if (!(n > 1e-9)) return { theta, phi };
+  return { theta: Math.acos(clamp(vz / n, -1, 1)), phi: Math.atan2(vy, vx) };
 }
 
 function starfieldColor(theta, phi) {
@@ -104,6 +145,46 @@ function discShiftApprox(params, hit, camera) {
   return clamp(gDoppler * gGrav, 0.1, 4);
 }
 
+/* ---- exact per-ray disc redshift (PHASE6-LENSING-PLAN.md sec 7) -------- *
+ * The kinematic discShiftApprox above estimates the line-of-sight velocity by a
+ * geometric projection. The exact factor uses the photon's own conserved momenta:
+ * along a Kerr-Newman geodesic Pt and Pphi are constant (the metric is t- and
+ * phi-independent), so the disc-crossing photon carries the SAME Pt/Pphi recorded
+ * on finalState. Both the disc emitter (a circular orbit, u^mu = u^t(1,0,0,omega))
+ * and the camera observer (a ZAMO, eT) have only t/phi components, so the photon's
+ * r/theta momenta drop out of -k.u entirely and the exact g = nu_obs / nu_emit
+ * needs nothing beyond Pt/Pphi. This is also why g is azimuth-invariant (Pphi is
+ * the conserved generator of axial rotation), so the LUT can cache it per pixel.   */
+
+function discFourVelocity(params, r, prograde = true) {
+  const omega = orbitalOmegaKerrNewman(params, r, prograde);
+  if (!Number.isFinite(omega)) return null;
+  let cov;
+  try { cov = metric(params, r, Math.PI / 2).cov; } catch (e) { return null; }
+  const denom = -(cov[0][0] + 2 * omega * cov[0][3] + omega * omega * cov[3][3]);
+  if (!(denom > 0)) return null; // circular orbit not timelike here (inside ISCO/photon region)
+  const ut = 1 / Math.sqrt(denom);
+  return [ut, 0, 0, ut * omega];
+}
+
+function discRedshiftExact(params, hit, camera, trace) {
+  const fs = trace?.result?.finalState;
+  const Pt = fs?.Pt;
+  const Pphi = fs?.Pphi;
+  if (!Number.isFinite(Pt) || !Number.isFinite(Pphi)) return null;
+  const uEmit = discFourVelocity(params, hit.r, true);
+  if (!uEmit) return null;
+  let uObs;
+  try {
+    const theta = clamp(camera.theta ?? Math.PI / 2, 1e-7, Math.PI - 1e-7);
+    uObs = zamoFrame(params, camera.r ?? 24, theta).eT;
+  } catch (e) { return null; }
+  // Only Pt/Pphi enter (the 4-velocities have no r/theta parts), so leave Pr/Ptheta zero.
+  const photonState = { r: hit.r, theta: Math.PI / 2, phi: hit.phi, Pt, Pr: 0, Ptheta: 0, Pphi };
+  const rf = redshiftFactor(params, photonState, { fourVelocity: uEmit }, { fourVelocity: uObs });
+  return Number.isFinite(rf.g) ? clamp(rf.g, 0.05, 8) : null;
+}
+
 function tintFromTemperature(temperature) {
   // Map a rough color temperature into composeFalseColor's [0,1] tint, where
   // higher -> bluer-white, lower -> redder. Muted by design.
@@ -142,7 +223,9 @@ function shadeSample(params, sample, camera, disc, geom, options) {
   // Accretion disc contribution, if a disc is configured and this ray hit it.
   if (disc && sample.discHit && sample.discHit.hit) {
     const hit = sample.discHit;
-    const g = discShiftApprox(params, hit, camera);
+    // Prefer the exact redshift carried on the sample (per-ray conserved Pt/Pphi);
+    // fall back to the kinematic estimate when it could not be computed.
+    const g = Number.isFinite(hit.g) ? hit.g : discShiftApprox(params, hit, camera);
     const rendered = renderDiscHit(params, hit, {
       ...disc,
       redshiftFactor: g,
@@ -191,10 +274,17 @@ function shadeRay(params, trace, camera, disc, geom, options) {
   const discHit = disc
     ? estimateEquatorialDiscHit(trace, { innerR: geom.innerR, outerR: geom.outerR })
     : null;
+  if (discHit && discHit.hit) {
+    const g = discRedshiftExact(params, discHit, camera, trace);
+    if (g != null) discHit.g = g;
+  }
+  // Lensed background sampled along the ray's asymptotic heading (skip for
+  // captured rays, whose endpoint sits at the horizon).
+  const sky = captured ? { theta: fs.theta, phi: fs.phi } : asymptoticSkyDirection(params, fs);
   return shadeSample(params, {
     captured,
-    skyTheta: fs.theta,
-    skyPhi: fs.phi,
+    skyTheta: sky.theta,
+    skyPhi: sky.phi,
     discHit,
     ringGlow: ringGlow(trace, geom.rPhoton),
   }, camera, disc, geom, options);
@@ -328,6 +418,7 @@ export function buildDeflectionLUT(params = {}, camera = {}, options = {}) {
   const discHit = new Uint8Array(n);           // 1 = ray crosses the disc
   const discR = new Float32Array(n);           // disc crossing radius
   const discPhi = new Float32Array(n);         // disc crossing azimuth, relative to camPhi0
+  const discG = new Float32Array(n);           // exact redshift factor at the crossing (azimuth-invariant)
   skyTheta.fill(Math.PI / 2);
 
   for (const trace of traced.traced) {
@@ -341,14 +432,19 @@ export function buildDeflectionLUT(params = {}, camera = {}, options = {}) {
     ringGlowArr[cell] = ringGlow(trace, rPhoton);
     if (captured) continue;
     const fs = trace.result?.finalState ?? {};
-    skyTheta[cell] = Number.isFinite(fs.theta) ? fs.theta : Math.PI / 2;
-    skyPhi[cell] = (Number.isFinite(fs.phi) ? fs.phi : 0) - camPhi0;
+    const sky = asymptoticSkyDirection(p, fs);
+    skyTheta[cell] = sky.theta;
+    skyPhi[cell] = sky.phi - camPhi0;
     if (disc) {
       const hit = estimateEquatorialDiscHit(trace, { innerR: geom.innerR, outerR: geom.outerR });
       if (hit.hit) {
         discHit[cell] = 1;
         discR[cell] = hit.r;
         discPhi[cell] = hit.phi - camPhi0;
+        // Exact redshift is azimuth-invariant, so cache it per pixel; fall back to
+        // the kinematic estimate (also azimuth-invariant) when it cannot be formed.
+        const g = discRedshiftExact(p, hit, camera, trace);
+        discG[cell] = g != null ? g : discShiftApprox(p, hit, camera);
       }
     }
   }
@@ -366,7 +462,7 @@ export function buildDeflectionLUT(params = {}, camera = {}, options = {}) {
     },
     geom,
     hasDisc: !!disc,
-    base: { capture, skyTheta, skyPhi, ringGlow: ringGlowArr, discHit, discR, discPhi },
+    base: { capture, skyTheta, skyPhi, ringGlow: ringGlowArr, discHit, discR, discPhi, discG },
   };
 }
 
@@ -431,20 +527,22 @@ function sampleLUT(b, bw, bh, fx, fy, camPhi, hasDisc) {
     const discFrac = w00 * b.discHit[i00] + w10 * b.discHit[i10] +
       w01 * b.discHit[i01] + w11 * b.discHit[i11];
     if (discFrac >= 0.5) {
-      // Blend the crossing point in Cartesian to dodge azimuth wraparound.
-      let dx = 0, dy = 0, dw = 0;
+      // Blend the crossing point in Cartesian to dodge azimuth wraparound; the
+      // exact redshift g is azimuth-invariant so it blends as a plain scalar.
+      let dx = 0, dy = 0, dg = 0, dw = 0;
       const accDisc = (i, w) => {
         if (!b.discHit[i]) return;
         const r = b.discR[i];
         const ph = b.discPhi[i] + camPhi;
         dx += w * r * Math.cos(ph);
         dy += w * r * Math.sin(ph);
+        dg += w * b.discG[i];
         dw += w;
       };
       accDisc(i00, w00); accDisc(i10, w10); accDisc(i01, w01); accDisc(i11, w11);
       if (dw > 0) {
         dx /= dw; dy /= dw;
-        discHit = { hit: true, r: Math.hypot(dx, dy), phi: Math.atan2(dy, dx) };
+        discHit = { hit: true, r: Math.hypot(dx, dy), phi: Math.atan2(dy, dx), g: dg / dw };
       }
     }
   }
@@ -560,6 +658,7 @@ export function handleLensingWorkerMessage(rawMessage = {}) {
         transfer: [
           b.capture.buffer, b.skyTheta.buffer, b.skyPhi.buffer,
           b.ringGlow.buffer, b.discHit.buffer, b.discR.buffer, b.discPhi.buffer,
+          b.discG.buffer,
         ],
       };
     }

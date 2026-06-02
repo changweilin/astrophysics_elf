@@ -68,6 +68,23 @@ const rotPeak = maxLuminance(rot.buffer, baseW, baseH);
 let skyMoved = 0;
 for (let i = 0; i < lutBase.buffer.length; i++) skyMoved += Math.abs(lutBase.buffer[i] - rot.buffer[i]);
 
+// Exact per-ray disc redshift (sec 7): the LUT caches g per disc-hit pixel. For an
+// inclined disc the approaching side blueshifts (g>1) and the receding side
+// redshifts (g<1), so the range must straddle 1 — proof the factor is per-ray
+// Doppler, not a flat estimate.
+let gMin = Infinity, gMax = -Infinity, gSum = 0, gN = 0;
+for (let i = 0; i < lut.base.discHit.length; i++) {
+  if (!lut.base.discHit[i]) continue;
+  const g = lut.base.discG[i];
+  if (!Number.isFinite(g) || g <= 0) continue;
+  if (g < gMin) gMin = g;
+  if (g > gMax) gMax = g;
+  gSum += g; gN++;
+}
+const discRedshift = gN
+  ? { hits: gN, gMin: +gMin.toFixed(3), gMax: +gMax.toFixed(3), gMean: +(gSum / gN).toFixed(3) }
+  : { hits: 0 };
+
 const RAMP = " .:-=+*#%@";
 function ascii(buf, w, h) {
   const rows = [];
@@ -94,6 +111,7 @@ console.log(JSON.stringify({
     peakLuminance: Number(rotPeak.toFixed(3)),
     skyTotalByteDelta: skyMoved,
   },
+  discRedshift,
   photonRing: lut.photonRing,
   counts: lut.counts,
 }, null, 2));
@@ -108,6 +126,7 @@ if (hiCenter > 0.05) problems.push(`upsampled shadow center not dark (luminance 
 if (hiPeak < 0.25) problems.push(`upsampled photon ring not bright (peak ${hiPeak.toFixed(3)})`);
 if (Math.abs(rotCenter - hiCenter) > 0.05 && rotCenter > 0.05) problems.push("azimuth rotation disturbed the shadow center");
 if (skyMoved === 0) problems.push("azimuth rotation did not move the lensed starfield");
+if (gN && !(gMin < 1 && gMax > 1)) problems.push(`disc redshift range did not straddle g=1 (g in [${gMin.toFixed(3)}, ${gMax.toFixed(3)}]) — Doppler asymmetry missing`);
 if (problems.length) {
   console.error("\nFAIL:\n- " + problems.join("\n- "));
   process.exit(1);
