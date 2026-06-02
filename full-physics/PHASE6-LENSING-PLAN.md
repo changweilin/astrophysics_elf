@@ -203,8 +203,24 @@ and file paths stay ASCII-only.
    buffer length = w*h*4) confirmed against `handleLensingWorkerMessage`. No
    physics/facade/unit module changed, so the P6.1 benchmark result still holds.
    Neither file is referenced by `index.html` yet. *No demo files touched.*
-3. **P6.3 — Panel (desktop).** Add `observer-view.jsx`; wire `index.html` +
-   `app.jsx` (mount + toggle). Confirm in the running app via the `run` skill.
+3. **P6.3 — Panel (desktop). DONE.** Added `observer-view.jsx` (`window.ObserverView`,
+   a draggable panel reusing the FieldScope shell: `field-section`/`fs-canvas`/
+   `microscope-head` classes, `knUseDragMove('observer', ...)`, event-driven blit
+   of `window.KNLensing` frames with no per-frame loop). Wired root files:
+   `index.html` loads `lensing.js` + `observer-view.jsx`; `app.jsx` adds a
+   `LENS`/`透鏡` toggle (`sim.flags.showLensing`) and mounts the panel only when
+   on (opt-in, since ray tracing is heavy). Verified in-browser via Chrome
+   (playwright, channel=chrome): clicking LENS opens the panel, the off-thread
+   renderer produces a progressive coarse(24x24)->fine(72x40) image with a dark
+   shadow center (luminance ~6/255) ringed by a bright photon ring (~138/255),
+   no page/console/render errors. **Performance note:** full GR ray tracing is
+   ~1.4 ms/ray and the shadow needs `targetAffine >= ~30` (shorter budgets stop
+   classifying central plunging rays as captured, erasing the shadow), and the
+   horizon capture test needs the default small `minStep` (raising the step floor
+   erases the shadow). The panel therefore renders at low resolution (72x40) with
+   a fast trace preset and relies on debounce + coarse-then-fine. A deflection-LUT
+   fast path (sec 4.5) remains the route to higher resolution / smooth camera
+   rotation. Toggle defaults off, so there is zero cost until opted in.
 4. **P6.4 — Mobile + i18n.** Wire `mobile-app.jsx`; externalize strings via
    `kn-l10n-translation`.
 5. **P6.5 — Optional Option B overlay.** Add the one-line `render.js` hook and

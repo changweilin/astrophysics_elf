@@ -1,0 +1,185 @@
+/* Observer View — the gravitational-lensing "camera" panel (Phase 6, P6.3).
+ *
+ * A draggable floating window (sibling of FieldScope / TidalMicroscope /
+ * MHDMonitor) that shows what an observer pointed at the Kerr-Newman object
+ * sees: the shadow, the photon ring, a lensed background, and the lensed
+ * accretion disc. It does NOT touch the main top-down canvas.
+ *
+ * Rendering is off-thread and event-driven: it asks window.KNLensing to render
+ * only when (M, Q, a) or the camera changes (the bridge debounces, caches, and
+ * renders coarse-then-fine), then blits the returned ImageData scaled into the
+ * panel canvas. There is no per-frame animation loop — a static lensed image is
+ * correct between parameter changes, which keeps the 60 fps main loop free.
+ *
+ * Muted by design (user preference): the renderer already keeps the disc and
+ * ring gentle; here we only upscale and annotate.
+ */
+
+function ObserverView({ sim }) {
+  const [collapsed, setCollapsed] = React.useState(false);
+  const [inclIdx, setInclIdx] = React.useState(2);
+  const [discOn, setDiscOn] = React.useState(true);
+  const canvasRef = React.useRef(null);
+  const offRef = React.useRef(null);              // offscreen buffer for scaling
+  const stateRef = React.useRef({ key: null, result: null, pending: false });
+  const drag = knUseDragMove('observer', { x: 14, y: 300 });
+
+  // Inclination presets (degrees from the spin pole). 90 deg is edge-on.
+  const INCL = [20, 40, 60, 80];
+  const thetaDeg = INCL[inclIdx];
+  const cycleIncl = () => setInclIdx((inclIdx + 1) % INCL.length);
+
+  // Render target resolution (independent of the on-screen panel size; the
+  // image is upscaled on blit). Full GR ray tracing is ~1.4 ms/ray, so this is
+  // kept small and the bridge renders coarse-then-fine; a static lensed image is
+  // correct between parameter changes. Heavier presets can come from a later
+  // deflection-LUT fast path (see PHASE6-LENSING-PLAN.md sec 4).
+  const RW = 72;
+  const RH = 40;
+  // Fast trace tuning for interactive use. targetAffine must stay >= ~30 or the
+  // central plunging rays never reach the horizon and the shadow disappears;
+  // minStep is left at the integrator default so horizon capture still resolves.
+  const TRACE = {
+    targetAffine: 30,
+    escapeRadius: 48,
+    maxStep: 0.45,
+    absoluteTolerance: 1e-5,
+    relativeTolerance: 1e-5,
+    recordEvery: 12,
+  };
+
+  React.useEffect(() => { drag.reclamp(); }, [collapsed]);
+
+  const blit = React.useCallback(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = c.clientWidth, cssH = c.clientHeight;
+    if (cssW < 2 || cssH < 2) return;
+    if (c.width !== cssW * dpr || c.height !== cssH * dpr) { c.width = cssW * dpr; c.height = cssH * dpr; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = 'oklch(0.04 0.005 255)';
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    const st = stateRef.current;
+    const res = st.result;
+    if (res && res.imageData) {
+      let off = offRef.current;
+      if (!off) { off = document.createElement('canvas'); offRef.current = off; }
+      if (off.width !== res.imageData.width || off.height !== res.imageData.height) {
+        off.width = res.imageData.width; off.height = res.imageData.height;
+      }
+      off.getContext('2d').putImageData(res.imageData, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(off, 0, 0, cssW, cssH);
+
+      // Read-outs: inclination, shadow fraction, photon-ring angular diameter.
+      const counts = res.counts || {};
+      const total = (counts.captured || 0) + (counts.active || 0) +
+        (counts.escaped || 0) + (counts['integration-failed'] || 0);
+      const shadowPct = total ? Math.round((counts.captured || 0) / total * 100) : 0;
+      const ringDeg = res.photonRing ? (res.photonRing.angularDiameter * 180 / Math.PI) : 0;
+      ctx.fillStyle = 'oklch(0.72 0.012 255 / 0.9)';
+      ctx.font = '8px JetBrains Mono, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`i ${thetaDeg}°  ${tr('shadow', '陰影')} ${shadowPct}%  ${tr('ring', '環')} Ø ${ringDeg.toFixed(0)}°`, 6, cssH - 6);
+    } else {
+      ctx.fillStyle = 'oklch(0.46 0.014 255)';
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(window.KNLensing ? tr('rendering…', '算繪中…') : tr('lensing engine offline', '透鏡引擎離線'), cssW / 2, cssH / 2);
+      ctx.textAlign = 'left';
+    }
+    if (st.pending && res) {
+      ctx.fillStyle = 'oklch(0.80 0.16 75 / 0.9)';
+      ctx.font = '8px JetBrains Mono, monospace';
+      ctx.fillText(tr('rendering…', '算繪中…'), 6, 12);
+    }
+  }, [thetaDeg]);
+
+  React.useEffect(() => {
+    if (collapsed) return undefined;
+    const KNL = window.KNLensing;
+    blit(); // paint placeholder / last frame immediately
+    if (!KNL) return undefined;
+
+    const camera = { r: 26, theta: thetaDeg * Math.PI / 180, phi: 0, fovY: Math.PI / 2.5 };
+    const disc = discOn ? { accretionRate: 0.08, outerR: 18, exposure: 150 } : null;
+
+    const makeKey = () => {
+      const p = sim.params;
+      return [p.M, p.Q, p.a, thetaDeg, discOn ? 1 : 0]
+        .map((x) => (Number(x) || 0).toFixed(3)).join(',');
+    };
+    const maybeRequest = () => {
+      const k = makeKey();
+      if (k === stateRef.current.key) return;
+      stateRef.current.key = k;
+      stateRef.current.pending = true;
+      KNL.syncParams(sim.params);
+      KNL.requestRender({
+        params: { ...sim.params },
+        camera,
+        options: { width: RW, height: RH, disc, ...TRACE },
+        progressive: true,
+      });
+      blit(); // show the "rendering" hint over the previous frame
+    };
+
+    const onFrame = (result, final) => {
+      stateRef.current.result = result;
+      if (final) stateRef.current.pending = false;
+      blit();
+    };
+    KNL.setOnFrame(onFrame);
+    maybeRequest();
+    const iv = setInterval(maybeRequest, 250);
+    return () => {
+      clearInterval(iv);
+      if (KNL.onFrame === onFrame) KNL.setOnFrame(null);
+    };
+  }, [collapsed, inclIdx, discOn, blit]);
+
+  return (
+    <div ref={drag.rootRef}
+         className={`field-section kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''}`}
+         style={drag.style}>
+      <div className="microscope-head fs-head" onPointerDown={drag.onHeadDown}>
+        <div className="mh-left">
+          <span className="mh-chev"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
+          <span className="mh-title">{tr('OBSERVER VIEW', '觀測者視角')}</span>
+        </div>
+        <div className="mh-right">
+          <span className="mh-switch" onPointerDown={(e) => e.stopPropagation()}>
+            <button className="on" onClick={cycleIncl}
+                    title={tr('click to change inclination', '單擊切換傾角')}>
+              <span className="mh-name">{`i ${thetaDeg}°`}</span> ⟳
+            </button>
+          </span>
+        </div>
+      </div>
+      {!collapsed && (
+        <React.Fragment>
+          <div className="fs-body">
+            <canvas ref={canvasRef} className="fs-canvas" />
+          </div>
+          <div className="view-toggles" style={{ borderTop: '1px solid var(--line)' }}>
+            <button className={discOn ? 'on' : ''} onClick={() => setDiscOn(!discOn)}
+                    title={tr('toggle accretion disc', '切換吸積盤')}>
+              {tr('DISC', '吸積盤')}
+            </button>
+            <button onClick={cycleIncl}
+                    title={tr('cycle inclination', '循環傾角')}>
+              {tr('TILT', '傾角')}
+            </button>
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+window.ObserverView = ObserverView;

@@ -62,6 +62,9 @@
 <script src="config.js"></script>
 <script src="disc.js"></script>
 <script type="module" src="full-physics-bridge.mjs"></script>
+<!-- Off-thread gravitational-lensing renderer bridge (defines window.KNLensing;
+     owns a module Web Worker over full-physics/lensing-worker.mjs). -->
+<script src="lensing.js"></script>
 
 <!-- Shared UI helpers (plain JS; use the React / KNSim globals at call time) -->
 <script src="drag-move.js"></script>
@@ -74,6 +77,7 @@
 <script type="text/babel" src="tidal-scope.jsx"></script>
 <script type="text/babel" src="mhd-monitor.jsx"></script>
 <script type="text/babel" src="field-profile.jsx"></script>
+<script type="text/babel" src="observer-view.jsx"></script>
 <script type="text/babel" src="app.jsx"></script>
 
 <!-- Mobile UI (defines window.MobileApp) -->

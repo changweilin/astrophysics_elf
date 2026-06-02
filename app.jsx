@@ -516,6 +516,7 @@ function App() {
             <ToggleBtn label={tr('PHOTON', '光子')}   k="showPhoton" sim={SIM} force={force} />
             <ToggleBtn label={tr('DRAG', '拖曳')}     k="showDragField" sim={SIM} force={force} />
             <ToggleBtn label={tr('GW', '重力波')}     k="showGW" sim={SIM} force={force} />
+            <ToggleBtn label={tr('LENS', '透鏡')}     k="showLensing" sim={SIM} force={force} />
             <ToggleBtn label={tr('TRAILS', '軌跡')}   k="showOrbits" sim={SIM} force={force} />
             <ToggleBtn label={tr('TIDAL', '潮汐')}    k="showTidal" sim={SIM} force={force} />
             <ToggleBtn label={tr('LABELS', '標籤')}   k="showLabels" sim={SIM} force={force} />
@@ -533,6 +534,11 @@ function App() {
             the primary/companion gravity field and the GW slice. Clamped to the
             viewport so it can never be dragged off-screen. */}
         <FieldScope sim={SIM} />
+
+        {/* Draggable gravitational-lensing observer view (opt-in via the LENS
+            toggle, since ray tracing is heavier than the other scopes). Renders
+            off-thread through window.KNLensing; does not touch the main canvas. */}
+        {SIM.flags.showLensing && <ObserverView sim={SIM} force={force} />}
       </div>
 
       <RightPanel sim={SIM} force={force} />
