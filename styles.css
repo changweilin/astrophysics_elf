@@ -1451,7 +1451,12 @@ html, body {
 /* Header is the drag handle (chevron + switch stop the drag); show a grab
    cursor instead of the microscope head's pointer. */
 .field-section .microscope-head { cursor: grab; }
-.field-section .microscope-head:active { cursor: grabbing; }
+.field-section.is-dragging .microscope-head { cursor: grabbing; }
+/* Gentle armed-drag highlight (muted, not glary). */
+.field-section.is-dragging {
+  box-shadow: 0 14px 34px -10px oklch(0 0 0 / 0.6),
+              0 0 0 1px oklch(0.62 0.10 75 / 0.5);
+}
 .field-section.is-collapsed .microscope-head { border-bottom: none; }
 /* Canvas pane. NB: the global `.viewport canvas` rule (for the main sim canvas)
    is more specific than a bare `.fs-canvas` and would force this panel canvas to

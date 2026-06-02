@@ -183,9 +183,11 @@ function FieldScope({ sim }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [pos, setPos] = React.useState({ x: 14, y: 70 });
   const [tab, setTab] = React.useState('primary');
+  const [dragging, setDragging] = React.useState(false);
   const rootRef = React.useRef(null);
   const canvasRef = React.useRef(null);
   const grab = React.useRef(null);
+  const holdTimer = React.useRef(null);
 
   const hasBin = !!(sim.binary && sim.binary.enabled);
   // Available views (companion only exists in binary mode), cycled by a single
@@ -218,26 +220,50 @@ function FieldScope({ sim }) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // Move the window by long-pressing the top row (≈300ms, same feel as the
+  // body reposition gesture), then dragging. Until the hold arms, pointer moves
+  // are ignored (and a wander cancels the hold) so a quick click on the row never
+  // nudges the window — the switch/collapse single-clicks stay clean. The chevron
+  // and switch stop propagation, so this only fires on the bar's empty area.
   function onHeadDown(e) {
     if (e.button !== 0) return;
     const el = rootRef.current;
+    if (!el || !el.parentElement) return;
     const pr = el.parentElement.getBoundingClientRect();
-    grab.current = { dx: e.clientX - pr.left - pos.x, dy: e.clientY - pr.top - pos.y };
-    const onMove = (ev) => {
-      if (!grab.current) return;
-      const pr2 = el.parentElement.getBoundingClientRect();
-      setPos(clamp(ev.clientX - pr2.left - grab.current.dx,
-                   ev.clientY - pr2.top  - grab.current.dy));
-    };
-    const onUp = () => {
+    grab.current = { dx: e.clientX - pr.left - pos.x, dy: e.clientY - pr.top - pos.y,
+                     sx: e.clientX, sy: e.clientY, armed: false };
+
+    const cancel = () => {
+      if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null; }
       grab.current = null;
+      setDragging(false);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
+    const onMove = (ev) => {
+      const g = grab.current;
+      if (!g) return;
+      if (!g.armed) {
+        // Wandering before the hold arms → treat as a mis-press, drop the gesture.
+        if (Math.hypot(ev.clientX - g.sx, ev.clientY - g.sy) > 8) cancel();
+        return;
+      }
+      const pr2 = el.parentElement.getBoundingClientRect();
+      setPos(clamp(ev.clientX - pr2.left - g.dx, ev.clientY - pr2.top - g.dy));
+    };
+    const onUp = () => cancel();
+
+    holdTimer.current = setTimeout(() => {
+      if (grab.current) { grab.current.armed = true; setDragging(true); }
+    }, 300);
+
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     e.preventDefault();
   }
+
+  // Clear any pending hold if the window unmounts mid-gesture.
+  React.useEffect(() => () => { if (holdTimer.current) clearTimeout(holdTimer.current); }, []);
 
   React.useEffect(() => {
     if (collapsed) return;
@@ -259,7 +285,7 @@ function FieldScope({ sim }) {
 
   return (
     <div ref={rootRef}
-         className={`field-section ${collapsed ? 'is-collapsed' : ''}`}
+         className={`field-section ${collapsed ? 'is-collapsed' : ''} ${dragging ? 'is-dragging' : ''}`}
          style={{ left: pos.x + 'px', top: pos.y + 'px' }}>
       {/* Top row — same format as the MHD monitor header: chevron + title on the
           left, view switch on the right. Single click on the switch cycles to
