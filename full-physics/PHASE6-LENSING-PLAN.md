@@ -221,8 +221,18 @@ and file paths stay ASCII-only.
    a fast trace preset and relies on debounce + coarse-then-fine. A deflection-LUT
    fast path (sec 4.5) remains the route to higher resolution / smooth camera
    rotation. Toggle defaults off, so there is zero cost until opted in.
-4. **P6.4 — Mobile + i18n.** Wire `mobile-app.jsx`; externalize strings via
-   `kn-l10n-translation`.
+4. **P6.4 — Mobile + i18n. DONE.** Added a `lensing` target to the mobile
+   PROFILE cycler in `mobile-app.jsx`: unlike the synchronous scopes it requests
+   an off-thread render from `window.KNLensing` only when (M, Q, a) changes and
+   blits the latest cached frame each tick, so cost is paid only while that
+   target is open (no extra toggle/flag needed). Externalized the new UI strings
+   in `i18n-dict.js` with full ja/ko/de/fr/es/it coverage (`LENS`, `OBSERVER
+   VIEW`, `LENSING`, `TILT`, `shadow`, `ring`, `rendering…`, `lensing engine
+   offline`, and the three tooltips); `DISC` reused an existing entry. Verified
+   in mobile emulation (390x844, touch): cycling to 重力透鏡 opens the stage and
+   renders the shadow+ring (center luminance ~6/255, peak ~150/255), no page or
+   console errors. Known cosmetic limit: at the large mobile stage the 64x40
+   render upscales blocky — the deflection-LUT path (sec 4.5) is the real fix.
 5. **P6.5 — Optional Option B overlay.** Add the one-line `render.js` hook and
    the equatorial bent-ray overlay, behind its own toggle.
 

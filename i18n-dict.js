@@ -45,9 +45,22 @@ window.KN_L10N = {
   "PHOTON": { ja: "光子", ko: "광자", de: "PHOTON", fr: "PHOTON", es: "FOTÓN", it: "FOTONE" },
   "DRAG": { ja: "引きずり", ko: "끌림", de: "MITFÜHRUNG", fr: "ENTRAÎNEMENT", es: "ARRASTRE", it: "TRASCINAM." },
   "GW": { ja: "重力波", ko: "중력파", de: "GW", fr: "OG", es: "OG", it: "OG" },
+  "LENS": { ja: "レンズ", ko: "렌즈", de: "LINSE", fr: "LENTILLE", es: "LENTE", it: "LENTE" },
   "TRAILS": { ja: "軌跡", ko: "궤적", de: "SPUREN", fr: "TRACES", es: "ESTELAS", it: "SCIE" },
   "TIDAL": { ja: "潮汐", ko: "조석", de: "GEZEITEN", fr: "MARÉE", es: "MAREA", it: "MAREA" },
   "LABELS": { ja: "ラベル", ko: "라벨", de: "LABELS", fr: "ÉTIQUETTES", es: "ETIQUETAS", it: "ETICHETTE" },
+
+  // ── Observer view: gravitational-lensing panel ─────────────
+  "OBSERVER VIEW": { ja: "観測者視点", ko: "관측자 시점", de: "BEOBACHTERSICHT", fr: "VUE OBSERVATEUR", es: "VISTA DEL OBSERVADOR", it: "VISTA OSSERVATORE" },
+  "LENSING": { ja: "重力レンズ", ko: "중력 렌즈", de: "GRAV.-LINSE", fr: "LENTILLE GRAV.", es: "LENTE GRAV.", it: "LENTE GRAV." },
+  "TILT": { ja: "傾き", ko: "기울기", de: "NEIGUNG", fr: "INCLIN.", es: "INCLIN.", it: "INCLIN." },
+  "shadow": { ja: "影", ko: "그림자", de: "Schatten", fr: "ombre", es: "sombra", it: "ombra" },
+  "ring": { ja: "リング", ko: "링", de: "Ring", fr: "anneau", es: "anillo", it: "anello" },
+  "rendering…": { ja: "レンダリング中…", ko: "렌더링 중…", de: "Rendern…", fr: "rendu…", es: "renderizando…", it: "rendering…" },
+  "lensing engine offline": { ja: "レンズエンジン オフライン", ko: "렌즈 엔진 오프라인", de: "Linsen-Engine offline", fr: "moteur de lentille hors ligne", es: "motor de lente desconectado", it: "motore di lente offline" },
+  "click to change inclination": { ja: "クリックで傾斜角を変更", ko: "클릭하여 경사각 변경", de: "Klicken, um die Neigung zu ändern", fr: "cliquer pour changer l'inclinaison", es: "clic para cambiar la inclinación", it: "clic per cambiare l'inclinazione" },
+  "toggle accretion disc": { ja: "降着円盤の表示を切替", ko: "강착 원반 전환", de: "Akkretionsscheibe umschalten", fr: "activer/désactiver le disque d'accrétion", es: "alternar disco de acreción", it: "attiva/disattiva disco di accrescimento" },
+  "cycle inclination": { ja: "傾斜角を順に切替", ko: "경사각 순환", de: "Neigung durchschalten", fr: "faire défiler l'inclinaison", es: "ciclar inclinación", it: "scorri inclinazione" },
 
   // ── Body editor: type tabs, params, scale labels ───────────
   "Black Hole": { ja: "ブラックホール", ko: "블랙홀", de: "Schwarzes Loch", fr: "Trou noir", es: "Agujero negro", it: "Buco nero" },

@@ -744,6 +744,8 @@ function MViewControls({ sim, force }) {
   const [profOpen, setProfOpen] = useStateApp(false);
   const [profKey, setProfKey] = useStateApp(null);
   const canvasRef = useRefApp(null);
+  const lensRef = useRefApp({ key: null, result: null, pending: false }); // latest off-thread lensing frame
+  const lensOffRef = useRefApp(null);                                     // offscreen buffer for scaling
   const hasBin = !!(sim.binary && sim.binary.enabled);
 
   // ── Reference frame ──
@@ -779,6 +781,10 @@ function MViewControls({ sim, force }) {
   }
   targets.push({ key: 'field:gw', kind: 'field', fieldKind: 'gw',
                  label: tr('GW SLICE', '重力波剖面') });
+  // Gravitational-lensing observer view shares the cycler. It renders off-thread
+  // via window.KNLensing, so the cost is only paid while this target is active.
+  targets.push({ key: 'lensing', kind: 'lensing',
+                 label: tr('LENSING', '重力透鏡') });
   let tidx = targets.findIndex((t) => t.key === profKey);
   if (tidx < 0) tidx = 0;
   const cur = targets[tidx] || null;
@@ -798,18 +804,86 @@ function MViewControls({ sim, force }) {
     if (!c) return;
     const ctx = c.getContext('2d');
     let raf;
+
+    // ── Lensing target: off-thread render + cached-frame blit ──
+    // Unlike the synchronous scopes, the lensed image is produced asynchronously
+    // by window.KNLensing. We request a render only when (M, Q, a) changes and
+    // blit the latest cached frame each tick (cheap key compare per frame).
+    const isLens = cur.kind === 'lensing';
+    const KNL = isLens ? window.KNLensing : null;
+    const lensCamera = { r: 26, theta: Math.PI / 2 + 0.35, phi: 0, fovY: Math.PI / 2.5 };
+    const lensOpts = {
+      width: 64, height: 40,
+      disc: { accretionRate: 0.08, outerR: 18, exposure: 150 },
+      targetAffine: 30, escapeRadius: 48, maxStep: 0.45,
+      absoluteTolerance: 1e-5, relativeTolerance: 1e-5, recordEvery: 12,
+    };
+    let onFrame = null;
+    if (KNL) {
+      lensRef.current.key = null; // force a request on (re)entry
+      onFrame = (result, final) => {
+        lensRef.current.result = result;
+        if (final) lensRef.current.pending = false;
+      };
+      KNL.setOnFrame(onFrame);
+    }
+    function maybeRequestLens() {
+      if (!KNL) return;
+      const p = sim.params;
+      const k = [p.M, p.Q, p.a].map((x) => (Number(x) || 0).toFixed(3)).join(',');
+      if (k === lensRef.current.key) return;
+      lensRef.current.key = k;
+      lensRef.current.pending = true;
+      KNL.syncParams(p);
+      KNL.requestRender({ params: { ...p }, camera: lensCamera, options: lensOpts, progressive: true });
+    }
+    function blitLens(w, h) {
+      ctx.fillStyle = 'oklch(0.04 0.005 255)';
+      ctx.fillRect(0, 0, w, h);
+      const res = lensRef.current.result;
+      if (res && res.imageData) {
+        let off = lensOffRef.current;
+        if (!off) { off = document.createElement('canvas'); lensOffRef.current = off; }
+        if (off.width !== res.imageData.width || off.height !== res.imageData.height) {
+          off.width = res.imageData.width; off.height = res.imageData.height;
+        }
+        off.getContext('2d').putImageData(res.imageData, 0, 0);
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(off, 0, 0, w, h);
+        const counts = res.counts || {};
+        const total = (counts.captured || 0) + (counts.active || 0) +
+          (counts.escaped || 0) + (counts['integration-failed'] || 0);
+        const shadowPct = total ? Math.round((counts.captured || 0) / total * 100) : 0;
+        const ringDeg = res.photonRing ? (res.photonRing.angularDiameter * 180 / Math.PI) : 0;
+        ctx.fillStyle = 'oklch(0.72 0.012 255 / 0.9)';
+        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${tr('shadow', '陰影')} ${shadowPct}%  ${tr('ring', '環')} Ø ${ringDeg.toFixed(0)}°`, 8, h - 8);
+      } else {
+        ctx.fillStyle = 'oklch(0.46 0.014 255)';
+        ctx.font = '12px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(KNL ? tr('rendering…', '算繪中…') : tr('lensing engine offline', '透鏡引擎離線'), w / 2, h / 2);
+        ctx.textAlign = 'left';
+      }
+    }
+
     function tick() {
       const dpr = window.devicePixelRatio || 1;
       const w = c.clientWidth, h = c.clientHeight;
       if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (cur.kind === 'body') renderMicroscope(ctx, w, h, cur.body, sim);
+      if (isLens) { maybeRequestLens(); blitLens(w, h); }
+      else if (cur.kind === 'body') renderMicroscope(ctx, w, h, cur.body, sim);
       else if (cur.kind === 'field') renderFieldSection(ctx, w, h, cur.fieldKind, sim);
       else renderMHDSide(ctx, w, h, sim, mhdView(sim, cur.which));
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (onFrame && KNL && KNL.onFrame === onFrame) KNL.setOnFrame(null);
+    };
   }, [profOpen, cur ? cur.key : null]);
 
   const tlabel = cur ? cur.label : tr('— no target —', '— 無目標 —');
