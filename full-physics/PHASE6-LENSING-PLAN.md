@@ -282,17 +282,19 @@ interpolated on shade; `shadeSample` falls back to the kinematic estimate inside
 the ISCO. Verified: disc g straddles 1 (true Doppler beaming), LUT base shade
 still matches the direct render byte-for-byte, benchmarks 26/26, muted in-browser.
 
-**Starfield warp (P6.1 note): IMPROVED.** The literal fix (longer affine budget
-so rays escape) was measured impractical (10-70 s/build at 72x40, ~0 rays
-escaping). Instead the lensed background is now sampled along the ray's
-`asymptoticSkyDirection` (the velocity HEADING at the endpoint) rather than the
-endpoint position angle: most bending happens near periapsis, already integrated
-by the truncation point, so the heading captures the bulk of the deflection.
-Only the small endpoint->infinity residual bend is dropped; the fully-exact
-asymptotic (elliptic integrals from conserved E/Lz/Carter) is deferred as
-disproportionate for a faint decorative starfield. Verified: all sky samples
-finite, LUT base shade still matches the direct render byte-for-byte, benchmarks
-26/26, coherent in-browser.
+**Starfield warp (P6.1 note): DONE (validated near-exact).** The literal fix
+(longer affine budget so rays escape) was measured impractical (10-70 s/build at
+72x40, ~0 rays escaping). Instead the lensed background is sampled along the
+ray's `asymptoticSkyDirection` (the velocity HEADING at the endpoint) rather than
+the endpoint position angle: most bending happens near periapsis (a few M), so by
+the truncation radius (~40) the photon is already on its near-straight asymptote
+and its tangent IS the sky direction. Validated by `run-lensing-sky-sample.mjs`
+against rays integrated to r~4000: the heading reproduces the asymptotic
+direction to <=0.16 deg (max over 37 rays) vs ~24 deg for the raw position angle.
+A 1/r analytic tail correction was tried and measured ~10x worse than the
+heading, so it was rejected; the elliptic-integral asymptotic is therefore
+unnecessary. Verified: LUT base shade still matches the direct render
+byte-for-byte, benchmarks 26/26, coherent in-browser.
 
 All three follow-ups from the Phase 6 note (deflection LUT, exact disc redshift,
 starfield warp) are now addressed.

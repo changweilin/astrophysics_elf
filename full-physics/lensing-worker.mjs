@@ -59,18 +59,19 @@ function hashAngle(theta, phi, salt) {
   return (h % 100000) / 100000;
 }
 
-/* The lensed background should be sampled along the direction the ray is HEADING
- * at its endpoint, not where the ray currently IS. Most of a geodesic's bending
- * happens near periapsis, which the integration has already captured by the
- * truncation point (r ~ 40 here), so the endpoint heading captures the bulk of
- * the deflection and is far closer to the true asymptotic sky direction than the
- * endpoint POSITION angle (the previous pass used position, which is wrong for
- * any ray that bent). The small residual bend from the endpoint out to infinity
- * is dropped — a full asymptotic solve would need elliptic integrals and a vastly
- * longer affine budget (measured impractical: 10-70 s/build, ~0 rays escaping).
- * Spin oblateness is ignored (a/r -> 0 at the sky); falls back to the position
- * angles if the velocity degenerates or the metric is singular near a horizon. */
-function asymptoticSkyDirection(params, state) {
+/* The lensed background is sampled along the direction the ray is HEADING at its
+ * endpoint, not where the ray currently IS. Most of a geodesic's bending happens
+ * near periapsis (a few M), so by the truncation point (r ~ 40) the photon is
+ * already on its near-straight asymptote and the endpoint TANGENT is the true
+ * sky direction. Validated against rays integrated to r ~ 4000
+ * (run-lensing-sky-sample.mjs): the heading reproduces the asymptotic direction
+ * to ~0.002 rad (~0.1 deg), vs ~0.2-0.4 rad for the endpoint POSITION angle the
+ * first pass used. (A 1/r analytic tail correction and a brute-force longer
+ * affine budget were both tried and are worse / impractical respectively, so the
+ * heading is kept.) Spin oblateness is ignored (a/r -> 0 at the sky); falls back
+ * to the position angles if the velocity degenerates or the metric is singular
+ * near a horizon. */
+export function asymptoticSkyDirection(params, state) {
   const r = state.r;
   const theta = state.theta;
   const phi = state.phi;
