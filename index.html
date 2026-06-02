@@ -54,9 +54,12 @@
 <script src="i18n.js"></script>
 <script src="i18n-dict.js"></script>
 
-<!-- Shared simulation engine -->
+<!-- Shared simulation engine. sim.js defines window.KNSim (core + transforms);
+     render.js and config.js augment it and must load after sim.js. -->
 <script src="physics.js"></script>
 <script src="sim.js"></script>
+<script src="render.js"></script>
+<script src="config.js"></script>
 <script src="disc.js"></script>
 <script type="module" src="full-physics-bridge.mjs"></script>
 
