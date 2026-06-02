@@ -38,7 +38,7 @@ function MHDMonitor({ sim, force }) {
   // Fall back to the primary if the companion's MHD was switched off.
   const active = (which === 'companion' && companionMHD) ? 'companion' : 'primary';
   const canvasRef = React.useRef(null);
-  const drag = knUseDragMove();   // long-press drag-to-move (keeps CSS spot until moved)
+  const drag = knUseDragMove('mhd');   // long-press drag-to-move (persisted; CSS spot until moved)
   React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
   React.useEffect(() => {

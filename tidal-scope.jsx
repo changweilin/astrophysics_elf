@@ -8,7 +8,7 @@ function TidalMicroscope({ sim, force }) {
   const [pinnedId, setPinnedId] = React.useState(null);
   const canvasRef = React.useRef(null);
   const phys = window.KNphysics;
-  const drag = knUseDragMove();   // long-press drag-to-move (keeps CSS spot until moved)
+  const drag = knUseDragMove('tidal');   // long-press drag-to-move (persisted; CSS spot until moved)
   React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
   // Track selected, but remember the most-recently-disrupted body for a few

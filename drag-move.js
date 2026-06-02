@@ -7,24 +7,44 @@
  * handle's own controls (collapse chevron / view switch) and never nudges the
  * window. Matches the body-reposition gesture used in the main canvas.
  *
+ * Overlap: pressing anywhere inside a window raises it above the others (a
+ * running z-index counter), so the window you grab comes to the front and only
+ * that (topmost) window moves — overlapping windows never move together.
+ *
+ * Persistence: each window's position is keyed by `id` and saved to
+ * localStorage, so it reopens where it was left after a reload.
+ *
  * Usage in a component:
- *   const drag = knUseDragMove(initial);          // initial {x,y} optional
+ *   const drag = knUseDragMove('tidal', initial);   // id required; initial {x,y} optional
  *   <div ref={drag.rootRef} style={drag.style}
  *        className={`... kn-draggable ${drag.dragging ? 'is-dragging' : ''}`}>
  *     <div className="...-head" onPointerDown={drag.onHeadDown}> ... </div>
  *   </div>
  * Call drag.reclamp() when the window's size changes (e.g. collapse toggles).
  *
- * If `initial` is omitted the window keeps its CSS position until first dragged
- * (no inline left/top is emitted), so right-anchored windows stay right-anchored
- * until the user moves them.
+ * If `initial` is omitted (and nothing was saved) the window keeps its CSS
+ * position until first dragged, so right-anchored windows stay right-anchored.
  */
-function knUseDragMove(initial) {
+var knTopZ = 10;                       // running stack order for raised windows
+function knNextZ() { knTopZ += 1; return knTopZ; }
+
+function knReadWinPos(id) {
+  try {
+    var s = window.localStorage.getItem('knwin:' + id);
+    if (!s) return null;
+    var p = JSON.parse(s);
+    return (p && typeof p.x === 'number' && typeof p.y === 'number') ? p : null;
+  } catch (e) { return null; }
+}
+
+function knUseDragMove(id, initial) {
   var React = window.React;
-  var posState = React.useState(initial || null);
+  var posState = React.useState(function () { return knReadWinPos(id) || initial || null; });
   var pos = posState[0], setPos = posState[1];
   var dragState = React.useState(false);
   var dragging = dragState[0], setDragging = dragState[1];
+  var zState = React.useState(null);
+  var z = zState[0], setZ = zState[1];
   var rootRef = React.useRef(null);
   var grab = React.useRef(null);
   var holdTimer = React.useRef(null);
@@ -41,7 +61,7 @@ function knUseDragMove(initial) {
   }
   function reclamp() { setPos(function (p) { return p ? clamp(p.x, p.y) : p; }); }
 
-  // Clamp an explicit initial position on mount; no-op while CSS-positioned.
+  // Clamp an explicit/saved initial position on mount; no-op while CSS-positioned.
   React.useLayoutEffect(function () { reclamp(); }, []);
   // Keep inside the viewport when it resizes (only once the window owns a pos).
   React.useEffect(function () {
@@ -51,6 +71,20 @@ function knUseDragMove(initial) {
   // Drop any pending hold if the window unmounts mid-gesture.
   React.useEffect(function () {
     return function () { if (holdTimer.current) clearTimeout(holdTimer.current); };
+  }, []);
+  // Persist the position (per id) whenever it settles to a real value.
+  React.useEffect(function () {
+    if (!pos) return;
+    try { window.localStorage.setItem('knwin:' + id, JSON.stringify(pos)); } catch (e) {}
+  }, [id, pos]);
+  // Raise above the other windows on any press inside (so the grabbed window
+  // comes to the front and the topmost is always the one you interact with).
+  React.useEffect(function () {
+    var el = rootRef.current;
+    if (!el) return;
+    var onDown = function () { setZ(knNextZ()); };
+    el.addEventListener('pointerdown', onDown);
+    return function () { el.removeEventListener('pointerdown', onDown); };
   }, []);
 
   function onHeadDown(e) {
@@ -96,9 +130,12 @@ function knUseDragMove(initial) {
     e.preventDefault();
   }
 
-  var style = pos
-    ? { left: pos.x + 'px', top: pos.y + 'px', right: 'auto', bottom: 'auto' }
-    : undefined;
+  var style;
+  if (pos || z != null) {
+    style = {};
+    if (pos) { style.left = pos.x + 'px'; style.top = pos.y + 'px'; style.right = 'auto'; style.bottom = 'auto'; }
+    if (z != null) style.zIndex = z;
+  }
   return { rootRef: rootRef, dragging: dragging, onHeadDown: onHeadDown, reclamp: reclamp, style: style };
 }
 window.knUseDragMove = knUseDragMove;

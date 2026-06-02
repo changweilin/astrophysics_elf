@@ -183,7 +183,7 @@ function FieldScope({ sim }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const [tab, setTab] = React.useState('primary');
   const canvasRef = React.useRef(null);
-  const drag = knUseDragMove({ x: 14, y: 70 });   // shared long-press drag-to-move
+  const drag = knUseDragMove('field', { x: 14, y: 70 });   // long-press drag-to-move (persisted)
 
   const hasBin = !!(sim.binary && sim.binary.enabled);
   // Available views (companion only exists in binary mode), cycled by a single
