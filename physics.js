@@ -153,7 +153,8 @@
           ax += Bg * vy;
           ay += -Bg * vx;
         }
-        // Coulomb on charged probe from primary
+        // Coulomb on charged probe from primary (0.5 = visual-coupling scale, see
+        // single-BH path below)
         if (Math.abs(Q) > 1e-6 && Math.abs(bodyCharge) > 1e-6) {
           const coul = (Q * bodyCharge) * inv1 * 0.5;
           ax += coul * d1x;
@@ -212,7 +213,10 @@
       ay += -Bg * vx;
     }
 
-    // Coulomb (charged BH on charged probe)
+    // Coulomb (charged BH on charged probe). The 0.5 is a visual-coupling scale,
+    // NOT a physical constant: in G=c=1 units Q and the probe charge are visual
+    // knobs, and 0.5 keeps the electrostatic push/pull comparable to gravity over
+    // the same r-range rather than swamping or vanishing against it.
     if (Math.abs(Q) > 1e-6 && Math.abs(bodyCharge) > 1e-6) {
       const coul = (Q * bodyCharge) * inv_r3 * 0.5;
       ax += coul * px;

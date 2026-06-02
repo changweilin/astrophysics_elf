@@ -312,6 +312,13 @@
   function integrate(sim, dt) {
     const { M, Q, a } = sim.params;
     const bin = sim.binary || null;
+    // Frame-invariant geometry — identical for every body this frame, so resolve
+    // it once here instead of recomputing inside the per-body loop.
+    const cType = sim.params.type || 'bh';
+    const { rplus, naked } = phys.horizons(M, Q, a);
+    const binOn = !!(bin && bin.enabled);
+    const sType = binOn ? (bin.type || 'bh') : 'bh';
+    const compH = binOn ? phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0) : null;
     for (const b of sim.bodies) {
       if (b.state !== 'orbit') continue;
       if (b.held) { b.trail.length = 0; continue; } // frozen while user repositions
@@ -336,10 +343,6 @@
       if (bin && bin.enabled) {
         const r1 = Math.hypot(b.x - bin.x1, b.y - bin.y1);
         const r2 = Math.hypot(b.x - bin.x2, b.y - bin.y2);
-        const cType = sim.params.type || 'bh';
-        const sType = bin.type || 'bh';
-        const { rplus: r1plus, naked: n1 } = phys.horizons(M, Q, a);
-        const { rplus: r2plus, naked: n2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
         // tidal stress: take worst of two bodies
         const t1 = phys.tidalStress(r1, M, b.radius || 0.4, b.binding || 1);
         const t2 = phys.tidalStress(r2, bin.M2, b.radius || 0.4, b.binding || 1);
@@ -352,7 +355,7 @@
         }
         // Primary capture / surface impact
         if (cType === 'bh') {
-          if (!n1 && r1 < (isFinite(r1plus) ? r1plus : M)) {
+          if (!naked && r1 < (isFinite(rplus) ? rplus : M)) {
             b.state = 'captured'; b.consumedAt = sim.t;
             logEv(sim, 'warn', trp('{name} — captured by primary BH', { name: b.name }));
             continue;
@@ -368,7 +371,7 @@
         }
         // Companion capture / surface impact
         if (sType === 'bh') {
-          if (!n2 && r2 < (isFinite(r2plus) ? r2plus : bin.M2)) {
+          if (!compH.naked && r2 < (isFinite(compH.rplus) ? compH.rplus : bin.M2)) {
             b.state = 'captured'; b.consumedAt = sim.t;
             logEv(sim, 'warn', trp('{name} — captured by companion BH', { name: b.name }));
             continue;
@@ -390,8 +393,6 @@
       }
 
       // ── Single-BH checks (original) ─────────────────────
-      const { rplus, naked } = phys.horizons(M, Q, a);
-      const type = sim.params.type || 'bh';
       const tidal = phys.tidalStress(r, M, b.radius || 0.4, b.binding || 1);
       b.stress = tidal;
       if (tidal > b.stressPeak) b.stressPeak = tidal;
@@ -401,11 +402,11 @@
         continue;
       }
       // Surface impact for stellar centrals
-      if (type !== 'bh') {
+      if (cType !== 'bh') {
         const Rs = sim.params.R_star || 3;
         if (r < Rs) {
           b.state = 'captured'; b.consumedAt = sim.t;
-          const label = surfaceLabel(type);
+          const label = surfaceLabel(cType);
           logEv(sim, 'warn', trp('{name} — impacted {surface} at r = {r} M', { name: b.name, surface: tr(label.en, label.zh), r: r.toFixed(2) }));
           continue;
         }
@@ -433,6 +434,15 @@
     const { M, Q, a } = sim.params;
     const { rplus, naked } = phys.horizons(M, Q, a);
     const bin = sim.binary || null;
+    // Capture surfaces for binary mode — same convention as predictBinaryTrajectory
+    // and the live integrator (BH → outer horizon, stellar → R_star), so the
+    // previewed fate matches what actually happens on release.
+    let s1 = 0, s2 = 0;
+    if (bin && bin.enabled) {
+      const { rplus: rp2, naked: n2 } = phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0);
+      s1 = (sim.params.type || 'bh') === 'bh' ? (isFinite(rplus) && !naked ? rplus : M) : (sim.params.R_star || 3);
+      s2 = (bin.type || 'bh') === 'bh' ? (isFinite(rp2) && !n2 ? rp2 : bin.M2) : (bin.R_star2 || 3);
+    }
     let x = x0, y = y0, vx = vx0, vy = vy0;
     const pts = [x, y];
     for (let i = 0; i < steps; i++) {
@@ -448,9 +458,8 @@
       if (bin && bin.enabled) {
         const r1 = Math.hypot(x - bin.x1, y - bin.y1);
         const r2 = Math.hypot(x - bin.x2, y - bin.y2);
-        const { rplus: rp1 } = phys.horizons(M, Q, a);
-        if (r1 < (isFinite(rp1) ? rp1 : M)) return { pts, fate: 'capture' };
-        if (r2 < 2 * bin.M2) return { pts, fate: 'capture' };
+        if (r1 < s1) return { pts, fate: 'capture' };
+        if (r2 < s2) return { pts, fate: 'capture' };
         if (Math.hypot(x, y) > 60) return { pts, fate: 'escape' };
       } else {
         const r = Math.hypot(x, y);
