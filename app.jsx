@@ -565,6 +565,11 @@ function App() {
 
         <TidalMicroscope sim={SIM} force={force} />
         <MHDMonitor sim={SIM} force={force} />
+
+        {/* Draggable field cross-section window (desktop). Tabs switch between
+            the primary/companion gravity field and the GW slice. Clamped to the
+            viewport so it can never be dragged off-screen. */}
+        <FieldScope sim={SIM} />
       </div>
 
       <RightPanel sim={SIM} force={force} />

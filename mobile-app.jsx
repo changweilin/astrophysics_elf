@@ -804,6 +804,16 @@ function MViewControls({ sim, force }) {
     targets.push({ key: 'mhd:companion', kind: 'mhd', which: 'companion',
                    label: tr('MHD JET · M2', 'MHD 噴流 · M2') });
   }
+  // Field cross-sections share the same cycler (gravity well of each body + the
+  // GW slice), so the profile window steps through them with everything else.
+  targets.push({ key: 'field:primary', kind: 'field', fieldKind: 'primary',
+                 label: tr('FIELD · M1', '重力場 · M1') });
+  if (hasBin) {
+    targets.push({ key: 'field:companion', kind: 'field', fieldKind: 'companion',
+                   label: tr('FIELD · M2', '重力場 · M2') });
+  }
+  targets.push({ key: 'field:gw', kind: 'field', fieldKind: 'gw',
+                 label: tr('GW SLICE', '重力波剖面') });
   let tidx = targets.findIndex((t) => t.key === profKey);
   if (tidx < 0) tidx = 0;
   const cur = targets[tidx] || null;
@@ -829,6 +839,7 @@ function MViewControls({ sim, force }) {
       if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (cur.kind === 'body') renderMicroscope(ctx, w, h, cur.body, sim);
+      else if (cur.kind === 'field') renderFieldSection(ctx, w, h, cur.fieldKind, sim);
       else renderMHDSide(ctx, w, h, sim, mhdView(sim, cur.which));
       raf = requestAnimationFrame(tick);
     }

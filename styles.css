@@ -1431,6 +1431,71 @@ html, body {
 .mhd-monitor { top: 322px; }
 .mhd-monitor.is-collapsed { top: 322px; }
 
+/* Draggable field cross-section scopes — same chrome as the microscope, but
+   positioned via inline left/top (set by the drag handler, clamped to the
+   viewport). The header is the drag handle; the chevron toggles collapse. */
+.field-section {
+  position: absolute;
+  width: 212px;
+  background: oklch(0.13 0.020 255 / 0.94);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+  z-index: 3;
+  font-family: var(--sans);
+  display: flex; flex-direction: column;
+  pointer-events: auto;
+  box-shadow: 0 10px 30px -10px oklch(0 0 0 / 0.5),
+              0 0 0 1px oklch(0.30 0.025 255 / 0.4);
+}
+.fs-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px 7px 9px;
+  cursor: grab;
+  border-bottom: 1px solid var(--line-soft);
+  user-select: none;
+  background: var(--bg-2);
+  touch-action: none;
+}
+.field-section.is-collapsed .fs-head { border-bottom: none; }
+.fs-head:active { cursor: grabbing; }
+.fs-head:hover { background: var(--bg-3); }
+.fs-chev {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-3);
+  cursor: pointer;
+}
+.fs-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--fg-2);
+}
+/* Single-click view switch, living in the header (top) row. */
+.fs-switch {
+  flex: 1;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 3px 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.fs-switch:hover { background: var(--bg-3); }
+.fs-swname { font-size: 10px; letter-spacing: 0.06em; color: var(--amber); }
+.fs-swcyc  { font-size: 11px; color: var(--fg-3); }
+/* Canvas pane. NB: the global `.viewport canvas` rule (for the main sim canvas)
+   is more specific than a bare `.fs-canvas` and would force this panel canvas to
+   position:absolute / height:100%, collapsing it to 0 height. Override it with a
+   higher-specificity selector and pin a static, fixed-height box. */
+.fs-body { position: relative; height: 132px; }
+.field-section .fs-canvas {
+  position: static; inset: auto;
+  width: 100%; height: 132px;
+  display: block;
+  background: var(--bg-0);
+}
+
 .hint-pill {
   display: inline-flex; align-items: center; gap: 4px;
   font-family: var(--mono);
