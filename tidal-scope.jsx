@@ -8,6 +8,8 @@ function TidalMicroscope({ sim, force }) {
   const [pinnedId, setPinnedId] = React.useState(null);
   const canvasRef = React.useRef(null);
   const phys = window.KNphysics;
+  const drag = knUseDragMove();   // long-press drag-to-move (keeps CSS spot until moved)
+  React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
   // Track selected, but remember the most-recently-disrupted body for a few
   // seconds even after the user clicks elsewhere — TDE is the headline event.
@@ -74,15 +76,21 @@ function TidalMicroscope({ sim, force }) {
   })();
 
   return (
-    <div className={`microscope ${collapsed ? 'is-collapsed' : ''}`}>
-      <div className="microscope-head" onClick={() => setCollapsed(!collapsed)}>
+    <div ref={drag.rootRef}
+         className={`microscope kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''}`}
+         style={drag.style}>
+      <div className="microscope-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
-          <span className="mh-chev">{collapsed ? '▸' : '▾'}</span>
+          <span className="mh-chev"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
           <span className="mh-title">{tr('TIDAL MICROSCOPE', '潮汐顯微鏡')}</span>
         </div>
         <div className="mh-right">
           {sim.bodies.length > 1 ? (
-            <span className="mh-switch" onClick={(e) => e.stopPropagation()}>
+            <span className="mh-switch"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}>
               <span className="mh-arrow" onClick={() => cycleBody(-1)} title={tr('previous body', '上一個天體')}>‹</span>
               <span className="mh-name">{body ? body.name : tr('— no target —', '— 無目標 —')}</span>
               <span className="mh-arrow" onClick={() => cycleBody(1)} title={tr('next body', '下一個天體')}>›</span>

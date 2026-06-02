@@ -181,13 +181,9 @@ function renderFieldSection(ctx, w, h, kind, sim) {
 // ── Desktop: single draggable, viewport-clamped window with view tabs ──────
 function FieldScope({ sim }) {
   const [collapsed, setCollapsed] = React.useState(false);
-  const [pos, setPos] = React.useState({ x: 14, y: 70 });
   const [tab, setTab] = React.useState('primary');
-  const [dragging, setDragging] = React.useState(false);
-  const rootRef = React.useRef(null);
   const canvasRef = React.useRef(null);
-  const grab = React.useRef(null);
-  const holdTimer = React.useRef(null);
+  const drag = knUseDragMove({ x: 14, y: 70 });   // shared long-press drag-to-move
 
   const hasBin = !!(sim.binary && sim.binary.enabled);
   // Available views (companion only exists in binary mode), cycled by a single
@@ -202,68 +198,8 @@ function FieldScope({ sim }) {
   const active = order.indexOf(tab) >= 0 ? tab : 'primary';
   const cycle = () => setTab(order[(order.indexOf(active) + 1) % order.length]);
 
-  function clamp(x, y) {
-    const el = rootRef.current;
-    if (!el || !el.parentElement) return { x, y };
-    const pr = el.parentElement.getBoundingClientRect();
-    const pw = el.offsetWidth, ph = el.offsetHeight;
-    return {
-      x: Math.max(0, Math.min(Math.max(0, pr.width - pw), x)),
-      y: Math.max(0, Math.min(Math.max(0, pr.height - ph), y)),
-    };
-  }
-
-  React.useLayoutEffect(() => { setPos((p) => clamp(p.x, p.y)); }, [collapsed, active]);
-  React.useEffect(() => {
-    const onResize = () => setPos((p) => clamp(p.x, p.y));
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  // Move the window by long-pressing the top row (≈300ms, same feel as the
-  // body reposition gesture), then dragging. Until the hold arms, pointer moves
-  // are ignored (and a wander cancels the hold) so a quick click on the row never
-  // nudges the window — the switch/collapse single-clicks stay clean. The chevron
-  // and switch stop propagation, so this only fires on the bar's empty area.
-  function onHeadDown(e) {
-    if (e.button !== 0) return;
-    const el = rootRef.current;
-    if (!el || !el.parentElement) return;
-    const pr = el.parentElement.getBoundingClientRect();
-    grab.current = { dx: e.clientX - pr.left - pos.x, dy: e.clientY - pr.top - pos.y,
-                     sx: e.clientX, sy: e.clientY, armed: false };
-
-    const cancel = () => {
-      if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null; }
-      grab.current = null;
-      setDragging(false);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-    const onMove = (ev) => {
-      const g = grab.current;
-      if (!g) return;
-      if (!g.armed) {
-        // Wandering before the hold arms → treat as a mis-press, drop the gesture.
-        if (Math.hypot(ev.clientX - g.sx, ev.clientY - g.sy) > 8) cancel();
-        return;
-      }
-      const pr2 = el.parentElement.getBoundingClientRect();
-      setPos(clamp(ev.clientX - pr2.left - g.dx, ev.clientY - pr2.top - g.dy));
-    };
-    const onUp = () => cancel();
-
-    holdTimer.current = setTimeout(() => {
-      if (grab.current) { grab.current.armed = true; setDragging(true); }
-    }, 300);
-
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    e.preventDefault();
-  }
-
-  // Clear any pending hold if the window unmounts mid-gesture.
-  React.useEffect(() => () => { if (holdTimer.current) clearTimeout(holdTimer.current); }, []);
+  // Re-clamp inside the viewport when the collapse toggle changes the height.
+  React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
   React.useEffect(() => {
     if (collapsed) return;
@@ -284,14 +220,14 @@ function FieldScope({ sim }) {
   }, [collapsed, active]);
 
   return (
-    <div ref={rootRef}
-         className={`field-section ${collapsed ? 'is-collapsed' : ''} ${dragging ? 'is-dragging' : ''}`}
-         style={{ left: pos.x + 'px', top: pos.y + 'px' }}>
+    <div ref={drag.rootRef}
+         className={`field-section kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''}`}
+         style={drag.style}>
       {/* Top row — same format as the MHD monitor header: chevron + title on the
           left, view switch on the right. Single click on the switch cycles to
-          the next cross-section. The row is the drag handle; the chevron and
-          switch stop the drag so taps don't pan. */}
-      <div className="microscope-head fs-head" onPointerDown={onHeadDown}>
+          the next cross-section. The row is the drag handle (long-press to move);
+          the chevron and switch stop the drag so taps don't move the window. */}
+      <div className="microscope-head fs-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}

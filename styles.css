@@ -1448,16 +1448,19 @@ html, body {
   box-shadow: 0 10px 30px -10px oklch(0 0 0 / 0.5),
               0 0 0 1px oklch(0.30 0.025 255 / 0.4);
 }
-/* Header is the drag handle (chevron + switch stop the drag); show a grab
-   cursor instead of the microscope head's pointer. */
-.field-section .microscope-head { cursor: grab; }
-.field-section.is-dragging .microscope-head { cursor: grabbing; }
+.field-section.is-collapsed .microscope-head { border-bottom: none; }
+
+/* ── Long-press drag-to-move (shared by field/tidal/MHD floating windows) ──
+   The header is the drag handle, so show a grab cursor instead of the head's
+   pointer; the chevron keeps a pointer cursor since it stays a click target. */
+.kn-draggable .microscope-head { cursor: grab; }
+.kn-draggable .microscope-head .mh-chev { cursor: pointer; }
+.kn-draggable.is-dragging .microscope-head { cursor: grabbing; }
 /* Gentle armed-drag highlight (muted, not glary). */
-.field-section.is-dragging {
+.kn-draggable.is-dragging {
   box-shadow: 0 14px 34px -10px oklch(0 0 0 / 0.6),
               0 0 0 1px oklch(0.62 0.10 75 / 0.5);
 }
-.field-section.is-collapsed .microscope-head { border-bottom: none; }
 /* Canvas pane. NB: the global `.viewport canvas` rule (for the main sim canvas)
    is more specific than a bare `.fs-canvas` and would force this panel canvas to
    position:absolute / height:100%, collapsing it to 0 height. Override it with a

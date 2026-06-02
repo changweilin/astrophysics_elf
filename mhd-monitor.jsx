@@ -38,6 +38,8 @@ function MHDMonitor({ sim, force }) {
   // Fall back to the primary if the companion's MHD was switched off.
   const active = (which === 'companion' && companionMHD) ? 'companion' : 'primary';
   const canvasRef = React.useRef(null);
+  const drag = knUseDragMove();   // long-press drag-to-move (keeps CSS spot until moved)
+  React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
   React.useEffect(() => {
     if (collapsed) return;
@@ -63,15 +65,21 @@ function MHDMonitor({ sim, force }) {
   const off = !bodyHasMHD(sim, active);
 
   return (
-    <div className={`microscope mhd-monitor ${collapsed ? 'is-collapsed' : ''}`}>
-      <div className="microscope-head" onClick={() => setCollapsed(!collapsed)}>
+    <div ref={drag.rootRef}
+         className={`microscope mhd-monitor kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''}`}
+         style={drag.style}>
+      <div className="microscope-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
-          <span className="mh-chev">{collapsed ? '▸' : '▾'}</span>
+          <span className="mh-chev"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
           <span className="mh-title">{tr('MHD JET MONITOR', 'MHD 噴流監視器')}</span>
         </div>
         <div className="mh-right" style={{color: m.P > 1 ? 'var(--magenta)' : 'var(--fg-3)'}}>
           {bothMHD && (
-            <span className="mh-switch" onClick={(e) => e.stopPropagation()}>
+            <span className="mh-switch"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}>
               <button className={active === 'primary' ? 'on' : ''}
                 onClick={() => { setWhich('primary'); force(); }}>M₁</button>
               <button className={active === 'companion' ? 'on' : ''}
