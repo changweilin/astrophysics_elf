@@ -110,52 +110,58 @@ function tintFromTemperature(temperature) {
   return clamp(0.35 + 0.5 * Math.tanh(temperature * 2.2), 0, 1);
 }
 
-/* ---- per-ray shading --------------------------------------------------- */
+/* ---- per-ray shading --------------------------------------------------- *
+ * shadeSample is the single source of truth for pixel color. It takes an
+ * already-resolved sample (captured flag, escaped sky direction, optional disc
+ * crossing, photon-ring glow) and is shared by both the direct per-ray renderer
+ * (shadeRay) and the deflection-LUT reshade path (shadeLUTImage). The LUT path
+ * needs the color logic decoupled from a live trace, so all of it lives here.
+ * `sample.skyPhi` and `sample.discHit.phi` are absolute azimuths (the LUT path
+ * adds the camera azimuth back in before calling).                            */
 
-function shadeRay(params, trace, camera, disc, geom, options) {
-  const status = trace.classification?.status ?? "unknown";
-  const rPhoton = geom.rPhoton;
+const SHADOW_COLOR = { r: 0.020, g: 0.022, b: 0.030 }; // deep, slightly cool dark
 
-  if (status === "captured" || status === "integration-failed") {
-    // Inside the shadow: a deep, slightly cool dark. No ring glow here — a
-    // plunging ray passes THROUGH r_photon on its way to the horizon, so adding
-    // glow would light up the whole shadow. The bright ring is light that
-    // orbited and escaped, so it is rendered on the escaping branch below.
-    return { r: 0.020, g: 0.022, b: 0.030 };
+function shadeSample(params, sample, camera, disc, geom, options) {
+  // captureFrac lets the LUT upsample anti-alias the shadow edge: in the
+  // transition band it carries a 0..1 weight so the escaped shading blends into
+  // shadow instead of stair-stepping. The direct per-ray renderer passes a plain
+  // captured boolean (0 or 1), reproducing the original hard edge exactly.
+  const capFrac = sample.captureFrac != null
+    ? sample.captureFrac
+    : (sample.captured ? 1 : 0);
+  if (capFrac >= 1) {
+    // Inside the shadow: no ring glow — a plunging ray passes THROUGH r_photon
+    // on its way to the horizon, so adding glow would light up the whole shadow.
+    // The bright ring is light that orbited and escaped, added on the branch below.
+    return { ...SHADOW_COLOR };
   }
 
   // Escaped (or grazing) ray: start from the lensed starfield backdrop.
-  const fs = trace.result?.finalState ?? {};
-  let col = starfieldColor(fs.theta, fs.phi);
+  let col = starfieldColor(sample.skyTheta, sample.skyPhi);
 
-  // Accretion disc contribution, if a disc is configured.
-  if (disc) {
-    const hit = estimateEquatorialDiscHit(trace, {
-      innerR: geom.innerR,
-      outerR: geom.outerR,
+  // Accretion disc contribution, if a disc is configured and this ray hit it.
+  if (disc && sample.discHit && sample.discHit.hit) {
+    const hit = sample.discHit;
+    const g = discShiftApprox(params, hit, camera);
+    const rendered = renderDiscHit(params, hit, {
+      ...disc,
+      redshiftFactor: g,
+      inclination: camera.theta,
     });
-    if (hit.hit) {
-      const g = discShiftApprox(params, hit, camera);
-      const rendered = renderDiscHit(params, hit, {
-        ...disc,
-        redshiftFactor: g,
-        inclination: camera.theta,
-      });
-      const fc = composeFalseColor(rendered.observedIntensity, {
-        exposure: disc.exposure ?? 140,
-        temperatureTint: tintFromTemperature(rendered.restFrame?.colorTemperature ?? 0.4),
-      });
-      // Disc emission adds over the backdrop, weighted by its own alpha.
-      col = {
-        r: col.r * (1 - fc.a) + fc.r,
-        g: col.g * (1 - fc.a) + fc.g,
-        b: col.b * (1 - fc.a) + fc.b,
-      };
-    }
+    const fc = composeFalseColor(rendered.observedIntensity, {
+      exposure: disc.exposure ?? 140,
+      temperatureTint: tintFromTemperature(rendered.restFrame?.colorTemperature ?? 0.4),
+    });
+    // Disc emission adds over the backdrop, weighted by its own alpha.
+    col = {
+      r: col.r * (1 - fc.a) + fc.r,
+      g: col.g * (1 - fc.a) + fc.g,
+      b: col.b * (1 - fc.a) + fc.b,
+    };
   }
 
   // Photon ring: a warm rim where rays graze the photon sphere.
-  const glow = ringGlow(trace, rPhoton);
+  const glow = sample.ringGlow ?? 0;
   if (glow > 0) {
     const k = 0.55 * glow; // muted amplitude
     col = {
@@ -165,7 +171,33 @@ function shadeRay(params, trace, camera, disc, geom, options) {
     };
   }
 
+  // Anti-aliased shadow edge: blend the escaped shading toward shadow across the
+  // transition band (capFrac in (0,1)). Zero for fully-escaped pixels.
+  if (capFrac > 0) {
+    col = {
+      r: col.r + (SHADOW_COLOR.r - col.r) * capFrac,
+      g: col.g + (SHADOW_COLOR.g - col.g) * capFrac,
+      b: col.b + (SHADOW_COLOR.b - col.b) * capFrac,
+    };
+  }
+
   return col;
+}
+
+function shadeRay(params, trace, camera, disc, geom, options) {
+  const status = trace.classification?.status ?? "unknown";
+  const captured = status === "captured" || status === "integration-failed";
+  const fs = trace.result?.finalState ?? {};
+  const discHit = disc
+    ? estimateEquatorialDiscHit(trace, { innerR: geom.innerR, outerR: geom.outerR })
+    : null;
+  return shadeSample(params, {
+    captured,
+    skyTheta: fs.theta,
+    skyPhi: fs.phi,
+    discHit,
+    ringGlow: ringGlow(trace, geom.rPhoton),
+  }, camera, disc, geom, options);
 }
 
 /* ---- diagnostic per-pixel class (for smoke tests) ---------------------- */
@@ -181,15 +213,10 @@ function classifyPixel(params, trace, disc, geom) {
   return 0;
 }
 
-/* ---- main renderer ----------------------------------------------------- */
+/* ---- shared trace setup (used by both the direct renderer and the LUT) -- */
 
-export function renderLensingImage(params = {}, camera = {}, options = {}) {
-  const p = sanitizeParams(params);
-  const width = Math.max(1, Math.floor(options.width ?? camera.width ?? 96));
-  const height = Math.max(1, Math.floor(options.height ?? camera.height ?? 96));
-  const disc = options.disc ?? null;
-
-  const traceOptions = {
+function lensingTraceOptions(width, height, camera, options) {
+  return {
     width,
     height,
     // Affine budget must be long enough for outward rays to actually reach
@@ -205,8 +232,9 @@ export function renderLensingImage(params = {}, camera = {}, options = {}) {
     fovY: options.fovY ?? camera.fovY ?? Math.PI / 6,
     ...(options.trace ?? {}),
   };
+}
 
-  const traced = traceCameraRays(p, camera, traceOptions);
+function lensingGeometry(p, camera, disc, options) {
   const ring = photonRingSamples(p, {
     cameraR: camera.r ?? 24,
     count: options.ringSamples ?? 8,
@@ -214,10 +242,22 @@ export function renderLensingImage(params = {}, camera = {}, options = {}) {
   const rPhoton = Number.isFinite(ring.prograde?.rPhoton)
     ? ring.prograde.rPhoton
     : (ring.retrograde?.rPhoton ?? 3 * p.M);
-
   const innerR = disc ? (disc.innerR ?? diskInnerRadius(p, disc)) : 0;
   const outerR = disc ? (disc.outerR ?? innerR * 12) : 0;
-  const geom = { rPhoton, innerR, outerR };
+  return { ring, rPhoton, geom: { rPhoton, innerR, outerR } };
+}
+
+/* ---- main renderer ----------------------------------------------------- */
+
+export function renderLensingImage(params = {}, camera = {}, options = {}) {
+  const p = sanitizeParams(params);
+  const width = Math.max(1, Math.floor(options.width ?? camera.width ?? 96));
+  const height = Math.max(1, Math.floor(options.height ?? camera.height ?? 96));
+  const disc = options.disc ?? null;
+
+  const traceOptions = lensingTraceOptions(width, height, camera, options);
+  const traced = traceCameraRays(p, camera, traceOptions);
+  const { ring, rPhoton, geom } = lensingGeometry(p, camera, disc, options);
 
   const buffer = new Uint8ClampedArray(width * height * 4);
   // Optional per-pixel class map for diagnostics/smoke tests:
@@ -252,6 +292,203 @@ export function renderLensingImage(params = {}, camera = {}, options = {}) {
   };
   if (statusMap) result.statusMap = statusMap;
   return result;
+}
+
+/* ---- deflection LUT (fast path, PHASE6-LENSING-PLAN.md sec 4.5) --------- *
+ * Per-ray GR integration is the cost (~1.4 ms/ray), so the panel can only
+ * afford a low base resolution. But the screen->outcome map is *invariant under
+ * camera azimuth* (Kerr-Newman is axisymmetric) and *smooth away from the shadow
+ * edge*. buildDeflectionLUT traces the grid ONCE and stores, per base pixel, the
+ * resolved outcome: capture flag, escaped sky direction, photon-ring glow, and
+ * the disc-crossing radius/azimuth. shadeLUTImage then renders any display
+ * resolution by bilinearly interpolating that map (smooth upsample, no extra
+ * integration) and re-applies the camera azimuth cheaply — fixing the blocky
+ * upscale and enabling smooth azimuth rotation. Sky/disc azimuths are stored
+ * RELATIVE to the build camera azimuth so shadeLUTImage can add any new azimuth.
+ *
+ * What this LUT does NOT change: inclination (camera.theta) and (M,Q,a) alter the
+ * geodesics themselves, so changing those requires a rebuild.                   */
+
+export function buildDeflectionLUT(params = {}, camera = {}, options = {}) {
+  const p = sanitizeParams(params);
+  const width = Math.max(1, Math.floor(options.width ?? camera.width ?? 72));
+  const height = Math.max(1, Math.floor(options.height ?? camera.height ?? 40));
+  const disc = options.disc ?? null;
+
+  const traceOptions = lensingTraceOptions(width, height, camera, options);
+  const traced = traceCameraRays(p, camera, traceOptions);
+  const { ring, rPhoton, geom } = lensingGeometry(p, camera, disc, options);
+  const camPhi0 = camera.phi ?? 0;
+
+  const n = width * height;
+  const capture = new Uint8Array(n);          // 1 = shadow (captured / failed)
+  const skyTheta = new Float32Array(n);        // escaped sky direction (polar)
+  const skyPhi = new Float32Array(n);          // escaped sky azimuth, relative to camPhi0
+  const ringGlowArr = new Float32Array(n);     // 0..1 photon-ring glow
+  const discHit = new Uint8Array(n);           // 1 = ray crosses the disc
+  const discR = new Float32Array(n);           // disc crossing radius
+  const discPhi = new Float32Array(n);         // disc crossing azimuth, relative to camPhi0
+  skyTheta.fill(Math.PI / 2);
+
+  for (const trace of traced.traced) {
+    const px = trace.pixelX;
+    const py = trace.pixelY;
+    if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+    const cell = py * width + px;
+    const status = trace.classification?.status ?? "unknown";
+    const captured = status === "captured" || status === "integration-failed";
+    capture[cell] = captured ? 1 : 0;
+    ringGlowArr[cell] = ringGlow(trace, rPhoton);
+    if (captured) continue;
+    const fs = trace.result?.finalState ?? {};
+    skyTheta[cell] = Number.isFinite(fs.theta) ? fs.theta : Math.PI / 2;
+    skyPhi[cell] = (Number.isFinite(fs.phi) ? fs.phi : 0) - camPhi0;
+    if (disc) {
+      const hit = estimateEquatorialDiscHit(trace, { innerR: geom.innerR, outerR: geom.outerR });
+      if (hit.hit) {
+        discHit[cell] = 1;
+        discR[cell] = hit.r;
+        discPhi[cell] = hit.phi - camPhi0;
+      }
+    }
+  }
+
+  return {
+    width,
+    height,
+    params: p,
+    camera: traced.camera,
+    counts: traced.counts,
+    photonRing: {
+      angularRadius: ring.angularRadius,
+      angularDiameter: ring.angularDiameter,
+      rPhoton,
+    },
+    geom,
+    hasDisc: !!disc,
+    base: { capture, skyTheta, skyPhi, ringGlow: ringGlowArr, discHit, discR, discPhi },
+  };
+}
+
+function clampInt(v, lo, hi) {
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+
+/* Bilinearly sample the LUT at fractional base coords, resolving the boundary
+ * cases that plain interpolation would smear: the capture/disc flags use a
+ * weighted >=0.5 vote, and sky/disc directions are blended as vectors (over only
+ * the contributing neighbours) so azimuth wraparound cannot streak. `camPhi` is
+ * the new absolute camera azimuth; relative LUT azimuths get it added back.     */
+function sampleLUT(b, bw, bh, fx, fy, camPhi, hasDisc) {
+  const ix = Math.floor(fx);
+  const iy = Math.floor(fy);
+  const x0 = clampInt(ix, 0, bw - 1);
+  const x1 = clampInt(ix + 1, 0, bw - 1);
+  const y0 = clampInt(iy, 0, bh - 1);
+  const y1 = clampInt(iy + 1, 0, bh - 1);
+  const tx = clamp(fx - ix, 0, 1);
+  const ty = clamp(fy - iy, 0, 1);
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  const i00 = y0 * bw + x0;
+  const i10 = y0 * bw + x1;
+  const i01 = y1 * bw + x0;
+  const i11 = y1 * bw + x1;
+
+  const capFrac = w00 * b.capture[i00] + w10 * b.capture[i10] +
+    w01 * b.capture[i01] + w11 * b.capture[i11];
+
+  // Escaped sky direction: blend unit vectors over the non-captured neighbours.
+  let vx = 0, vy = 0, vz = 0, wsum = 0;
+  const accSky = (i, w) => {
+    if (b.capture[i]) return;
+    const th = b.skyTheta[i];
+    const ph = b.skyPhi[i] + camPhi;
+    const st = Math.sin(th);
+    vx += w * st * Math.cos(ph);
+    vy += w * st * Math.sin(ph);
+    vz += w * Math.cos(th);
+    wsum += w;
+  };
+  accSky(i00, w00); accSky(i10, w10); accSky(i01, w01); accSky(i11, w11);
+  // No escaped neighbour contributes -> fully inside the shadow.
+  if (wsum <= 0) return { captured: true, captureFrac: 1 };
+  let skyTheta = Math.PI / 2;
+  let skyPhi = camPhi;
+  {
+    const nrm = Math.hypot(vx, vy, vz) || 1;
+    skyTheta = Math.acos(clamp(vz / nrm, -1, 1));
+    skyPhi = Math.atan2(vy, vx);
+  }
+
+  const ringGlowVal = w00 * b.ringGlow[i00] + w10 * b.ringGlow[i10] +
+    w01 * b.ringGlow[i01] + w11 * b.ringGlow[i11];
+
+  let discHit = null;
+  if (hasDisc) {
+    const discFrac = w00 * b.discHit[i00] + w10 * b.discHit[i10] +
+      w01 * b.discHit[i01] + w11 * b.discHit[i11];
+    if (discFrac >= 0.5) {
+      // Blend the crossing point in Cartesian to dodge azimuth wraparound.
+      let dx = 0, dy = 0, dw = 0;
+      const accDisc = (i, w) => {
+        if (!b.discHit[i]) return;
+        const r = b.discR[i];
+        const ph = b.discPhi[i] + camPhi;
+        dx += w * r * Math.cos(ph);
+        dy += w * r * Math.sin(ph);
+        dw += w;
+      };
+      accDisc(i00, w00); accDisc(i10, w10); accDisc(i01, w01); accDisc(i11, w11);
+      if (dw > 0) {
+        dx /= dw; dy /= dw;
+        discHit = { hit: true, r: Math.hypot(dx, dy), phi: Math.atan2(dy, dx) };
+      }
+    }
+  }
+
+  return { captured: capFrac >= 1, captureFrac: capFrac, skyTheta, skyPhi, ringGlow: ringGlowVal, discHit };
+}
+
+export function shadeLUTImage(lut, options = {}) {
+  const bw = lut.width;
+  const bh = lut.height;
+  const outW = Math.max(1, Math.floor(options.width ?? bw));
+  const outH = Math.max(1, Math.floor(options.height ?? bh));
+  const params = lut.params;
+  const geom = lut.geom;
+  const disc = options.disc ?? (lut.hasDisc ? {} : null);
+  const camPhi = Number.isFinite(options.cameraPhi) ? options.cameraPhi : (lut.camera?.phi ?? 0);
+  const camera = { r: lut.camera?.r, theta: lut.camera?.theta ?? Math.PI / 2, phi: camPhi };
+  const b = lut.base;
+
+  const buffer = new Uint8ClampedArray(outW * outH * 4);
+  for (let oy = 0; oy < outH; oy++) {
+    // Map output pixel centre to fractional base-grid coords.
+    const fy = outH > 1 ? (oy + 0.5) / outH * bh - 0.5 : (bh - 1) / 2;
+    for (let ox = 0; ox < outW; ox++) {
+      const fx = outW > 1 ? (ox + 0.5) / outW * bw - 0.5 : (bw - 1) / 2;
+      const sample = sampleLUT(b, bw, bh, fx, fy, camPhi, !!disc);
+      const col = shadeSample(params, sample, camera, disc, geom, options);
+      const idx = (oy * outW + ox) * 4;
+      buffer[idx] = col.r * 255;
+      buffer[idx + 1] = col.g * 255;
+      buffer[idx + 2] = col.b * 255;
+      buffer[idx + 3] = 255;
+    }
+  }
+
+  return {
+    width: outW,
+    height: outH,
+    params,
+    camera: { ...lut.camera, phi: camPhi },
+    counts: lut.counts,
+    photonRing: lut.photonRing,
+    buffer,
+  };
 }
 
 /* ---- equatorial bent-ray overlay (top-down main view) ------------------ *
@@ -312,6 +549,19 @@ export function handleLensingWorkerMessage(rawMessage = {}) {
       const payload = rawMessage.payload ?? {};
       const data = traceEquatorialRays(payload.params ?? {}, payload.options ?? {});
       return { message: { id, type, ok: true, payload: data }, transfer: [] };
+    }
+    if (type === "build-lut") {
+      const payload = rawMessage.payload ?? {};
+      const lut = buildDeflectionLUT(payload.params ?? {}, payload.camera ?? {}, payload.options ?? {});
+      // Transfer every base buffer to avoid a structured-clone copy of the grid.
+      const b = lut.base;
+      return {
+        message: { id, type, ok: true, payload: lut },
+        transfer: [
+          b.capture.buffer, b.skyTheta.buffer, b.skyPhi.buffer,
+          b.ringGlow.buffer, b.discHit.buffer, b.discR.buffer, b.discPhi.buffer,
+        ],
+      };
     }
     if (type !== "render-lensing") {
       throw new Error(`Unknown lensing worker message type: ${type}`);

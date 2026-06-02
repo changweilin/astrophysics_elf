@@ -33,6 +33,13 @@
   function cameraKey(c = {}) {
     return `${num(c.r)}|${num(c.theta)}|${num(c.phi)}|${num(c.fovY)}`;
   }
+  // The deflection LUT is invariant under camera azimuth (Kerr-Newman is
+  // axisymmetric), so its cache key deliberately omits phi: one LUT serves every
+  // azimuth via a cheap reshade. Inclination (theta), distance, and FOV do change
+  // the geodesics, so they stay in the key.
+  function cameraKeyNoPhi(c = {}) {
+    return `${num(c.r)}|${num(c.theta)}|${num(c.fovY)}`;
+  }
   function discKey(disc) {
     if (!disc) return "nodisc";
     return `d${num(disc.accretionRate)}_${num(disc.innerR)}_${num(disc.outerR)}_${num(disc.exposure)}`;
@@ -41,6 +48,11 @@
     const w = o.width ?? DEFAULT_SIZE;
     const h = o.height ?? DEFAULT_SIZE;
     return `${paramsKey(p)}#${cameraKey(c)}#${w}x${h}#${discKey(o.disc)}`;
+  }
+  function lutKey(p, c, o = {}) {
+    const w = o.lutWidth ?? o.width ?? DEFAULT_SIZE;
+    const h = o.lutHeight ?? o.height ?? DEFAULT_SIZE;
+    return `${paramsKey(p)}#${cameraKeyNoPhi(c)}#lut${w}x${h}#${discKey(o.disc)}`;
   }
 
   class LensingBridge {
@@ -55,7 +67,10 @@
       this._pending = new Map(); // id -> { resolve, reject, params, camera, options }
       this._seq = 0;
       this._cache = new Map(); // renderKey -> result (LRU by insertion order)
+      this._lutCache = new Map(); // lutKey -> deflection LUT (LRU)
+      this._lastLUT = null; // { key, lut, width, height, disc } for cheap azimuth reshade
       this._eqCache = new Map(); // params -> equatorial bent-ray polylines
+      this._module = null; // lazy import() of the worker module for main-thread shading
       this._fallbackModule = null;
       this._debounceTimer = null;
       this._renderToken = 0;
@@ -88,7 +103,7 @@
         pend.reject(new Error(data.error?.message || "lensing render failed"));
         return;
       }
-      if (pend.kind === "equatorial") pend.resolve(data.payload);
+      if (pend.kind === "equatorial" || pend.kind === "lut") pend.resolve(data.payload);
       else pend.resolve(this._packResult(data.payload, data.buffer));
     }
 
@@ -100,9 +115,10 @@
       const inflight = [...this._pending.values()];
       this._pending.clear();
       for (const pend of inflight) {
-        const retry = pend.kind === "equatorial"
-          ? this._eqViaFallback(pend.params, pend.options)
-          : this._renderViaFallback(pend.params, pend.camera, pend.options);
+        let retry;
+        if (pend.kind === "equatorial") retry = this._eqViaFallback(pend.params, pend.options);
+        else if (pend.kind === "lut") retry = this._buildLUTViaFallback(pend.params, pend.camera, pend.options);
+        else retry = this._renderViaFallback(pend.params, pend.camera, pend.options);
         retry.then(pend.resolve, pend.reject);
       }
     }
@@ -149,6 +165,8 @@
     }
     clearCache() {
       this._cache.clear();
+      this._lutCache.clear();
+      this._lastLUT = null;
     }
 
     /* ---- render paths ---- */
@@ -229,6 +247,143 @@
         this._cachePut(key, result);
         return result;
       });
+    }
+
+    /* ---- deflection-LUT fast path (PHASE6-LENSING-PLAN.md sec 4.5) ---- *
+     * The expensive GR ray trace is run once per (params, inclination, base size,
+     * disc) into a LUT; the LUT is then shaded cheaply on the main thread at any
+     * display resolution and any camera azimuth. This decouples display
+     * resolution from trace cost (fixing the blocky upscale) and makes azimuth
+     * rotation a pure reshade (no integration). */
+
+    _buildLUTViaWorker(params, camera, options) {
+      return new Promise((resolve, reject) => {
+        const id = ++this._seq;
+        this._pending.set(id, { resolve, reject, params, camera, options, kind: "lut" });
+        try {
+          this._worker.postMessage({ id, type: "build-lut", payload: { params, camera, options } });
+        } catch (err) {
+          this._pending.delete(id);
+          reject(err);
+        }
+      });
+    }
+
+    async _buildLUTViaFallback(params, camera, options) {
+      const mod = await this._ensureModule();
+      return mod.buildDeflectionLUT(params, camera, options);
+    }
+
+    _ensureModule() {
+      if (!this._module) this._module = import(FALLBACK_MODULE);
+      return this._module;
+    }
+
+    /* Build (or reuse) the deflection LUT for these params/camera/base-size. The
+       base trace size comes from options.lutWidth/lutHeight (falling back to
+       width/height). Cached by a key that omits azimuth. */
+    buildLUT(params = this.params, camera = this.camera, options = this.options) {
+      const baseOpts = {
+        ...options,
+        width: options.lutWidth ?? options.width ?? DEFAULT_SIZE,
+        height: options.lutHeight ?? options.height ?? DEFAULT_SIZE,
+      };
+      const key = lutKey(params, camera, options);
+      const cached = this._lutCache.get(key);
+      if (cached) {
+        this._lutCache.delete(key); this._lutCache.set(key, cached); // refresh LRU
+        return Promise.resolve(cached);
+      }
+      const exec = this._workerOk && this._worker
+        ? this._buildLUTViaWorker(params, camera, baseOpts)
+        : this._buildLUTViaFallback(params, camera, baseOpts);
+      return exec.then((lut) => {
+        this._lutCache.set(key, lut);
+        while (this._lutCache.size > CACHE_LIMIT) this._lutCache.delete(this._lutCache.keys().next().value);
+        return lut;
+      });
+    }
+
+    /* Shade a LUT to an RGBA frame on the main thread (cheap; no integration). */
+    async shadeLUT(lut, options = {}) {
+      const mod = await this._ensureModule();
+      const img = mod.shadeLUTImage(lut, options);
+      return this._packResult({
+        width: img.width,
+        height: img.height,
+        camera: img.camera,
+        counts: img.counts,
+        photonRing: img.photonRing,
+      }, img.buffer);
+    }
+
+    /* Debounced, progressive LUT render used by the panels. Builds a coarse LUT
+       first (fast first paint), then the full-resolution LUT, shading each to the
+       display size. Stores the full LUT so a later azimuth-only change can
+       reshade without rebuilding (see reshadeLUT). Stale work is token-cancelled. */
+    requestRenderLUT(req = {}) {
+      const params = req.params ?? this.params;
+      const camera = req.camera ?? this.camera;
+      const options = req.options ?? this.options;
+      const debounce = req.debounce ?? DEFAULT_DEBOUNCE;
+      if (req.params) this.params = params;
+      if (req.camera) this.camera = camera;
+      if (req.options) this.options = options;
+
+      clearTimeout(this._debounceTimer);
+      this._debounceTimer = setTimeout(() => {
+        this._runProgressiveLUT(params, camera, options, !!req.progressive);
+      }, debounce);
+    }
+
+    async _runProgressiveLUT(params, camera, options, progressive) {
+      const token = ++this._renderToken;
+      const disc = options.disc ?? null;
+      const dispW = options.width ?? DEFAULT_SIZE;
+      const dispH = options.height ?? DEFAULT_SIZE;
+      const baseW = options.lutWidth ?? options.width ?? DEFAULT_SIZE;
+      const baseH = options.lutHeight ?? options.height ?? DEFAULT_SIZE;
+      const cameraPhi = camera.phi ?? 0;
+      const fullKey = lutKey(params, camera, options);
+
+      if (progressive && !this._lutCache.has(fullKey)) {
+        const cw = Math.max(20, Math.round(baseW / 2));
+        const ch = Math.max(12, Math.round(baseH / 2));
+        try {
+          const coarse = await this.buildLUT(params, camera, { ...options, lutWidth: cw, lutHeight: ch });
+          if (token !== this._renderToken) return;
+          const frame = await this.shadeLUT(coarse, { width: dispW, height: dispH, disc, cameraPhi });
+          if (token !== this._renderToken) return;
+          this._emit(frame, false);
+        } catch (err) {
+          /* coarse failure is non-fatal; the full pass below still runs */
+        }
+      }
+
+      try {
+        const lut = await this.buildLUT(params, camera, options);
+        if (token !== this._renderToken) return;
+        this._lastLUT = { key: fullKey, lut, width: dispW, height: dispH, disc };
+        const frame = await this.shadeLUT(lut, { width: dispW, height: dispH, disc, cameraPhi });
+        if (token !== this._renderToken) return;
+        this._emit(frame, true);
+      } catch (err) {
+        if (token === this._renderToken) this._emitError(err);
+      }
+    }
+
+    /* Cheap azimuth reshade of the last full LUT: no rebuild, no integration.
+       Returns false if no compatible LUT is cached (caller should requestRenderLUT
+       instead). Used for smooth camera-azimuth rotation. */
+    reshadeLUT(cameraPhi) {
+      const last = this._lastLUT;
+      if (!last || !last.lut) return false;
+      this.camera = { ...this.camera, phi: cameraPhi };
+      const token = ++this._renderToken;
+      this.shadeLUT(last.lut, { width: last.width, height: last.height, disc: last.disc, cameraPhi })
+        .then((frame) => { if (token === this._renderToken) this._emit(frame, true); })
+        .catch((err) => { if (token === this._renderToken) this._emitError(err); });
+      return true;
     }
 
     /* Top-down main-canvas overlay: draws cached equatorial bent geodesics and
@@ -363,6 +518,7 @@
       clearTimeout(this._debounceTimer);
       this._renderToken++;
       this._pending.clear();
+      this._lastLUT = null;
       if (this._worker) {
         try { this._worker.terminate(); } catch (err) { /* ignore */ }
         this._worker = null;

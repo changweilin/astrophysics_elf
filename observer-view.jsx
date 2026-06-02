@@ -11,31 +11,75 @@
  * panel canvas. There is no per-frame animation loop — a static lensed image is
  * correct between parameter changes, which keeps the 60 fps main loop free.
  *
+ * Resolution comes from the deflection-LUT fast path (PHASE6-LENSING-PLAN.md
+ * sec 4.5): the expensive GR ray trace runs once at a low base resolution into a
+ * LUT, which the bridge then shades at a higher DISPLAY resolution (smooth
+ * bilinear upsample, no extra integration) — so the image is no longer a blocky
+ * block-upscale of the trace grid. Because the LUT is azimuth-invariant
+ * (Kerr-Newman is axisymmetric), rotating the camera azimuth (AZ) reuses the
+ * cached LUT and only re-shades, so it is effectively free.
+ *
  * Muted by design (user preference): the renderer already keeps the disc and
  * ring gentle; here we only upscale and annotate.
  */
 
+// Panel preferences (inclination preset + disc toggle) persisted to localStorage,
+// mirroring the drag-move window-position persistence. The draggable window's
+// position is already saved by knUseDragMove('observer', ...); these are the
+// remaining user-chosen settings. Storage is wrapped so private mode can't throw.
+const LENS_PREFS_KEY = 'knlens:prefs';
+function knReadLensPrefs() {
+  try {
+    var s = window.localStorage.getItem(LENS_PREFS_KEY);
+    if (!s) return null;
+    var p = JSON.parse(s);
+    return (p && typeof p === 'object') ? p : null;
+  } catch (e) { return null; }
+}
+function knWriteLensPrefs(prefs) {
+  try { window.localStorage.setItem(LENS_PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* storage blocked */ }
+}
+
 function ObserverView({ sim }) {
+  // Inclination presets (degrees from the spin pole). 90 deg is edge-on.
+  const INCL = [20, 40, 60, 80];
+  // Camera azimuth presets (degrees). Azimuth reuses the cached LUT, so cycling
+  // it is a cheap reshade — it swings the lensed starfield around the hole.
+  const AZIM = [0, 60, 120, 180, 240, 300];
+
+  const prefs = React.useMemo(knReadLensPrefs, []); // read saved settings once
   const [collapsed, setCollapsed] = React.useState(false);
-  const [inclIdx, setInclIdx] = React.useState(2);
-  const [discOn, setDiscOn] = React.useState(true);
+  const [inclIdx, setInclIdx] = React.useState(
+    () => (prefs && Number.isInteger(prefs.inclIdx) && prefs.inclIdx >= 0 && prefs.inclIdx < INCL.length)
+      ? prefs.inclIdx : 2,
+  );
+  const [discOn, setDiscOn] = React.useState(
+    () => (prefs && typeof prefs.discOn === 'boolean') ? prefs.discOn : true,
+  );
+  const [azIdx, setAzIdx] = React.useState(
+    () => (prefs && Number.isInteger(prefs.azIdx) && prefs.azIdx >= 0 && prefs.azIdx < AZIM.length)
+      ? prefs.azIdx : 0,
+  );
   const canvasRef = React.useRef(null);
   const offRef = React.useRef(null);              // offscreen buffer for scaling
   const stateRef = React.useRef({ key: null, result: null, pending: false });
   const drag = knUseDragMove('observer', { x: 14, y: 300 });
 
-  // Inclination presets (degrees from the spin pole). 90 deg is edge-on.
-  const INCL = [20, 40, 60, 80];
-  const thetaDeg = INCL[inclIdx];
-  const cycleIncl = () => setInclIdx((inclIdx + 1) % INCL.length);
+  // Persist the settings whenever they change (window position persists itself).
+  React.useEffect(() => { knWriteLensPrefs({ inclIdx, discOn, azIdx }); }, [inclIdx, discOn, azIdx]);
 
-  // Render target resolution (independent of the on-screen panel size; the
-  // image is upscaled on blit). Full GR ray tracing is ~1.4 ms/ray, so this is
-  // kept small and the bridge renders coarse-then-fine; a static lensed image is
-  // correct between parameter changes. Heavier presets can come from a later
-  // deflection-LUT fast path (see PHASE6-LENSING-PLAN.md sec 4).
-  const RW = 72;
-  const RH = 40;
+  const thetaDeg = INCL[inclIdx];
+  const azDeg = AZIM[azIdx];
+  const cycleIncl = () => setInclIdx((inclIdx + 1) % INCL.length);
+  const cycleAzim = () => setAzIdx((azIdx + 1) % AZIM.length);
+
+  // Base trace resolution (the cost — full GR ray tracing is ~1.4 ms/ray) and the
+  // larger DISPLAY resolution the LUT is shaded to. Decoupling them is the point
+  // of the deflection-LUT path: trace stays cheap, the panel image stays smooth.
+  const BW = 72;
+  const BH = 40;
+  const DW = 180;
+  const DH = 100;
   // Fast trace tuning for interactive use. targetAffine must stay >= ~30 or the
   // central plunging rays never reach the horizon and the shadow disappears;
   // minStep is left at the integrator default so horizon capture still resolves.
@@ -104,12 +148,15 @@ function ObserverView({ sim }) {
     blit(); // paint placeholder / last frame immediately
     if (!KNL) return undefined;
 
-    const camera = { r: 26, theta: thetaDeg * Math.PI / 180, phi: 0, fovY: Math.PI / 2.5 };
+    const camera = { r: 26, theta: thetaDeg * Math.PI / 180, phi: azDeg * Math.PI / 180, fovY: Math.PI / 2.5 };
     const disc = discOn ? { accretionRate: 0.08, outerR: 18, exposure: 150 } : null;
 
+    // Azimuth is in the key so cycling it triggers a request, but it is NOT in the
+    // LUT cache key (the bridge omits it), so an azimuth-only change reuses the
+    // cached trace and just re-shades — effectively free.
     const makeKey = () => {
       const p = sim.params;
-      return [p.M, p.Q, p.a, thetaDeg, discOn ? 1 : 0]
+      return [p.M, p.Q, p.a, thetaDeg, azDeg, discOn ? 1 : 0]
         .map((x) => (Number(x) || 0).toFixed(3)).join(',');
     };
     const maybeRequest = () => {
@@ -118,10 +165,12 @@ function ObserverView({ sim }) {
       stateRef.current.key = k;
       stateRef.current.pending = true;
       KNL.syncParams(sim.params);
-      KNL.requestRender({
+      KNL.requestRenderLUT({
         params: { ...sim.params },
         camera,
-        options: { width: RW, height: RH, disc, ...TRACE },
+        // Trace at the cheap base size (lutWidth/lutHeight); shade to the larger
+        // display size (width/height) via the smooth LUT upsample.
+        options: { width: DW, height: DH, lutWidth: BW, lutHeight: BH, disc, ...TRACE },
         progressive: true,
       });
       blit(); // show the "rendering" hint over the previous frame
@@ -139,7 +188,7 @@ function ObserverView({ sim }) {
       clearInterval(iv);
       if (KNL.onFrame === onFrame) KNL.setOnFrame(null);
     };
-  }, [collapsed, inclIdx, discOn, blit]);
+  }, [collapsed, inclIdx, discOn, azIdx, blit]);
 
   return (
     <div ref={drag.rootRef}
@@ -174,6 +223,10 @@ function ObserverView({ sim }) {
             <button onClick={cycleIncl}
                     title={tr('cycle inclination', '循環傾角')}>
               {tr('TILT', '傾角')}
+            </button>
+            <button onClick={cycleAzim}
+                    title={tr('cycle camera azimuth', '循環方位角')}>
+              {tr('AZ', '方位')} {azDeg}°
             </button>
           </div>
         </React.Fragment>

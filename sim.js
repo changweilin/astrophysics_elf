@@ -27,7 +27,7 @@
       flags: {
         showErgo: true, showHorizon: true, showISCO: true, showPhoton: false,
         showDragField: true, showOrbits: true, showTidal: true, showLabels: true,
-        showGrid: false, showGW: false
+        showGrid: false, showGW: false, showLensing: false
       },
       paused: false,
       timescale: 1.0,

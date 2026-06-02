@@ -812,8 +812,12 @@ function MViewControls({ sim, force }) {
     const isLens = cur.kind === 'lensing';
     const KNL = isLens ? window.KNLensing : null;
     const lensCamera = { r: 26, theta: Math.PI / 2 + 0.35, phi: 0, fovY: Math.PI / 2.5 };
+    // Trace at the cheap base size (lutWidth/lutHeight) and let the deflection-LUT
+    // path shade to the larger DISPLAY size (width/height): the big mobile stage
+    // no longer block-upscales a tiny grid (PHASE6-LENSING-PLAN.md sec 4.5).
     const lensOpts = {
-      width: 64, height: 40,
+      width: 160, height: 100,
+      lutWidth: 64, lutHeight: 40,
       disc: { accretionRate: 0.08, outerR: 18, exposure: 150 },
       targetAffine: 30, escapeRadius: 48, maxStep: 0.45,
       absoluteTolerance: 1e-5, relativeTolerance: 1e-5, recordEvery: 12,
@@ -835,7 +839,7 @@ function MViewControls({ sim, force }) {
       lensRef.current.key = k;
       lensRef.current.pending = true;
       KNL.syncParams(p);
-      KNL.requestRender({ params: { ...p }, camera: lensCamera, options: lensOpts, progressive: true });
+      KNL.requestRenderLUT({ params: { ...p }, camera: lensCamera, options: lensOpts, progressive: true });
     }
     function blitLens(w, h) {
       ctx.fillStyle = 'oklch(0.04 0.005 255)';

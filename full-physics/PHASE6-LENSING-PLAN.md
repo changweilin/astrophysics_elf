@@ -255,9 +255,24 @@ Each checkpoint is independently revertable; stop after any one.
 
 All of P6.1-P6.5 are implemented and verified. The headline feature (Option A
 Observer View, desktop + mobile, with i18n) and the optional Option B top-down
-overlay are both live behind the opt-in `LENS` toggle. Remaining future work is
-the deflection-LUT fast path (sec 4.5) for higher resolution / smooth camera
-rotation and exact per-ray disc redshift (sec 7) — neither blocks the feature.
+overlay are both live behind the opt-in `LENS` toggle.
+
+**Deflection-LUT fast path (sec 4.5): DONE.** `buildDeflectionLUT` +
+`shadeLUTImage` (`lensing-worker.mjs`, `build-lut` worker message) trace the grid
+once into a per-pixel outcome LUT (capture flag / escaped sky direction / ring
+glow / disc-crossing r,phi). The bridge (`KNLensing.buildLUT` / `shadeLUT` /
+`requestRenderLUT` / `reshadeLUT`) caches the LUT by a key that omits camera
+azimuth (Kerr-Newman is axisymmetric) and shades it on the main thread at a
+larger display resolution via boundary-aware bilinear upsampling with an
+anti-aliased shadow edge — so the panel no longer block-upscales the trace grid
+(desktop 180x100 from base 72x40, mobile 160x100 from base 64x40), and a new
+desktop AZ control rotates the camera azimuth by reusing the cached trace.
+Verified by `run-lensing-lut-sample.mjs` (LUT base shade == direct render
+byte-for-byte; coherent upsample; cheap azimuth reshade), benchmarks 26/26, and
+desktop+mobile browser drives.
+
+Remaining future work is exact per-ray disc redshift (sec 7) and true asymptotic
+starfield warp (P6.1 note) — neither blocks the feature.
 
 ## 9. Verification gate (per CLAUDE.md)
 

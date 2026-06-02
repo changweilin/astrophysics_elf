@@ -61,6 +61,8 @@ window.KN_L10N = {
   "click to change inclination": { ja: "クリックで傾斜角を変更", ko: "클릭하여 경사각 변경", de: "Klicken, um die Neigung zu ändern", fr: "cliquer pour changer l'inclinaison", es: "clic para cambiar la inclinación", it: "clic per cambiare l'inclinazione" },
   "toggle accretion disc": { ja: "降着円盤の表示を切替", ko: "강착 원반 전환", de: "Akkretionsscheibe umschalten", fr: "activer/désactiver le disque d'accrétion", es: "alternar disco de acreción", it: "attiva/disattiva disco di accrescimento" },
   "cycle inclination": { ja: "傾斜角を順に切替", ko: "경사각 순환", de: "Neigung durchschalten", fr: "faire défiler l'inclinaison", es: "ciclar inclinación", it: "scorri inclinazione" },
+  "AZ": { ja: "方位", ko: "방위", de: "AZ", fr: "AZ", es: "AZ", it: "AZ" },
+  "cycle camera azimuth": { ja: "カメラ方位角を順に切替", ko: "카메라 방위각 순환", de: "Kamera-Azimut durchschalten", fr: "faire défiler l'azimut de la caméra", es: "ciclar azimut de la cámara", it: "scorri azimut della camera" },
 
   // ── Body editor: type tabs, params, scale labels ───────────
   "Black Hole": { ja: "ブラックホール", ko: "블랙홀", de: "Schwarzes Loch", fr: "Trou noir", es: "Agujero negro", it: "Buco nero" },
