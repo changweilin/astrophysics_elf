@@ -711,6 +711,31 @@
         ctx.fillStyle = fateColor;
         ctx.fillRect(ex - 2.5, ey - 2.5, 5, 5);
       }
+      // Exact-GR reference line (full-physics geodesic for the same launch). Drawn
+      // as a muted violet finely-dashed overlay so the GR-vs-Newtonian difference
+      // reads at a glance; the solid fate-coloured line above is still the one that
+      // matches the live (pseudo-Newtonian) bodies. Single-body aim only.
+      if (!isCompanion && KN.predictGeodesicTrajectory) {
+        const gr = KN.predictGeodesicTrajectory(sim, bodyRef.x, bodyRef.y, vx, vy);
+        if (gr && gr.pts && gr.pts.length >= 4) {
+          ctx.strokeStyle = 'oklch(0.80 0.12 300 / 0.6)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 4]);
+          ctx.beginPath();
+          const [gx0, gy0] = worldToScreenInto(sim, w, h, gr.pts[0], gr.pts[1]);
+          ctx.moveTo(gx0, gy0);
+          for (let i = 2; i < gr.pts.length; i += 2) {
+            const [tx, ty] = worldToScreenInto(sim, w, h, gr.pts[i], gr.pts[i + 1]);
+            ctx.lineTo(tx, ty);
+          }
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const [gex, gey] = worldToScreen(sim, w, h, gr.pts[gr.pts.length - 2], gr.pts[gr.pts.length - 1]);
+          ctx.fillStyle = 'oklch(0.80 0.12 300 / 0.85)';
+          ctx.font = '8px JetBrains Mono, monospace';
+          ctx.fillText('GR', gex + 4, gey - 3);
+        }
+      }
       // readout
       const v = Math.hypot(vx, vy);
       ctx.fillStyle = isCompanion ? 'oklch(0.82 0.14 295)' : 'oklch(0.80 0.16 75)';

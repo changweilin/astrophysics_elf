@@ -159,7 +159,21 @@ individually, keeping the change set small and reversible.
 Integration targets:
 
 - Replace or wrap `physics.js` with the new facade. — not started.
-- Replace preview trajectory logic in `sim.js`. — not started.
+- Replace preview trajectory logic in `sim.js`. — **DONE (2026-06-03), additive
+  variant.** Swapping the preview wholesale would break a deliberate invariant:
+  `predictTrajectory` is identical to the live integrator (both pseudo-Newtonian
+  `phys.acceleration`) so the dashed line matches where the body actually goes.
+  Instead the adaptive integrator is surfaced as a SECOND reference line: the
+  bridge adds `window.KNFull.previewGeodesic(params, x,y,vx,vy)` — maps the demo's
+  equatorial Cartesian launch to a Boyer-Lindquist massive state (coordinate
+  velocity -> ZAMO local 3-velocity), runs `integrateAdaptive`, and returns the
+  same `{ pts, fate }` shape (bounded budget; cached per coarse input bucket;
+  ~0.83 ms/call). `sim.js` adds a throttled `predictGeodesicTrajectory` (reuses the
+  last result between recomputes, single-body only), and `render.js` draws it as a
+  muted violet finely-dashed overlay with a "GR" tag beside the existing fate line.
+  Verified in-browser (Playwright): previewGeodesic classifies bound/escape/capture
+  and rejects superluminal launches; the violet GR line renders distinct from the
+  cyan Newtonian line during an aim drag; no new console errors.
 - Add Object Library data to the current object picker. — **DONE (2026-06-03).**
   `full-physics-bridge.mjs` maps `OBJECT_LIBRARY` onto the demo spawn schema
   (`{ name, name_zh, kind, radius, binding, charge, spawnR }`, kinds collapsed to
@@ -191,8 +205,11 @@ Original files touched: yes, per approved target (so far: `panel-bottom.jsx`,
 
 ## Recommended Next Task
 
-Phase 6 in progress: object library -> picker and MHD jet -> panels have landed.
-Pick the next approved target. Remaining, lowest-risk-first: replace the `sim.js`
-preview trajectory with the adaptive integrator, then wrap `physics.js` with the
-facade, and finally move heavy physics into a Web Worker. Each remains gated on
+Phase 6 in progress: object library -> picker, MHD jet -> panels, and the
+sim.js preview trajectory (additive GR reference line) have landed. Remaining
+targets: wrap `physics.js` with the facade, and move heavy physics into a Web
+Worker. NOTE the preview-line finding generalizes — the live N-body loop is still
+pseudo-Newtonian `phys.acceleration`, so "wrap physics.js with the facade" means
+porting the live integrator (charge, binary, tidal, capture, perf) to the
+adaptive integrator; it is the large, higher-risk target. Each remains gated on
 explicit per-target approval before editing the corresponding root demo file.

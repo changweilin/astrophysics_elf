@@ -507,6 +507,31 @@
     return { pts, fate: 'bound' };
   }
 
+  // Exact-GR companion to predictTrajectory: the full-physics geodesic for the same
+  // launch, drawn as a second reference line so the GR-vs-Newtonian difference is
+  // visible. It does NOT replace predictTrajectory (that one must match the live
+  // pseudo-Newtonian bodies). The bridge (window.KNFull) runs the adaptive
+  // integrator off the legacy engine; this is throttled and the last result is
+  // reused between recomputes so the per-frame aim loop stays smooth. Returns null
+  // when the bridge is unavailable (e.g. not yet loaded) so the caller can skip it.
+  let _g6 = { t: -1e9, x: NaN, y: NaN, vx: NaN, vy: NaN, key: '', value: null };
+  function predictGeodesicTrajectory(sim, x0, y0, vx0, vy0) {
+    const KNFull = window.KNFull;
+    if (!KNFull || typeof KNFull.previewGeodesic !== 'function') return null;
+    // Binary mode is a moving two-body field the single-particle geodesic can't
+    // represent, so only offer the GR line for the isolated central body.
+    if (sim.binary && sim.binary.enabled) return null;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const key = `${sim.params.M}|${sim.params.Q}|${sim.params.a}`;
+    const moved = Math.abs(x0 - _g6.x) + Math.abs(y0 - _g6.y) +
+                  20 * (Math.abs(vx0 - _g6.vx) + Math.abs(vy0 - _g6.vy));
+    // Recompute at most ~15x/s, or sooner if the aim changed appreciably.
+    if (_g6.value && key === _g6.key && now - _g6.t < 70 && moved < 0.15) return _g6.value;
+    const value = KNFull.previewGeodesic(sim.params, x0, y0, vx0, vy0);
+    _g6 = { t: now, x: x0, y: y0, vx: vx0, vy: vy0, key, value };
+    return value;
+  }
+
   function step(sim, realDt) {
     if (sim.paused) return;
     // Total sim-time to advance this frame. The per-macro-step dt is capped at
@@ -645,5 +670,5 @@
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
                    worldToScreen, worldToScreenInto, screenToWorld,
-                   predictTrajectory, predictBinaryTrajectory };
+                   predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

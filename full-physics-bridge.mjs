@@ -24,7 +24,11 @@ import {
   horizonArea,
   surfaceGravity,
   horizonElectricPotential,
+  metric,
+  zamoFrame,
+  makeMassiveState,
 } from "./full-physics/kn-full-physics.mjs";
+import { integrateAdaptive } from "./full-physics/adaptive-integrator.mjs";
 
 const PI_2 = Math.PI / 2;
 const POLE_EPS = 1e-7;
@@ -97,6 +101,7 @@ class FullPhysicsBridge {
     this._orbitCache    = { key: null, value: null };
     this._jetCache      = { key: null, accretion: -1, value: null };
     this._jetDiagCache  = { key: null, value: null };
+    this._previewCache  = { key: null, value: null };
     // Static spawn catalog derived from the full-physics object library.
     this.objectCatalog = buildDemoObjectCatalog();
   }
@@ -253,6 +258,74 @@ class FullPhysicsBridge {
     };
     this._jetDiagCache = { key, value };
     return value;
+  }
+
+  /* Exact-GR trajectory preview for the launch overlay. The demo's
+   * predictTrajectory integrates the pseudo-Newtonian acceleration so the dashed
+   * line matches the live bodies; this returns the EXACT Kerr-Newman geodesic for
+   * the same launch as a second reference line. Inputs/outputs are the demo's
+   * equatorial Cartesian (x, y, vx, vy with c = 1); the result is the same
+   * { pts: [x0,y0,x1,y1,...], fate } shape. Returns { pts: [] } when the launch is
+   * superluminal in these coordinates or the geometry degenerates. Cached on a
+   * coarse bucket of the inputs so a near-stationary aim reuses the path.        */
+  previewGeodesic(params, x0, y0, vx0, vy0, opts = {}) {
+    const p = this.syncParams(params);
+    const snap = (v, s) => Math.round((v || 0) / s) * s;
+    const key = `${paramsKey(p)}|${snap(x0, 0.25)},${snap(y0, 0.25)},${snap(vx0, 0.004)},${snap(vy0, 0.004)}`;
+    if (this._previewCache.key === key) return this._previewCache.value;
+    const value = this._computePreviewGeodesic(p, x0, y0, vx0, vy0, opts) || { pts: [], fate: "bound" };
+    this._previewCache = { key, value };
+    return value;
+  }
+
+  _computePreviewGeodesic(p, x0, y0, vx0, vy0, opts) {
+    const r0 = Math.hypot(x0, y0);
+    if (!(r0 > 1e-3)) return null;
+    const phi0 = Math.atan2(y0, x0);
+    // Equatorial Boyer-Lindquist coordinate velocities from the Cartesian launch.
+    const Vr = (x0 * vx0 + y0 * vy0) / r0;
+    const Vphi = (x0 * vy0 - y0 * vx0) / (r0 * r0);
+    // Project onto the ZAMO orthonormal frame to get the local 3-velocity that
+    // makeMassiveState expects (V^r = alpha vR / sqrt(g_rr); V^phi = omega + alpha vPhi / sqrt(g_phiphi)).
+    let frame, g;
+    try { frame = zamoFrame(p, r0, PI_2); g = metric(p, r0, PI_2); } catch (e) { return null; }
+    const vRloc = (Vr * Math.sqrt(g.cov[1][1])) / frame.alpha;
+    const vPhiloc = ((Vphi - frame.omega) * Math.sqrt(g.cov[3][3])) / frame.alpha;
+    if (!(Math.hypot(vRloc, vPhiloc) < 0.9995)) return null; // superluminal here -> no GR line
+    let state;
+    try {
+      state = makeMassiveState(p, { r: r0, theta: PI_2, phi: phi0, velocity: [vRloc, 0, vPhiloc], chargeToMass: 0 });
+    } catch (e) { return null; }
+
+    const escapeR = opts.escapeRadius ?? 60;
+    let result;
+    try {
+      result = integrateAdaptive(p, state, {
+        targetAffine: opts.targetAffine ?? 45,
+        initialStep: 0.05, minStep: 1e-4, maxStep: 0.6,
+        recordEvery: opts.recordEvery ?? 1,
+        escapeRadius: escapeR,
+        stopAtHorizon: true,
+        horizonBuffer: 1e-2,
+        maxSteps: opts.maxSteps ?? 700,
+      });
+    } catch (e) { return null; }
+
+    const frames = result.frames ?? [];
+    const maxPts = opts.maxPts ?? 480;
+    const pts = [];
+    for (const f of frames) {
+      if (!Number.isFinite(f.r) || !Number.isFinite(f.phi)) continue;
+      pts.push(f.r * Math.cos(f.phi), f.r * Math.sin(f.phi));
+      if (pts.length >= maxPts) break;
+    }
+    const h = horizons(p);
+    const finalR = result.finalState?.r ?? r0;
+    let fate = "bound";
+    if (finalR >= escapeR) fate = "escape";
+    else if (!h.naked && finalR <= h.rPlus + 1e-2) fate = "capture";
+    else if (h.naked && finalR < 0.4) fate = "capture";
+    return { pts, fate };
   }
 }
 
