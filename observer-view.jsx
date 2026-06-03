@@ -254,7 +254,21 @@ function ObserverView({ sim }) {
       const w = c.clientWidth, h = c.clientHeight;
       if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      renderLensTrace(ctx, w, h, traceRef.current);
+      // Base, then a faint copy of the lensed image (the over layer's bitmap is
+      // fully drawn even though CSS clips it) so the ray curves sit on a dim
+      // lens picture — a quick check that the ring centre and the ray fan share
+      // the same centre.
+      ctx.fillStyle = 'oklch(0.08 0.018 255)';
+      ctx.fillRect(0, 0, w, h);
+      const lc = canvasRef.current;
+      if (lc && lc.width > 0) {
+        ctx.save();
+        ctx.globalAlpha = 0.38;
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(lc, 0, 0, w, h);
+        ctx.restore();
+      }
+      renderLensTrace(ctx, w, h, traceRef.current, { skipBackground: true });
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
@@ -284,20 +298,20 @@ function ObserverView({ sim }) {
       </div>
       {!collapsed && (
         <React.Fragment>
-          {/* Two stacked panes split by a draggable divider: the lensed camera
-              image on top, the bent equatorial light-bending curves below. */}
+          {/* Two diagrams wiped by a draggable divider: the lensed camera image
+              over the bent equatorial light-bending curves. Both fill the body
+              and centre on the hole, so the divider only reveals more/less of the
+              top (image) layer over the bottom (trace) layer — nothing rescales. */}
           <div ref={split.containerRef}
                className={`fs-split ${split.dragging ? 'is-splitting' : ''}`}>
-            <div className="fs-pane" style={{ flexGrow: split.frac, flexShrink: 1, flexBasis: 0 }}>
-              <span className="fs-pane-label">{tr('LENS IMAGE', '透鏡圖')}</span>
-              <canvas ref={canvasRef} className="fs-canvas" />
-            </div>
+            <canvas ref={traceCanvasRef} className="fs-canvas fs-under" />
+            <canvas ref={canvasRef} className="fs-canvas fs-over"
+                    style={{ clipPath: `inset(0 0 ${((1 - split.frac) * 100).toFixed(2)}% 0)` }} />
+            <span className="fs-pane-label">{tr('LENS IMAGE', '透鏡圖')}</span>
+            <span className="fs-pane-label fs-label-bottom">{tr('RAY TRACE', '光跡曲線')}</span>
             <div className="fs-divider" onPointerDown={split.onDividerDown}
+                 style={{ top: `${(split.frac * 100).toFixed(2)}%` }}
                  title={tr('drag to compare', '拖曳調整比較')} />
-            <div className="fs-pane" style={{ flexGrow: 1 - split.frac, flexShrink: 1, flexBasis: 0 }}>
-              <span className="fs-pane-label">{tr('RAY TRACE', '光跡曲線')}</span>
-              <canvas ref={traceCanvasRef} className="fs-canvas" />
-            </div>
           </div>
           <div className="view-toggles" style={{ borderTop: '1px solid var(--line)' }}>
             <button className={discOn ? 'on' : ''} onClick={() => setDiscOn(!discOn)}
@@ -326,9 +340,14 @@ function ObserverView({ sim }) {
 // Each traced ray is extended with a straight asymptote at both ends (incoming
 // from, and escaping toward, infinity) so the parallel bundle reads as light
 // arriving from and departing to infinity — captured rays only extend inward.
-function renderLensTrace(ctx, w, h, data) {
-  ctx.fillStyle = 'oklch(0.08 0.018 255)';
-  ctx.fillRect(0, 0, w, h);
+// `opts.skipBackground` leaves the canvas untouched (the caller has already
+// painted a faint lensed-image underlay) so only the grid + rays are drawn.
+function renderLensTrace(ctx, w, h, data, opts) {
+  opts = opts || {};
+  if (!opts.skipBackground) {
+    ctx.fillStyle = 'oklch(0.08 0.018 255)';
+    ctx.fillRect(0, 0, w, h);
+  }
   if (w < 2 || h < 2) return;
 
   const cx = w / 2, cy = h / 2;

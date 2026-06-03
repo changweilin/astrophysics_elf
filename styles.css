@@ -1523,41 +1523,43 @@ html, body {
   background: var(--bg-0);
 }
 
-/* ── Two-pane split body (shared by the Gravitational Field and Gravitational
-   Lens windows) ───────────────────────────────────────────────────────────
-   Two stacked canvases separated by a draggable horizontal divider (knUseSplit).
-   Each pane's share of the height is set inline via flex-grow (frac / 1-frac);
-   the default total height matches the old stacked canvases and flexes to fill
-   when the window is resized. */
+/* ── Two-diagram comparison body (shared by the Gravitational Field and
+   Gravitational Lens windows) ──────────────────────────────────────────────
+   Both diagrams fill the whole body and are drawn centred on the same point
+   (the window centre), stacked exactly on top of each other. A draggable
+   horizontal divider (knUseSplit) only changes how much of the top (over) layer
+   is revealed via clip-path — neither diagram moves, scales, or is compressed.
+   The default height matches the old stacked canvases and flexes when resized. */
 .fs-split {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  height: 236px;            /* ≈ the previous 132 + 104 stacked panes */
+  height: 236px;
   min-height: 0;
+  overflow: hidden;
 }
 .kn-draggable.kn-resized .fs-split { flex: 1 1 auto; min-height: 0; }
-.fs-pane { position: relative; min-height: 0; overflow: hidden; }
-/* Pane canvas fills its pane. Higher specificity than `.field-section .fs-canvas`
-   (and the global `.viewport canvas`) so it isn't pinned to a fixed height. */
-.field-section .fs-pane .fs-canvas {
+/* Both layers fill the body. Higher specificity than `.field-section .fs-canvas`
+   (and the global `.viewport canvas`) so they aren't pinned to a fixed height. */
+.field-section .fs-split .fs-canvas {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   display: block;
   background: var(--bg-0);
 }
+.fs-over { z-index: 1; }                 /* clipped to the region above the divider */
 .fs-pane-label {
-  position: absolute; left: 6px; top: 5px; z-index: 1;
+  position: absolute; left: 6px; top: 5px; z-index: 2;
   font-family: var(--mono); font-size: 8px; letter-spacing: 0.08em;
   color: oklch(0.66 0.012 255 / 0.85);
   pointer-events: none;
 }
-/* Draggable divider — a muted bar with a centred grip and a row-resize cursor.
-   The handler calls stopPropagation so dragging it never moves the window. */
+.fs-label-bottom { top: auto; bottom: 6px; }
+/* Draggable divider line — absolutely positioned at the split fraction (inline
+   top). The handler calls stopPropagation so dragging it never moves the window. */
 .fs-divider {
-  position: relative; flex: 0 0 7px;
+  position: absolute; left: 0; right: 0;
+  height: 7px; margin-top: -4px; z-index: 3;
   cursor: row-resize; touch-action: none;
-  background: oklch(0.18 0.020 255 / 0.85);
+  background: oklch(0.18 0.020 255 / 0.55);
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -1565,13 +1567,12 @@ html, body {
   content: ''; position: absolute;
   left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: 26px; height: 2px; border-radius: 1px;
-  background: oklch(0.55 0.02 255 / 0.55);
+  background: oklch(0.62 0.02 255 / 0.7);
 }
-.fs-divider:hover { background: oklch(0.22 0.03 255 / 0.95); }
-.fs-divider:hover::after { background: oklch(0.78 0.10 75 / 0.75); }
-.fs-split.is-splitting .fs-divider,
-.fs-split.is-splitting .fs-divider:hover { background: oklch(0.24 0.04 75 / 0.55); }
-.fs-split.is-splitting .fs-divider::after { background: oklch(0.82 0.12 75 / 0.85); }
+.fs-divider:hover { background: oklch(0.22 0.03 255 / 0.7); }
+.fs-divider:hover::after { background: oklch(0.78 0.10 75 / 0.8); }
+.fs-split.is-splitting .fs-divider { background: oklch(0.24 0.04 75 / 0.5); }
+.fs-split.is-splitting .fs-divider::after { background: oklch(0.82 0.12 75 / 0.9); }
 
 .hint-pill {
   display: inline-flex; align-items: center; gap: 4px;

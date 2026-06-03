@@ -744,9 +744,13 @@ function MToggle({ label, k, sim, force }) {
 function MViewControls({ sim, force }) {
   const [profOpen, setProfOpen] = useStateApp(false);
   const [profKey, setProfKey] = useStateApp(null);
-  const canvasRef = useRefApp(null);
+  const canvasRef = useRefApp(null);                                      // single-diagram stages (body/MHD)
   const lensRef = useRefApp({ key: null, result: null, pending: false }); // latest off-thread lensing frame
   const lensOffRef = useRefApp(null);                                     // offscreen buffer for scaling
+  const overRef = useRefApp(null);                                        // comparison stage: top (clipped) layer
+  const underRef = useRefApp(null);                                       // comparison stage: bottom layer
+  const traceRef = useRefApp(null);                                       // cached equatorial-ray polylines (lens)
+  const split = knUseSplit('m-profile', 0.5);                             // divider fraction (persisted)
   const hasBin = !!(sim.binary && sim.binary.enabled);
 
   // ── Reference frame ──
@@ -772,18 +776,14 @@ function MViewControls({ sim, force }) {
     targets.push({ key: 'mhd:companion', kind: 'mhd', which: 'companion',
                    label: tr('MHD JET · M2', 'MHD 噴流 · M2') });
   }
-  // Field cross-sections share the same cycler (gravity well of each body + the
-  // GW slice), so the profile window steps through them with everything else.
-  targets.push({ key: 'field:primary', kind: 'field', fieldKind: 'primary',
-                 label: tr('FIELD · M1', '重力場 · M1') });
-  if (hasBin) {
-    targets.push({ key: 'field:companion', kind: 'field', fieldKind: 'companion',
-                   label: tr('FIELD · M2', '重力場 · M2') });
-  }
-  targets.push({ key: 'field:gw', kind: 'field', fieldKind: 'gw',
-                 label: tr('GW SLICE', '重力波剖面') });
-  // Gravitational-lensing observer view shares the cycler. It renders off-thread
-  // via window.KNLensing, so the cost is only paid while this target is active.
+  // Gravitational-field stage: the gravity well and the GW strain as two
+  // diagrams centred on the system centre of mass, wiped by a draggable divider
+  // (mirrors the desktop 重力場圖 window).
+  targets.push({ key: 'field', kind: 'fieldsplit',
+                 label: tr('GRAV FIELD', '重力場圖') });
+  // Gravitational-lensing stage: the lensed image over the bent-ray trace, also
+  // wiped by a draggable divider. Renders off-thread via window.KNLensing, so the
+  // cost is only paid while this target is active.
   targets.push({ key: 'lensing', kind: 'lensing',
                  label: tr('LENSING', '重力透鏡') });
   let tidx = targets.findIndex((t) => t.key === profKey);
@@ -799,18 +799,34 @@ function MViewControls({ sim, force }) {
     force();
   };
 
+  // Lens stage: fetch (and cache) the parallel bent-ray bundle for the trace
+  // layer — light arriving from and departing to infinity on parallel tracks.
   useEffectApp(() => {
-    if (!profOpen || !cur) return;
-    const c = canvasRef.current;
-    if (!c) return;
-    const ctx = c.getContext('2d');
+    if (!profOpen || !cur || cur.kind !== 'lensing') return undefined;
+    const KNL = window.KNLensing;
+    if (!KNL || !KNL.equatorialRays) return undefined;
+    let cancelled = false;
+    const bin = sim.binary, useBin = !!(bin && bin.enabled);
+    const M1 = sim.params.M, M2 = useBin ? (bin.M2 || 0) : 0, totM = M1 + M2;
+    const totQ = sim.params.Q + (useBin ? (bin.Q2 || 0) : 0);
+    const totA = (useBin && totM > 0) ? (M1 * sim.params.a + M2 * (bin.a2 || 0)) / totM : sim.params.a;
+    KNL.equatorialRays({ M: totM, Q: totQ, a: totA, B: sim.params.B },
+      { count: 17, cameraR: 42, parallel: true, targetAffine: 140 })
+      .then((d) => { if (!cancelled) traceRef.current = d; })
+      .catch(() => { /* keep last good curves */ });
+    return () => { cancelled = true; };
+  }, [profOpen, cur ? cur.key : null, sim.params.M, sim.params.Q, sim.params.a]);
+
+  useEffectApp(() => {
+    if (!profOpen || !cur) return undefined;
     let raf;
+    const isLens = cur.kind === 'lensing';
+    const isFieldSplit = cur.kind === 'fieldsplit';
 
     // ── Lensing target: off-thread render + cached-frame blit ──
     // Unlike the synchronous scopes, the lensed image is produced asynchronously
     // by window.KNLensing. We request a render only when (M, Q, a) changes and
     // blit the latest cached frame each tick (cheap key compare per frame).
-    const isLens = cur.kind === 'lensing';
     const KNL = isLens ? window.KNLensing : null;
     const lensCamera = { r: 26, theta: Math.PI / 2 + 0.35, phi: 0, fovY: Math.PI / 2.5 };
     // Trace at the cheap base size (lutWidth/lutHeight) and let the deflection-LUT
@@ -842,7 +858,7 @@ function MViewControls({ sim, force }) {
       KNL.syncParams(p);
       KNL.requestRenderLUT({ params: { ...p }, camera: lensCamera, options: lensOpts, progressive: true });
     }
-    function blitLens(w, h) {
+    function blitLens(ctx, w, h) {
       ctx.fillStyle = 'oklch(0.04 0.005 255)';
       ctx.fillRect(0, 0, w, h);
       const res = lensRef.current.result;
@@ -873,15 +889,50 @@ function MViewControls({ sim, force }) {
       }
     }
 
-    function tick() {
+    // Resize a canvas to its CSS box at device-pixel ratio; returns its context
+    // and CSS size, or null when the canvas is missing or not yet laid out.
+    function prep(c) {
+      if (!c) return null;
       const dpr = window.devicePixelRatio || 1;
       const w = c.clientWidth, h = c.clientHeight;
+      if (w < 1 || h < 1) return null;
       if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+      const ctx = c.getContext('2d');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (isLens) { maybeRequestLens(); blitLens(w, h); }
-      else if (cur.kind === 'body') renderMicroscope(ctx, w, h, cur.body, sim);
-      else if (cur.kind === 'field') renderFieldSection(ctx, w, h, cur.fieldKind, sim);
-      else renderMHDSide(ctx, w, h, sim, mhdView(sim, cur.which));
+      return { ctx, w, h };
+    }
+
+    function tick() {
+      let s;
+      if (isFieldSplit) {
+        // Both slices share the centre of mass and one scale, so they overlap
+        // with their centres at the stage centre; the divider only wipes between
+        // them (clip-path on the over layer) — nothing rescales.
+        const center = knSystemCenter(sim);
+        if ((s = prep(underRef.current))) renderFieldSection(s.ctx, s.w, s.h, 'gw', sim, { center, span: 22 });
+        if ((s = prep(overRef.current))) renderFieldSection(s.ctx, s.w, s.h, 'field', sim, { center, span: 22 });
+      } else if (isLens) {
+        maybeRequestLens();
+        // Draw the lensed image first so the trace layer can copy a fresh, faint
+        // version of it as an underlay (a centre-alignment check).
+        if ((s = prep(overRef.current))) blitLens(s.ctx, s.w, s.h);
+        if ((s = prep(underRef.current))) {
+          s.ctx.fillStyle = 'oklch(0.08 0.018 255)';
+          s.ctx.fillRect(0, 0, s.w, s.h);
+          const lc = overRef.current;
+          if (lc && lc.width > 0) {
+            s.ctx.save();
+            s.ctx.globalAlpha = 0.38;
+            s.ctx.imageSmoothingEnabled = true;
+            s.ctx.drawImage(lc, 0, 0, s.w, s.h);
+            s.ctx.restore();
+          }
+          renderLensTrace(s.ctx, s.w, s.h, traceRef.current, { skipBackground: true });
+        }
+      } else if ((s = prep(canvasRef.current))) {
+        if (cur.kind === 'body') renderMicroscope(s.ctx, s.w, s.h, cur.body, sim);
+        else renderMHDSide(s.ctx, s.w, s.h, sim, mhdView(sim, cur.which));
+      }
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
@@ -912,7 +963,27 @@ function MViewControls({ sim, force }) {
       </div>
       {profOpen && cur && (
         <div className="m-profile-stage">
-          <canvas ref={canvasRef} className="mp-canvas" />
+          {(cur.kind === 'fieldsplit' || cur.kind === 'lensing') ? (
+            <div ref={split.containerRef}
+                 className={`mp-split ${split.dragging ? 'is-splitting' : ''}`}>
+              {/* Both diagrams fill the stage, centred on the same point; the
+                  divider only wipes the top (over) layer over the bottom one. */}
+              <canvas ref={underRef} className="mp-canvas mp-under" />
+              <canvas ref={overRef} className="mp-canvas mp-over"
+                      style={{ clipPath: `inset(0 0 ${((1 - split.frac) * 100).toFixed(2)}% 0)` }} />
+              <span className="mp-label">
+                {cur.kind === 'fieldsplit' ? tr('GRAVITY WELL', '重力場') : tr('LENS IMAGE', '透鏡圖')}
+              </span>
+              <span className="mp-label mp-label-bottom">
+                {cur.kind === 'fieldsplit' ? tr('GW STRAIN', '重力波') : tr('RAY TRACE', '光跡曲線')}
+              </span>
+              <div className="mp-divider" onPointerDown={split.onDividerDown}
+                   style={{ top: `${(split.frac * 100).toFixed(2)}%` }}
+                   title={tr('drag to compare', '拖曳調整比較')} />
+            </div>
+          ) : (
+            <canvas ref={canvasRef} className="mp-canvas" />
+          )}
         </div>
       )}
     </React.Fragment>

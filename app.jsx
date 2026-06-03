@@ -533,10 +533,10 @@ function App() {
         <TidalMicroscope sim={SIM} force={force} />
         <MHDMonitor sim={SIM} force={force} />
 
-        {/* Draggable gravitational-field window (desktop). Two stacked panes —
-            the gravity well over the GW strain, both centred on the system's
-            centre of mass — split by a draggable divider. Clamped to the
-            viewport so it can never be dragged off-screen. */}
+        {/* Draggable gravitational-field window (desktop). The gravity well and
+            the GW strain overlap, centred on the system centre of mass; a
+            draggable divider wipes between them. Clamped to the viewport so it
+            can never be dragged off-screen. */}
         <FieldScope sim={SIM} />
 
         {/* Draggable gravitational-lensing observer view (opt-in via the LENS

@@ -75,6 +75,10 @@ function RightPanel({ sim, force }) {
         <SpacetimeDiagnostics sim={sim} />
       )}
 
+      {fullReady && (
+        <BinaryInspiralDiagnostics />
+      )}
+
       {/* Readouts for the floating scopes — the windows keep only their canvas
           and publish their current selection (sim.tidalBody / sim.mhdActive). */}
       <TidalReadout sim={sim} />
@@ -363,6 +367,86 @@ function SpacetimeDiagnostics({ sim }) {
       </div>
       <div style={{fontFamily:'var(--mono)', fontSize:9, color:'var(--fg-3)', letterSpacing:'0.06em', marginTop:6, lineHeight:1.5}}>
         {tr('Solved against the Kerr-Newman metric directly. ISCO/photon orbits use numerical root-finding on the Hamiltonian.', '直接對 Kerr-Newman 度規求解。ISCO／光子軌道以 Hamiltonian 數值求根計算。')}
+      </div>
+    </div>
+  );
+}
+
+// Two-body inspiral: how many orbits a real binary black hole takes to merge,
+// and how that scales with m1 / m2. Self-contained (its own preset masses in
+// solar masses) — independent of the lab's single-hole (M,Q,a,B).
+const INSPIRAL_PRESETS = [
+  { id: 'gw150914', en: 'GW150914',    zh: 'GW150914',      m1: 36, m2: 29 },
+  { id: 'equal',    en: 'Equal 30+30', zh: '等質量 30+30',  m1: 30, m2: 30 },
+  { id: 'ten',      en: '10:1',        zh: '10:1',          m1: 55, m2: 5.5 },
+  { id: 'emri',     en: 'EMRI 1e6:10', zh: 'EMRI 1e6:10',   m1: 1e6, m2: 10 },
+];
+
+function fmtCount(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (v >= 1e4) return v.toExponential(2);
+  if (v >= 100) return Math.round(v).toLocaleString();
+  return v.toFixed(2);
+}
+
+// Frequency formatter that keeps sub-Hz values (supermassive binaries) readable.
+function fmtHz(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (v !== 0 && v < 0.1) return v.toExponential(1);
+  return v.toFixed(1);
+}
+
+function BinaryInspiralDiagnostics() {
+  const KNFull = window.KNFull;
+  const [presetId, setPresetId] = useStateR('gw150914');
+  const preset = INSPIRAL_PRESETS.find((p) => p.id === presetId) || INSPIRAL_PRESETS[0];
+  const prof = useMemoR(
+    () => KNFull.binaryInspiral({ m1: preset.m1, m2: preset.m2, separationRg: 10, bandLowHz: 35 }),
+    [KNFull, preset.m1, preset.m2]
+  );
+  if (!prof || prof.error) return null;
+  const m = prof.masses;
+  const at = prof.atSeparation || {};
+  const band = prof.band || {};
+
+  return (
+    <div className="section">
+      <div className="section-head">
+        <h3>{tr('Binary Inspiral · Full Engine', '雙星旋近 · 完整引擎')}</h3>
+        <span className="idx">§04c</span>
+      </div>
+      <div style={{display:'flex', gap:6, marginBottom:8}}>
+        {INSPIRAL_PRESETS.map((p) => (
+          <button key={p.id} onClick={() => setPresetId(p.id)}
+            style={{...btnStyle, color: p.id === presetId ? 'var(--bg-0)' : 'var(--cyan)',
+                    background: p.id === presetId ? 'var(--cyan)' : 'var(--bg-0)'}}>
+            {tr(p.en, p.zh)}
+          </button>
+        ))}
+      </div>
+      <div className="telem">
+        <div className="item"><span className="k">m₁ · m₂</span>
+          <span className="v">{fmtNum(m.m1Solar, 1)} · {fmtNum(m.m2Solar, 1)}<small>M☉</small></span></div>
+        <div className="item"><span className="k">{tr('Total · chirp', '總 · 啁啾')}</span>
+          <span className="v">{fmtNum(m.totalSolar, 1)} · {fmtNum(m.chirpSolar, 1)}<small>M☉</small></span></div>
+        <div className="item"><span className="k">{tr('Mass ratio q', '質量比 q')}</span>
+          <span className="v">{fmtNum(m.massRatio, 2)} : 1</span></div>
+        <div className="item"><span className="k" style={{textTransform:'none'}}>η · 1/η</span>
+          <span className="v">{fmtNum(m.symmetricMassRatio, 4)} · {fmtCount(m.orbitCountFactor)}</span></div>
+        <div className="item"><span className="k">{tr('ISCO f_GW', 'ISCO f_GW')}</span>
+          <span className="v">{fmtHz(prof.isco?.gwFrequencyHz)}<small>Hz</small></span></div>
+        <div className="item"><span className="k">{tr('Orbits → merge (10 r_g)', '至合併圈數 (10 r_g)')}</span>
+          <span className="v" style={{color:'var(--cyan)'}}>{fmtCount(at.orbitsToMerge)}</span></div>
+        <div className="item"><span className="k">{tr('In band ≥35 Hz · orbits', '頻帶 ≥35 Hz · 圈')}</span>
+          <span className="v">{band.inBand === false
+            ? <small style={{color:'var(--fg-3)'}}>{tr('out of band', '頻帶外')}</small>
+            : <>{fmtCount(band.orbits)} <small style={{color:'var(--fg-3)'}}>({fmtCount(band.gwCycles)} {tr('cyc', '週期')})</small></>}</span></div>
+        <div className="item"><span className="k">{tr('Band duration', '頻帶時長')}</span>
+          <span className="v">{band.inBand === false ? '—' : <>{fmtNum(band.durationSeconds, 3)}<small>s</small></>}</span></div>
+      </div>
+      <div style={{fontFamily:'var(--mono)', fontSize:9, color:'var(--fg-3)', letterSpacing:'0.06em', marginTop:6, lineHeight:1.5}}>
+        {tr('Peters (1964) quadrupole decay + leading PN phasing. Orbit count scales as 1/η = (m₁+m₂)²/(m₁m₂): equal masses merge fastest, extreme ratios (EMRI) take vastly more orbits.',
+            'Peters (1964) 四極矩衰減 + 主階 PN 相位。圈數正比於 1/η =(m₁+m₂)²/(m₁m₂)：等質量合併最快，極端質量比（EMRI）需多出許多圈。')}
       </div>
     </div>
   );

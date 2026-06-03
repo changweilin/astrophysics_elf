@@ -29,6 +29,11 @@ import {
   integrateKerrSchildAdaptive,
   makeKerrSchildTimelikeState,
 } from "./kerr-schild-geodesics.mjs";
+import {
+  binaryInspiralProfile,
+  chirpMassKg,
+  symmetricMassRatio,
+} from "./binary-inspiral.mjs";
 
 export const DEFAULT_BENCHMARK_THRESHOLDS = Object.freeze({
   schwarzschildISCORelative: 1e-5,
@@ -44,6 +49,8 @@ export const DEFAULT_BENCHMARK_THRESHOLDS = Object.freeze({
   adaptiveEnergyDriftAbsolute: 1e-12,
   adaptiveAngularMomentumDriftAbsolute: 1e-12,
   kerrSchildHamiltonianDriftAbsolute: 1e-6,
+  inspiralChirpMassRelative: 1e-12,
+  inspiralOrbitConsistencyRelative: 1e-9,
 });
 
 function relativeError(actual, expected) {
@@ -368,6 +375,89 @@ export function benchmarkKerrSchildHorizonCrossing(thresholds = DEFAULT_BENCHMAR
   });
 }
 
+export function benchmarkBinaryInspiral(thresholds = DEFAULT_BENCHMARK_THRESHOLDS) {
+  const SOLAR_MASS_KG = 1.98847e30;
+  // Equal-mass chirp mass has the closed form Mc = m / 2^(1/5) for component
+  // mass m, equivalently total M / 2^(6/5).
+  const mEqual = 30 * SOLAR_MASS_KG;
+  const equalChirp = chirpMassKg(mEqual, mEqual);
+  const expectedEqualChirp = mEqual / Math.pow(2, 0.2);
+
+  // GW150914-like masses entering the LIGO band at 35 Hz: a handful of orbits.
+  const profile = binaryInspiralProfile({
+    m1: 36,
+    m2: 29,
+    separationRg: 10,
+    bandLowHz: 35,
+  });
+  const aOrbits = profile.atSeparation.orbitsToMerge;
+  const aCycles = profile.atSeparation.gwCyclesToMerge;
+
+  // Orbit count must scale as 1 / eta: unequal masses do strictly more orbits
+  // at the same separation in gravitational radii.
+  const equalProfile = binaryInspiralProfile({ m1: 30, m2: 30, separationRg: 10 });
+  const skewProfile = binaryInspiralProfile({ m1: 54, m2: 6, separationRg: 10 });
+  const etaRatio = symmetricMassRatio(30, 30) / symmetricMassRatio(54, 6);
+  const orbitRatio = skewProfile.atSeparation.orbitsToMerge /
+    equalProfile.atSeparation.orbitsToMerge;
+
+  return summarizeCase("Binary inspiral (Peters + leading PN phasing)", [
+    makeToleranceCheck(
+      "Equal-mass chirp mass equals M / 2^(1/5)",
+      equalChirp,
+      expectedEqualChirp,
+      thresholds.inspiralChirpMassRelative,
+      "relative",
+    ),
+    makeToleranceCheck(
+      "Orbit count is half the GW cycle count",
+      aOrbits,
+      aCycles / 2,
+      thresholds.inspiralOrbitConsistencyRelative,
+      "relative",
+    ),
+    makeToleranceCheck(
+      "Orbit count scales as 1 / eta with mass ratio",
+      orbitRatio,
+      etaRatio,
+      thresholds.inspiralOrbitConsistencyRelative,
+      "relative",
+    ),
+    makeBooleanCheck(
+      "GW150914-like band orbit count is order ten (1-100)",
+      profile.band.inBand && profile.band.orbits > 1 && profile.band.orbits < 100,
+      { bandOrbits: profile.band.orbits, bandCycles: profile.band.gwCycles },
+    ),
+    makeBooleanCheck(
+      "Supermassive binary is out of a ground-detector band (no negative duration)",
+      (() => {
+        const smbh = binaryInspiralProfile({ m1: 1e6, m2: 10, bandLowHz: 35 });
+        return smbh.band.inBand === false && smbh.band.orbits === 0 &&
+          smbh.band.durationSeconds === 0;
+      })(),
+    ),
+    makeBooleanCheck(
+      "Equal mass has the minimum orbit count factor (1/eta = 4)",
+      Math.abs(equalProfile.masses.orbitCountFactor - 4) < 1e-9 &&
+        skewProfile.masses.orbitCountFactor > 4,
+      {
+        equalFactor: equalProfile.masses.orbitCountFactor,
+        skewFactor: skewProfile.masses.orbitCountFactor,
+      },
+    ),
+  ], {
+    equalChirp,
+    expectedEqualChirp,
+    gw150914: {
+      atSeparation: profile.atSeparation,
+      band: profile.band,
+      chirpSolar: profile.masses.chirpSolar,
+    },
+    orbitRatio,
+    etaRatio,
+  });
+}
+
 export function runPhysicsBenchmarks(options = {}) {
   const thresholds = {
     ...DEFAULT_BENCHMARK_THRESHOLDS,
@@ -379,6 +469,7 @@ export function runPhysicsBenchmarks(options = {}) {
     benchmarkReissnerNordstromCoupling(thresholds),
     benchmarkKerrNewmanCircularAndAdaptive(thresholds),
     benchmarkKerrSchildHorizonCrossing(thresholds),
+    benchmarkBinaryInspiral(thresholds),
   ];
   const checks = cases.flatMap((testCase) => testCase.checks);
   const failedChecks = checks.filter((check) => !check.pass);

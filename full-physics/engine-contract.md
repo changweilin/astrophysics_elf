@@ -324,6 +324,75 @@ Input:
 Output includes the local tidal tensor, eigenvalues, spectral radius,
 differential acceleration, normalized stress, and survival label.
 
+## Binary Inspiral
+
+`engine.binaryInspiral(input)`
+
+Quasi-circular two-body inspiral diagnostics (Peters 1964 decay + leading
+post-Newtonian phasing). Treats both bodies as point masses radiating
+gravitational waves; independent of the engine's Kerr-Newman background. Works
+in SI; masses default to solar masses. Also exported as
+`binaryInspiralProfile` from `physics-engine.mjs`.
+
+Input:
+
+```json
+{
+  "m1": 36,
+  "m2": 29,
+  "massUnit": "solar",
+  "separationRg": 10,
+  "bandLowHz": 35,
+  "bandHighHz": null,
+  "iscoRg": 6,
+  "sweepSamples": 6
+}
+```
+
+`separationRg` is the orbital separation in total-mass gravitational radii
+(`a / r_g`). `bandLowHz`/`bandHighHz` request a detector-band count (default
+high cutoff is the ISCO GW frequency). `sweepSamples` returns a time-sampled
+chirp track.
+
+Output shape:
+
+```json
+{
+  "input": {},
+  "masses": {
+    "m1Solar": 0,
+    "m2Solar": 0,
+    "totalSolar": 0,
+    "chirpSolar": 0,
+    "reducedSolar": 0,
+    "massRatio": 0,
+    "symmetricMassRatio": 0,
+    "orbitCountFactor": 0
+  },
+  "scales": { "gravRadiusMeters": 0, "gravRadiusKm": 0, "lightCrossingTimeSec": 0 },
+  "isco": { "separationRg": 6, "separationMeters": 0, "gwFrequencyHz": 0 },
+  "atSeparation": {
+    "separationRg": 0,
+    "separationMeters": 0,
+    "orbitFrequencyHz": 0,
+    "gwFrequencyHz": 0,
+    "orbitsToMerge": 0,
+    "gwCyclesToMerge": 0,
+    "timeToMergeSeconds": 0
+  },
+  "band": { "lowHz": 0, "highHz": 0, "gwCycles": 0, "orbits": 0, "durationSeconds": 0 },
+  "chirp": [
+    { "timeToMergeSec": 0, "separationRg": 0, "gwFrequencyHz": 0, "cumulativeOrbits": 0 }
+  ]
+}
+```
+
+`atSeparation`, `band`, and `chirp` appear only when the corresponding input is
+provided. The orbit count obeys `orbitsToMerge = gwCyclesToMerge / 2` and scales
+as `1 / symmetricMassRatio = (m1 + m2)^2 / (m1 m2)`, so equal masses give the
+minimum count (`orbitCountFactor = 4`) and extreme ratios give very large
+counts.
+
 ## Simulation And Jet Updates
 
 `engine.stepSimulation(options)`

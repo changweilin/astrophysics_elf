@@ -584,6 +584,7 @@ function TabObjects({ sim, force }) {
   return (
     <>
       {fullReady && <MSpacetimeDiagnostics sim={sim} />}
+      {fullReady && <MBinaryInspiralDiagnostics />}
 
       <div className="m-sec">
         <div className="m-sec-head">
@@ -867,6 +868,70 @@ function MSpacetimeDiagnostics({ sim }) {
             <div className="item"><span className="k">2θ_open</span><span className="v">{mFmt(jet.openingAngleDeg, 1)}°</span></div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Two-body inspiral (mobile): orbits-to-merge and the 1/η mass-ratio scaling.
+// Self-contained preset masses (M☉); independent of the lab's (M,Q,a,B).
+const M_INSPIRAL_PRESETS = [
+  { id: 'gw150914', en: 'GW150914',    zh: 'GW150914',     m1: 36, m2: 29 },
+  { id: 'equal',    en: 'Equal 30+30', zh: '等質量 30+30', m1: 30, m2: 30 },
+  { id: 'ten',      en: '10:1',        zh: '10:1',         m1: 55, m2: 5.5 },
+  { id: 'emri',     en: 'EMRI 1e6:10', zh: 'EMRI 1e6:10',  m1: 1e6, m2: 10 },
+];
+
+function mFmtCount(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (v >= 1e4) return v.toExponential(2);
+  if (v >= 100) return Math.round(v).toLocaleString();
+  return v.toFixed(2);
+}
+
+function mFmtHz(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (v !== 0 && v < 0.1) return v.toExponential(1);
+  return v.toFixed(1);
+}
+
+function MBinaryInspiralDiagnostics() {
+  const KNFull = window.KNFull;
+  const [presetId, setPresetId] = React.useState('gw150914');
+  const preset = M_INSPIRAL_PRESETS.find((p) => p.id === presetId) || M_INSPIRAL_PRESETS[0];
+  const prof = React.useMemo(
+    () => KNFull.binaryInspiral({ m1: preset.m1, m2: preset.m2, separationRg: 10, bandLowHz: 35 }),
+    [KNFull, preset.m1, preset.m2]
+  );
+  if (!prof || prof.error) return null;
+  const m = prof.masses;
+  const at = prof.atSeparation || {};
+  const band = prof.band || {};
+  const chip = (sel) => ({
+    flex: 1, fontFamily: 'var(--mono)', fontSize: 10, padding: '7px 4px',
+    letterSpacing: '0.04em', cursor: 'pointer', border: '1px solid var(--line)',
+    color: sel ? 'var(--bg-0)' : 'var(--cyan)', background: sel ? 'var(--cyan)' : 'var(--bg-0)',
+  });
+  return (
+    <div className="m-sec">
+      <div className="m-sec-head">
+        <h3>{tr('Binary Inspiral · Full Engine', '雙星旋近 · 完整引擎')}</h3>
+        <span className="idx">§04c</span>
+      </div>
+      <div style={{display:'flex', gap:5, marginBottom:8}}>
+        {M_INSPIRAL_PRESETS.map((p) => (
+          <button key={p.id} style={chip(p.id === presetId)} onClick={() => setPresetId(p.id)}>
+            {tr(p.en, p.zh)}
+          </button>
+        ))}
+      </div>
+      <div className="m-telem">
+        <div className="item"><span className="k">m₁ · m₂</span><span className="v">{mFmt(m.m1Solar, 1)} · {mFmt(m.m2Solar, 1)}</span></div>
+        <div className="item"><span className="k">{tr('Total · chirp', '總 · 啁啾')}</span><span className="v">{mFmt(m.totalSolar, 1)} · {mFmt(m.chirpSolar, 1)}</span></div>
+        <div className="item"><span className="k" style={{textTransform:'none'}}>η · 1/η</span><span className="v">{mFmt(m.symmetricMassRatio, 4)} · {mFmtCount(m.orbitCountFactor)}</span></div>
+        <div className="item"><span className="k">ISCO f_GW</span><span className="v">{mFmtHz(prof.isco?.gwFrequencyHz)} Hz</span></div>
+        <div className="item"><span className="k">{tr('Orbits → merge', '至合併圈數')}</span><span className="v" style={{color:'var(--cyan)'}}>{mFmtCount(at.orbitsToMerge)}</span></div>
+        <div className="item"><span className="k">{tr('In band ≥35 Hz', '頻帶 ≥35 Hz')}</span><span className="v">{band.inBand === false ? tr('out of band', '頻帶外') : `${mFmtCount(band.orbits)} ${tr('orb', '圈')}`}</span></div>
       </div>
     </div>
   );

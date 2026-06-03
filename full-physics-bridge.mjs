@@ -29,6 +29,7 @@ import {
   makeMassiveState,
 } from "./full-physics/kn-full-physics.mjs";
 import { integrateAdaptive } from "./full-physics/adaptive-integrator.mjs";
+import { binaryInspiralProfile } from "./full-physics/binary-inspiral.mjs";
 
 const PI_2 = Math.PI / 2;
 const POLE_EPS = 1e-7;
@@ -102,6 +103,7 @@ class FullPhysicsBridge {
     this._jetCache      = { key: null, accretion: -1, value: null };
     this._jetDiagCache  = { key: null, value: null };
     this._previewCache  = { key: null, value: null };
+    this._inspiralCache = { key: null, value: null };
     this._scalarCache   = new Map(); // bucketed (M,Q,a) -> { iscoPrograde, photonPrograde }
     // Static spawn catalog derived from the full-physics object library.
     this.objectCatalog = buildDemoObjectCatalog();
@@ -389,6 +391,21 @@ class FullPhysicsBridge {
       massFlux: g.massFlux ?? 0,
     };
     this._jetDiagCache = { key, value };
+    return value;
+  }
+
+  /* Quasi-circular binary black-hole inspiral (Peters 1964 + leading PN phasing).
+   * Independent of the lab's single-hole (M,Q,a,B): a self-contained two-body
+   * calculator that answers "how many orbits to merge, and how that scales with
+   * m1 / m2". Masses are in solar masses; see full-physics/binary-inspiral.mjs.
+   * Cached on the JSON of the (small) input so a preset toggle is a free lookup. */
+  binaryInspiral(input = {}) {
+    const key = JSON.stringify(input);
+    if (this._inspiralCache.key === key) return this._inspiralCache.value;
+    let value;
+    try { value = binaryInspiralProfile(input); }
+    catch (err) { value = { error: err.message }; }
+    this._inspiralCache = { key, value };
     return value;
   }
 

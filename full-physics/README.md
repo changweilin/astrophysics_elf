@@ -25,6 +25,11 @@ phenomena shown by the current project:
 
 - `kn-full-physics.mjs`: reusable ES module physics engine.
 - `run-sample.mjs`: standalone sample run that prints JSON diagnostics.
+- `binary-inspiral.mjs`: quasi-circular two-body inspiral (Peters 1964 + leading
+  PN phasing) — orbits-to-merge, chirp mass, GW frequency sweep, and the 1/eta
+  mass-ratio scaling. Surfaced via `PhysicsEngine.binaryInspiral`.
+- `run-binary-inspiral-sample.mjs`: prints the inspiral profile for a
+  GW150914-like binary plus a mass-ratio sweep.
 
 ## Run
 

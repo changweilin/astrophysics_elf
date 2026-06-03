@@ -198,11 +198,12 @@ function renderFieldSection(ctx, w, h, kind, sim, opts) {
 }
 
 // ── Desktop: draggable, viewport-clamped window comparing the gravity well and
-//    the GW strain in two stacked panes split by a draggable divider ──────────
-// Both slices are pinned to the system centre of mass at one shared scale, so a
-// point at a given world offset lands at the same pixel in either pane (the
-// gravity well on top, the gravitational-wave strain below). The horizontal
-// divider reallocates height between them.
+//    the GW strain, wiped by a draggable divider ──────────────────────────────
+// Both slices fill the whole body and are pinned to the system centre of mass at
+// one shared scale, so they overlap exactly with their centres at the window
+// centre. The divider only changes how much of the top layer (the gravity well)
+// is revealed over the bottom layer (the GW strain) via clip-path — neither
+// diagram moves or scales while dragging.
 function FieldScope({ sim }) {
   const [collapsed, setCollapsed] = knUseWinPref('field', 'collapsed', false);
   const fieldRef = React.useRef(null);   // top pane: gravity well
@@ -257,16 +258,17 @@ function FieldScope({ sim }) {
       {!collapsed && (
         <div ref={split.containerRef}
              className={`fs-split ${split.dragging ? 'is-splitting' : ''}`}>
-          <div className="fs-pane" style={{ flexGrow: split.frac, flexShrink: 1, flexBasis: 0 }}>
-            <span className="fs-pane-label">{tr('GRAVITY WELL', '重力場')}</span>
-            <canvas ref={fieldRef} className="fs-canvas" />
-          </div>
+          {/* Under: GW strain (shown below the divider). Over: the gravity well,
+              clipped to the region above the divider. Both fill the body and are
+              centred on the same point, so dragging only wipes between them. */}
+          <canvas ref={gwRef} className="fs-canvas fs-under" />
+          <canvas ref={fieldRef} className="fs-canvas fs-over"
+                  style={{ clipPath: `inset(0 0 ${((1 - split.frac) * 100).toFixed(2)}% 0)` }} />
+          <span className="fs-pane-label">{tr('GRAVITY WELL', '重力場')}</span>
+          <span className="fs-pane-label fs-label-bottom">{tr('GW STRAIN', '重力波')}</span>
           <div className="fs-divider" onPointerDown={split.onDividerDown}
+               style={{ top: `${(split.frac * 100).toFixed(2)}%` }}
                title={tr('drag to compare', '拖曳調整比較')} />
-          <div className="fs-pane" style={{ flexGrow: 1 - split.frac, flexShrink: 1, flexBasis: 0 }}>
-            <span className="fs-pane-label">{tr('GW STRAIN', '重力波')}</span>
-            <canvas ref={gwRef} className="fs-canvas" />
-          </div>
         </div>
       )}
       {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}

@@ -49,6 +49,9 @@ import {
   MHDJetEngine,
   jetInputFromSimulator,
 } from "./mhd-jet-engine.mjs";
+import {
+  binaryInspiralProfile,
+} from "./binary-inspiral.mjs";
 
 const DEFAULT_PARAMS = Object.freeze({ M: 1.5, Q: 0.25, a: 1.0, B: 0.4 });
 const BL_MOMENTUM_KEYS = ["Pt", "Pr", "Ptheta", "Pphi"];
@@ -336,6 +339,10 @@ export class PhysicsEngine {
     return tidalTensorDiagnostics(this.params, position, body);
   }
 
+  binaryInspiral(input = {}) {
+    return binaryInspiralProfile(input);
+  }
+
   stepSimulation(options = {}) {
     const steps = options.steps ?? 1;
     const stepSize = options.stepSize ?? this.simulator.options.stepSize;
@@ -377,6 +384,7 @@ export class PhysicsEngine {
 export {
   KerrNewmanSimulator,
   MHDJetEngine,
+  binaryInspiralProfile,
   classifyOrbitRegion,
   findISCO,
   findPhotonCircularOrbit,
