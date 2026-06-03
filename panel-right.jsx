@@ -63,7 +63,7 @@ function RightPanel({ sim, force }) {
       )}
 
       {/* Readouts for the floating scopes — the windows keep only their canvas
-          and publish their current selection (sim.tidalBodyId / sim.mhdActive). */}
+          and publish their current selection (sim.tidalBody / sim.mhdActive). */}
       <TidalReadout sim={sim} />
       <MHDReadout sim={sim} />
 
@@ -489,13 +489,16 @@ function tidalStatusText(body, tidal) {
 function TidalReadout({ sim }) {
   const phys = window.KNphysics;
   if (!phys) return null;
-  const body = sim.bodies.find((b) => b.id === sim.tidalBodyId) || null;
+  // The Tidal Microscope publishes the resolved target (a placed body or the
+  // binary-companion pseudo-body); the latter carries its own tidal-source mass.
+  const body = sim.tidalBody || null;
+  const srcM = (body && body.tidalM != null) ? body.tidalM : sim.params.M;
   const r = body ? Math.hypot(body.x, body.y) : 0;
   const tidal = body && body.state === 'orbit'
-    ? phys.tidalStress(r, sim.params.M, body.radius || 0.4, body.binding || 1) : 0;
+    ? phys.tidalStress(r, srcM, body.radius || 0.4, body.binding || 1) : 0;
   const integrity = body ? Math.max(0, Math.min(1, 1 - tidal)) : 0;
   const dA = body && r > 0.01
-    ? (300 * sim.params.M * (body.radius || 0.4)) / (r * r * r) : 0;
+    ? (300 * srcM * (body.radius || 0.4)) / (r * r * r) : 0;
   const fillColor = tidal > 0.85 ? 'var(--warn)' : tidal > 0.5 ? 'var(--amber)' : 'var(--cyan)';
   return (
     <div className="section">

@@ -3,10 +3,50 @@
  * the post-disruption debris stream when it spaghettifies.
  */
 
+// Sentinel id for the binary-companion pseudo-target (real body ids are numbers).
+const KN_COMPANION_ID = '__companion__';
+
+// Build a body-like target for the binary's companion so it can be inspected in
+// the microscope. The companion is the SMALLER-mass star of the pair (auto-judged
+// by mass); it is stretched by the tidal field of the larger star. Coordinates
+// are expressed relative to that larger star, so r = the current separation and
+// the source sits in the "toward centre" direction the microscope already draws.
+// Returns null when no binary is active.
+function companionTidalTarget(sim) {
+  const bin = sim.binary;
+  if (!bin || !bin.enabled) return null;
+  const M1 = sim.params.M, M2 = bin.M2 || 0;
+  const compIsSecond = M2 <= M1;   // the smaller mass is the companion (伴星)
+  const small = compIsSecond
+    ? { m: M2, type: bin.type, R: bin.R_star2 || 3, x: bin.x2, y: bin.y2, a: bin.a2 || 0, Q: bin.Q2 || 0 }
+    : { m: M1, type: sim.params.type, R: sim.params.R_star || 3, x: bin.x1, y: bin.y1, a: sim.params.a || 0, Q: sim.params.Q || 0 };
+  const large = compIsSecond ? { m: M1, x: bin.x1, y: bin.y1 } : { m: M2, x: bin.x2, y: bin.y2 };
+  let radius = small.R;
+  if ((small.type || 'bh') === 'bh') {
+    const phys = window.KNphysics;
+    const hz = phys ? phys.horizons(small.m, small.Q, small.a) : null;
+    radius = (hz && hz.rplus) ? hz.rplus : Math.max(0.5, small.m);
+  }
+  return {
+    id: KN_COMPANION_ID,
+    isCompanion: true,
+    name: tr('Companion star', '伴星'),
+    kind: 'star',
+    state: 'orbit',
+    radius,
+    binding: 1,
+    x: small.x - large.x,
+    y: small.y - large.y,
+    tidalM: large.m,   // tidal stress is sourced by the larger star
+  };
+}
+
 function TidalMicroscope({ sim, force }) {
   const [collapsed, setCollapsed] = knUseWinPref('tidal', 'collapsed', false);
   const [pinnedId, setPinnedId] = React.useState(null);
+  const [pickCompanion, setPickCompanion] = React.useState(false);
   const canvasRef = React.useRef(null);
+  const bodyRef = React.useRef(null);   // current target, read live by the draw loop
   const phys = window.KNphysics;
   const drag = knUseDragMove('tidal');   // drag-to-move + resize (persisted; CSS spot until moved)
   React.useEffect(() => { drag.reclamp(); }, [collapsed]);
@@ -14,29 +54,46 @@ function TidalMicroscope({ sim, force }) {
   // Track selected, but remember the most-recently-disrupted body for a few
   // seconds even after the user clicks elsewhere — TDE is the headline event.
   const sel = sim.bodies.find((b) => b.id === sim.selectedId);
-  const body = sel || sim.bodies.find((b) => b.id === pinnedId);
-  // Publish the inspected body so the sidebar readout (panel-right §04c) mirrors
-  // it — the numeric data table now lives there, the window is just the close-up.
-  sim.tidalBodyId = body ? body.id : null;
+  const realBody = sel || sim.bodies.find((b) => b.id === pinnedId);
 
-  // Step the inspected target to the previous/next placed body.
+  // The smaller of a binary pair is also inspectable (stretched by the larger
+  // star). It is picked via the same target cycler.
+  const companion = companionTidalTarget(sim);
+  const compActive = pickCompanion && !!companion;
+  const body = compActive ? companion
+             : (realBody || (companion && sim.bodies.length === 0 ? companion : null));
+
+  // Publish the resolved target (real body or companion pseudo-body) so the
+  // sidebar readout (panel-right §04c) mirrors it; the window is just the close-up.
+  sim.tidalBody = body || null;
+  bodyRef.current = body;
+
+  // Selectable targets: placed bodies plus the binary companion.
+  const targets = companion ? sim.bodies.concat([companion]) : sim.bodies;
+
+  // Step the inspected target to the previous/next entry (placed body ↔ companion).
   function cycleBody(dir) {
-    const list = sim.bodies;
-    if (list.length < 2) return;
-    let idx = list.findIndex((b) => b.id === (body ? body.id : null));
+    if (targets.length < 2) return;
+    const curId = body ? body.id : null;
+    let idx = targets.findIndex((t) => t.id === curId);
     if (idx < 0) idx = 0;
-    const next = list[(idx + dir + list.length) % list.length];
-    sim.selectedId = next.id;
-    setPinnedId(null);   // an explicit pick overrides the disruption auto-pin
+    const next = targets[(idx + dir + targets.length) % targets.length];
+    if (next.id === KN_COMPANION_ID) {
+      setPickCompanion(true);
+    } else {
+      setPickCompanion(false);
+      sim.selectedId = next.id;
+      setPinnedId(null);   // an explicit pick overrides the disruption auto-pin
+    }
     force();
   }
 
   React.useEffect(() => {
-    // Pin if a disruption just happened
+    // Pin if a disruption just happened (and pull focus off the companion).
     const recent = sim.bodies
       .filter((b) => b.state === 'spaghettified' && (sim.t - (b.consumedAt || 0)) < 5)
       .sort((a, b) => (b.consumedAt || 0) - (a.consumedAt || 0))[0];
-    if (recent) setPinnedId(recent.id);
+    if (recent) { setPinnedId(recent.id); setPickCompanion(false); }
   }, [sim.bodies.map((b) => b.state).join(',')]);
 
   React.useEffect(() => {
@@ -52,18 +109,20 @@ function TidalMicroscope({ sim, force }) {
         c.width = w * dpr; c.height = h * dpr;
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      renderMicroscope(ctx, w, h, body, sim);
+      renderMicroscope(ctx, w, h, bodyRef.current, sim);
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [collapsed, body]);
+  }, [collapsed]);
 
   // Kept for the collapsed mini integrity bar; the full numeric readout (Δg,
   // stretch ratio, status) now renders in the right sidebar (panel-right §04c).
+  // The tidal source mass is the body's own (companion → the larger star).
   const r = body ? Math.hypot(body.x, body.y) : 0;
+  const srcM = (body && body.tidalM != null) ? body.tidalM : sim.params.M;
   const tidal = body && body.state === 'orbit'
-    ? phys.tidalStress(r, sim.params.M, body.radius || 0.4, body.binding || 1) : 0;
+    ? phys.tidalStress(r, srcM, body.radius || 0.4, body.binding || 1) : 0;
   const integrity = body ? Math.max(0, Math.min(1, 1 - tidal)) : 0;
 
   return (
@@ -79,7 +138,7 @@ function TidalMicroscope({ sim, force }) {
                 onPointerUp={() => { if (!drag.movedRef.current) setCollapsed(!collapsed); }}>{tr('TIDAL MICROSCOPE', '潮汐顯微鏡')}</span>
         </div>
         <div className="mh-right">
-          {sim.bodies.length > 1 ? (
+          {targets.length > 1 ? (
             <span className="mh-switch"
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}>
@@ -154,8 +213,11 @@ function renderMicroscope(ctx, w, h, body, sim) {
 
   const phys = window.KNphysics;
   const r = Math.hypot(body.x, body.y);
+  // Tidal source mass: the body's own override (companion → larger star) or the
+  // central object for ordinary placed bodies.
+  const srcM = (body.tidalM != null) ? body.tidalM : sim.params.M;
   const tidal = body.state === 'orbit'
-    ? phys.tidalStress(r, sim.params.M, body.radius || 0.4, body.binding || 1) : 0;
+    ? phys.tidalStress(r, srcM, body.radius || 0.4, body.binding || 1) : 0;
   const cx = w / 2, cy = h / 2;
 
   // unit radial vector (pointing TOWARD BH from body)
