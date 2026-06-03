@@ -104,6 +104,18 @@ html, body {
   display: flex; gap: 10px; align-items: center;
 }
 .m-head .session .live { color: var(--cyan); }
+.m-head .topbar-link {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 7px;
+  text-decoration: none;
+}
+.m-head .topbar-link:active { border-color: var(--amber-dim); color: var(--amber); }
 
 /* Language selector */
 .lang-select {

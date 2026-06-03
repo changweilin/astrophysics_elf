@@ -475,6 +475,9 @@ function App() {
           <span>{tr('SUBSTEP', '子步')} <b>4×</b></span>
           <span>{tr('FRAME', '座標系')} <b>BL-COORDS</b></span>
           <span className="ok">● {tr('LIVE', '即時')}</span>
+          <a className="topbar-link" href="learn.html" title={tr('Physics primer — illustrated guide to every phenomenon', '物理導讀——逐項圖解所有現象')}>
+            {tr('LEARN', '教學')}
+          </a>
           <LangToggle force={force} />
         </div>
       </div>

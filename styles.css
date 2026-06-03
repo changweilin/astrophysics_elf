@@ -110,6 +110,21 @@ html, body {
 .topbar .session b { color: var(--amber); font-weight: 500; }
 .topbar .session .ok { color: var(--cyan); }
 
+/* LEARN link → physics primer (learn.html). Sits in the session group. */
+.topbar-link {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 9px;
+  text-decoration: none;
+  transition: border-color 0.12s, color 0.12s;
+}
+.topbar-link:hover { border-color: var(--amber-dim); color: var(--amber); }
+
 /* ---------- Language selector ---------- */
 .lang-select {
   background: var(--bg-0, #0b0d12);

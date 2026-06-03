@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Black Hole Lab — Physics Primer · 黑洞實驗室 物理導讀</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="/logos/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/logos/favicon-16.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="/logos/apple-touch-icon.png" />
+<meta name="theme-color" content="#0b0d12" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="learn.css" />
+</head>
+<body>
+<header class="lp-top">
+  <a class="brand" href="index.html" title="Back to the lab">
+    <img src="/logos/icon-192.png" alt="Astro ELF" width="24" height="24" />
+    <span><strong>ASTRO ELF</strong></span>
+  </a>
+  <div class="spacer"></div>
+  <select class="lp-lang" id="lp-lang" aria-label="language"></select>
+  <a class="lp-back" href="index.html">&larr; LAB</a>
+</header>
+
+<div class="lp-shell">
+  <main class="lp-main" id="lp-main">
+    <div class="lp-loading">loading primer…</div>
+  </main>
+  <nav class="lp-toc" aria-label="contents">
+    <p class="toc-title">Contents · 索引</p>
+    <ol id="lp-toc-list"></ol>
+  </nav>
+</div>
+
+<!-- Content data first, then the renderer. Both are plain JS (no Babel). -->
+<script src="learn-content.js"></script>
+<script src="learn.js"></script>
+</body>
+</html>
