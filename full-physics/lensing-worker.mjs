@@ -42,6 +42,10 @@ import {
   localDiskVelocity,
   renderDiscHit,
 } from "./radiation-models.mjs";
+import {
+  findISCO,
+  solveCircularMassiveOrbit,
+} from "./orbit-diagnostics.mjs";
 
 const TAU = Math.PI * 2;
 
@@ -208,8 +212,11 @@ function discRedshiftExact(params, hit, camera, trace) {
  * whole photon+crossing rigidly, leaving P_r (and Pt/Pphi) at the crossing unchanged. */
 
 // Conserved (E, L) of the marginally stable circular orbit, evaluated once per
-// build. E = -u_t, L = u_phi of the ISCO circular orbit.
-function iscoConservedEL(params, prograde = true) {
+// build. E = -u_t, L = u_phi at the ISCO. The charge-ignoring Kerr analytic ISCO
+// is the fallback; the primary path uses the benchmarked numeric Kerr-Newman ISCO
+// solver (findISCO) and reads E, L straight off the converged circular orbit so
+// the charge Q enters both the radius and the conserved quantities.
+function iscoConservedELApprox(params, prograde = true) {
   const rIsco = iscoRadiusKerrApprox(params, prograde);
   const u = discFourVelocity(params, rIsco, prograde); // [u^t, 0, 0, u^phi]
   if (!u) return null;
@@ -219,6 +226,19 @@ function iscoConservedEL(params, prograde = true) {
   const uPcov = cov[3][0] * u[0] + cov[3][3] * u[3];
   if (!Number.isFinite(uTcov) || !Number.isFinite(uPcov)) return null;
   return { rIsco, E: -uTcov, L: uPcov };
+}
+
+function iscoConservedEL(params, prograde = true) {
+  try {
+    const isco = findISCO(params, { prograde, rMax: 30 * (params.M ?? 1) });
+    if (isco?.found && Number.isFinite(isco.rISCO)) {
+      const orbit = solveCircularMassiveOrbit(params, { r: isco.rISCO, prograde });
+      if (Number.isFinite(orbit?.energy) && Number.isFinite(orbit?.angularMomentumZ)) {
+        return { rIsco: isco.rISCO, E: orbit.energy, L: orbit.angularMomentumZ };
+      }
+    }
+  } catch (e) { /* fall back to the Kerr analytic ISCO */ }
+  return iscoConservedELApprox(params, prograde);
 }
 
 // Equatorial timelike geodesic 4-velocity with conserved (E, L), infalling (u^r < 0).
@@ -276,13 +296,22 @@ function discRedshiftPlunge(params, hit, camera, trace, iscoEL) {
   return Number.isFinite(rf.g) ? clamp(rf.g, 0.05, 8) : null;
 }
 
-/* Resolve the disc redshift g at a crossing: exact circular emitter outside the
- * ISCO, geodesic plunging emitter inside it, kinematic estimate as last resort. */
+/* Resolve the disc redshift g at a crossing. The ISCO is the physical boundary:
+ * outside it the gas is on a stable circular orbit (exact circular emitter); inside
+ * it the gas plunges geodesically (plunging emitter). The split is on r vs r_ISCO,
+ * NOT on whether a circular orbit exists — timelike but UNSTABLE circular orbits
+ * persist between the photon orbit and the ISCO, yet accreting gas does not occupy
+ * them, so discRedshiftExact must not be used there. Kinematic estimate is the last
+ * resort (degenerate frames, or no ISCO found). */
 function resolveDiscG(params, hit, camera, trace, geom) {
-  const exact = discRedshiftExact(params, hit, camera, trace);
-  if (exact != null) return exact;
-  const plunge = discRedshiftPlunge(params, hit, camera, trace, geom?.iscoEL);
-  if (plunge != null) return plunge;
+  const iscoEL = geom?.iscoEL;
+  if (iscoEL && hit.r < iscoEL.rIsco) {
+    const plunge = discRedshiftPlunge(params, hit, camera, trace, iscoEL);
+    if (plunge != null) return plunge;
+  } else {
+    const exact = discRedshiftExact(params, hit, camera, trace);
+    if (exact != null) return exact;
+  }
   return discShiftApprox(params, hit, camera);
 }
 
@@ -331,6 +360,10 @@ function shadeSample(params, sample, camera, disc, geom, options) {
       ...disc,
       redshiftFactor: g,
       inclination: camera.theta,
+      // Pin the radiative zero-torque boundary at the ISCO (not the geometric
+      // inner edge): the bright inner edge stays at the ISCO and a disc reaching
+      // into the plunging region is dim there, matching the thin-disc model.
+      torqueRadius: geom?.iscoEL?.rIsco,
     });
     const fc = composeFalseColor(rendered.observedIntensity, {
       exposure: disc.exposure ?? 140,

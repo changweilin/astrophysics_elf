@@ -20,7 +20,9 @@
  */
 
 import { renderLensingImage, buildDeflectionLUT, shadeLUTImage } from "./lensing-worker.mjs";
-import { iscoRadiusKerrApprox, horizons } from "./kn-full-physics.mjs";
+import { horizons } from "./kn-full-physics.mjs";
+import { findISCO } from "./orbit-diagnostics.mjs";
+import { novikovThorneLikeFlux } from "./radiation-models.mjs";
 
 const params = { M: 1.5, Q: 0.22, a: 0.6, B: 0.4 };
 const camera = { r: 26, theta: Math.PI / 2 + 0.32, phi: 0.0, fovY: Math.PI / 2.5, localEnergy: 1 };
@@ -95,7 +97,7 @@ const discRedshift = gN
 // whose inner edge reaches well inside the ISCO (between r+ and the ISCO) so the
 // geodesic plunging emitter is exercised. Every inside-ISCO crossing must give a
 // finite positive g, and that inside-ISCO range must still straddle 1.
-const isco = iscoRadiusKerrApprox(params, true);
+const isco = findISCO(params, { prograde: true, rMax: 30 * params.M }).rISCO;
 const rPlus = horizons(params).rPlus;
 const plungeDisc = { ...disc, innerR: rPlus + 0.4 * (isco - rPlus), outerR: isco * 4 };
 const plungeLUT = buildDeflectionLUT(params, camera, { width: baseW, height: baseH, ...traceOpts, disc: plungeDisc });
@@ -113,6 +115,23 @@ const plungeRedshift = pInside
   ? { insideIscoHits: pInside, nonFiniteOrNegative: pBad, gMin: +pgMin.toFixed(3), gMax: +pgMax.toFixed(3),
       iscoRadius: +isco.toFixed(3), discInnerR: +plungeDisc.innerR.toFixed(3) }
   : { insideIscoHits: 0 };
+
+// (5) Zero-torque boundary pinned at the ISCO (emissivity). For a disc whose
+// geometric inner edge is inside the ISCO, the radiative flux must vanish in the
+// plunging region (torque boundary at the ISCO) yet emit just outside it — so the
+// bright inner edge stays at the ISCO no matter how far the material extends in.
+const rPlunge = 0.5 * (plungeDisc.innerR + isco); // a radius inside the ISCO
+const rOuter = isco * 1.3;                         // a radius outside the ISCO
+const fluxOpts = { accretionRate: 0.08, innerR: plungeDisc.innerR };
+const fluxPlungePinned = novikovThorneLikeFlux(params, rPlunge, { ...fluxOpts, torqueRadius: isco });
+const fluxPlungeUnpinned = novikovThorneLikeFlux(params, rPlunge, fluxOpts);
+const fluxOuterPinned = novikovThorneLikeFlux(params, rOuter, { ...fluxOpts, torqueRadius: isco });
+const zeroTorque = {
+  rPlunge: +rPlunge.toFixed(3),
+  fluxInsideIscoPinned: fluxPlungePinned,        // expect 0 (plunging region dark)
+  fluxInsideIscoDefault: +fluxPlungeUnpinned.toExponential(2), // > 0 (old innerR-cutoff behavior)
+  fluxOutsideIscoPinned: +fluxOuterPinned.toExponential(2),    // > 0 (bright edge at ISCO)
+};
 
 const RAMP = " .:-=+*#%@";
 function ascii(buf, w, h) {
@@ -142,6 +161,7 @@ console.log(JSON.stringify({
   },
   discRedshift,
   plungeRedshift,
+  zeroTorque,
   photonRing: lut.photonRing,
   counts: lut.counts,
 }, null, 2));
@@ -160,6 +180,9 @@ if (gN && !(gMin < 1 && gMax > 1)) problems.push(`disc redshift range did not st
 if (!pInside) problems.push("plunging-region disc produced no inside-ISCO crossings — test no longer exercises the plunging path");
 if (pBad) problems.push(`plunging-region redshift produced ${pBad} non-finite/non-positive g values inside the ISCO`);
 if (pInside && !(pgMin < 1 && pgMax > 1)) problems.push(`inside-ISCO redshift range did not straddle g=1 (g in [${pgMin.toFixed(3)}, ${pgMax.toFixed(3)}])`);
+if (fluxPlungePinned !== 0) problems.push(`zero-torque boundary not at ISCO: flux inside the ISCO is ${fluxPlungePinned} (expected 0)`);
+if (!(fluxPlungeUnpinned > 0)) problems.push("default (innerR-cutoff) flux inside ISCO was not positive — torqueRadius option is not actually changing behavior");
+if (!(fluxOuterPinned > 0)) problems.push("flux just outside the ISCO was not positive — bright inner edge is missing");
 if (problems.length) {
   console.error("\nFAIL:\n- " + problems.join("\n- "));
   process.exit(1);

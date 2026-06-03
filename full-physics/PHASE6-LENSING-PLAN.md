@@ -291,11 +291,37 @@ crossing enters -k.u; the adaptive integrator now records `Pr`/`Ptheta` per
 frame and `crossingRadialMomentum` interpolates P_r at the equatorial crossing
 (u^theta is still 0, so P_theta drops out). g stays azimuth-invariant (an
 azimuth rotation moves photon + crossing rigidly), so the per-pixel LUT cache is
-preserved; `discShiftApprox` is now only a last-resort fallback. Verified: with a
-disc reaching inside the ISCO, 356/356 inside-ISCO hits give finite positive g in
-0.34..1.46 (straddles 1, deeper redshift than the circular region from the
-extra infall); disc g straddles 1, LUT base shade still matches the direct
+preserved; `discShiftApprox` is now only a last-resort fallback.
+
+Two refinements followed: (a) `iscoConservedEL` now takes the ISCO radius AND the
+conserved (E, L) from the benchmarked Kerr-Newman numeric solver (`findISCO` +
+`solveCircularMassiveOrbit` in `orbit-diagnostics.mjs`), so the charge Q enters
+both — for M=1.5, Q=0.22, a=0.6 the exact ISCO is 6.865 vs the charge-ignoring
+Kerr value 6.922; `iscoConservedELApprox` (Kerr analytic) is the fallback. (b)
+`resolveDiscG` now splits on r vs r_ISCO directly rather than on whether a
+circular orbit exists: timelike but UNSTABLE circular orbits persist between the
+photon orbit and the ISCO, but accreting gas does not occupy them, so the whole
+r < r_ISCO band uses the plunging emitter. Verified by
+`run-lensing-lut-sample.mjs` (check 4): a disc reaching inside the ISCO yields
+inside-ISCO crossings whose g are all finite/positive and straddle 1 (deeper
+redshift than the circular region from the extra infall), asserted as a hard
+regression gate; disc g straddles 1, LUT base shade still matches the direct
 render byte-for-byte, benchmarks 26/26, muted in-browser.
+
+**Inside-ISCO emissivity / zero-torque boundary: DONE.** With the plunging
+redshift correct, the remaining question was where the disc actually emits inside
+the ISCO. The thin-disc answer (chosen): the viscous zero-torque boundary belongs
+at the ISCO, not at the disc's geometric inner edge. `novikovThorneLikeFlux` now
+takes an optional `torqueRadius` (defaults to `innerR`, so all existing callers
+are byte-identical); the lensing render passes `geom.iscoEL.rIsco`, so the
+`1 - sqrt(r_torque/r)` factor pins the bright inner edge at the ISCO and clamps to
+0 inside it — a disc reaching into the plunging region stays dim there (and the
+plunging redshift still modulates the residual/edge emission). Verified by
+`run-lensing-lut-sample.mjs` (check 5): for a disc with innerR < ISCO, flux inside
+the ISCO is exactly 0 with the pin (vs > 0 without it) and > 0 just outside the
+ISCO; asserted as a hard gate. A finite-ISCO-torque (Agol-Krolik) model that lets
+the plunging region glow was considered and deferred in favour of the zero-torque
+thin-disc model. Benchmarks 26/26, all smoke samples green.
 
 **Starfield warp (P6.1 note): DONE (validated near-exact).** The literal fix
 (longer affine budget so rays escape) was measured impractical (10-70 s/build at

@@ -35,10 +35,18 @@ export function diskInnerRadius(params = {}, options = {}) {
 export function novikovThorneLikeFlux(params = {}, r, options = {}) {
   const p = sanitizeParams(params);
   const mdot = Math.max(0, options.accretionRate ?? 0.05);
-  const innerR = diskInnerRadius(p, options);
+  const innerR = diskInnerRadius(p, options);          // geometric inner edge (no disc material inside)
   if (!Number.isFinite(r) || r <= innerR) return 0;
-  const noTorqueFactor = Math.max(0, 1 - Math.sqrt(innerR / Math.max(r, EPS)));
-  const relativisticDimming = 1 / (1 + 0.35 * Math.abs(p.a / p.M) * (innerR / r) ** 1.5);
+  // The viscous zero-torque boundary is physically the ISCO, not the disc's
+  // geometric inner edge: torque vanishes at the marginally stable orbit, so the
+  // emitted flux peaks just outside the ISCO regardless of how far disc material
+  // extends inward. Callers that model a disc reaching into the plunging region
+  // pass `torqueRadius` = ISCO; the no-torque factor then clamps to 0 inside it
+  // (the plunging region stays dim), keeping the bright inner edge pinned at the
+  // ISCO. Defaults to innerR so existing callers are unchanged.
+  const torqueR = Number.isFinite(options.torqueRadius) ? options.torqueRadius : innerR;
+  const noTorqueFactor = Math.max(0, 1 - Math.sqrt(torqueR / Math.max(r, EPS)));
+  const relativisticDimming = 1 / (1 + 0.35 * Math.abs(p.a / p.M) * (torqueR / r) ** 1.5);
   return (3 * p.M * mdot / (8 * Math.PI * r ** 3)) * noTorqueFactor * relativisticDimming;
 }
 
