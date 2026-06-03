@@ -257,6 +257,11 @@ export function integrateAdaptive(params, initialState, options = {}) {
         t: state.t,
         energy: -state.Pt,
         angularMomentumZ: state.Pphi,
+        // Non-conserved momenta, recorded so downstream consumers can reconstruct
+        // the local 4-momentum at an interpolated crossing (e.g. the lensing disc
+        // plunging-region redshift, which needs P_r where u^r != 0).
+        Pr: state.Pr,
+        Ptheta: state.Ptheta,
         hamiltonian: state.lastHamiltonian,
         hamiltonianDrift: state.hamiltonianDrift,
         errorNorm: result.errorNorm,

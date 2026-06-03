@@ -21,6 +21,7 @@
 import {
   clamp,
   contravariantVelocity,
+  iscoRadiusKerrApprox,
   metric,
   orbitalOmegaKerrNewman,
   sanitizeParams,
@@ -168,22 +169,121 @@ function discFourVelocity(params, r, prograde = true) {
   return [ut, 0, 0, ut * omega];
 }
 
+// The camera observer is a ZAMO at the camera position (only t/phi components),
+// shared by the circular and plunging redshift paths. Returns null if the ZAMO
+// frame degenerates (camera inside the ergoregion edge cases).
+function cameraObserverFourVelocity(params, camera) {
+  try {
+    const theta = clamp(camera.theta ?? Math.PI / 2, 1e-7, Math.PI - 1e-7);
+    return zamoFrame(params, camera.r ?? 24, theta).eT;
+  } catch (e) { return null; }
+}
+
 function discRedshiftExact(params, hit, camera, trace) {
   const fs = trace?.result?.finalState;
   const Pt = fs?.Pt;
   const Pphi = fs?.Pphi;
   if (!Number.isFinite(Pt) || !Number.isFinite(Pphi)) return null;
   const uEmit = discFourVelocity(params, hit.r, true);
-  if (!uEmit) return null;
-  let uObs;
-  try {
-    const theta = clamp(camera.theta ?? Math.PI / 2, 1e-7, Math.PI - 1e-7);
-    uObs = zamoFrame(params, camera.r ?? 24, theta).eT;
-  } catch (e) { return null; }
+  if (!uEmit) return null; // no timelike circular orbit (inside ISCO) -> plunging path
+  const uObs = cameraObserverFourVelocity(params, camera);
+  if (!uObs) return null;
   // Only Pt/Pphi enter (the 4-velocities have no r/theta parts), so leave Pr/Ptheta zero.
   const photonState = { r: hit.r, theta: Math.PI / 2, phi: hit.phi, Pt, Pr: 0, Ptheta: 0, Pphi };
   const rf = redshiftFactor(params, photonState, { fourVelocity: uEmit }, { fourVelocity: uObs });
   return Number.isFinite(rf.g) ? clamp(rf.g, 0.05, 8) : null;
+}
+
+/* ---- inside-ISCO plunging-region disc redshift (PHASE6-LENSING-PLAN sec 7) -- *
+ * Down to the ISCO the disc follows stable circular geodesics, so discRedshiftExact
+ * (the circular emitter) applies. Inside the ISCO no timelike circular orbit exists
+ * and the previous code dropped back to the kinematic discShiftApprox. Instead model
+ * the gas as geodesically PLUNGING: it leaves the marginally stable orbit carrying
+ * that orbit's conserved energy E_isco and angular momentum L_isco (Cunningham 1975;
+ * Reynolds & Begelman 1997), so the emitter at r < r_isco is the equatorial timelike
+ * geodesic with (E,L) = (E_isco, L_isco). Unlike the circular case this u^mu has a
+ * radial part u^r != 0, so the photon's own radial momentum P_r at the crossing now
+ * enters -k.u and must be supplied (u^theta is still 0, so P_theta drops out). The
+ * factor stays azimuth-invariant for the LUT: rotating the camera azimuth rotates the
+ * whole photon+crossing rigidly, leaving P_r (and Pt/Pphi) at the crossing unchanged. */
+
+// Conserved (E, L) of the marginally stable circular orbit, evaluated once per
+// build. E = -u_t, L = u_phi of the ISCO circular orbit.
+function iscoConservedEL(params, prograde = true) {
+  const rIsco = iscoRadiusKerrApprox(params, prograde);
+  const u = discFourVelocity(params, rIsco, prograde); // [u^t, 0, 0, u^phi]
+  if (!u) return null;
+  let cov;
+  try { cov = metric(params, rIsco, Math.PI / 2).cov; } catch (e) { return null; }
+  const uTcov = cov[0][0] * u[0] + cov[0][3] * u[3];
+  const uPcov = cov[3][0] * u[0] + cov[3][3] * u[3];
+  if (!Number.isFinite(uTcov) || !Number.isFinite(uPcov)) return null;
+  return { rIsco, E: -uTcov, L: uPcov };
+}
+
+// Equatorial timelike geodesic 4-velocity with conserved (E, L), infalling (u^r < 0).
+function plungingFourVelocity(params, r, E, L) {
+  let inv;
+  try { inv = metric(params, r, Math.PI / 2).inv; } catch (e) { return null; }
+  const gtt = inv[0][0];
+  const gtp = inv[0][3];
+  const gpp = inv[3][3];
+  const grr = inv[1][1];
+  // Raise the conserved lower components u_t = -E, u_phi = L.
+  const uT = -gtt * E + gtp * L;
+  const uP = -gtp * E + gpp * L;
+  // u.u = -1 fixes u_r: the t/phi part is g^{ab} u_a u_b with (u_t, u_phi) = (-E, L).
+  const tphiNorm = gtt * E * E - 2 * gtp * E * L + gpp * L * L;
+  const radial = (-1 - tphiNorm) / grr;
+  if (!(radial >= 0)) return null; // (E, L) is not timelike at this r -> no valid plunge
+  const uCovR = -Math.sqrt(radial);  // infalling
+  const uR = grr * uCovR;            // u^r = g^{rr} u_r < 0
+  return [uT, uR, 0, uP];
+}
+
+// Linearly interpolate the photon's radial momentum P_r at the disc crossing,
+// reusing the same theta-bracket fraction estimateEquatorialDiscHit used. The
+// crossing sits between frames[frameIndex-1] and frames[frameIndex].
+function crossingRadialMomentum(trace, hit) {
+  const frames = trace?.result?.frames ?? [];
+  const i = hit.frameIndex;
+  if (!(i >= 1) || i >= frames.length) return null;
+  const prev = frames[i - 1];
+  const next = frames[i];
+  if (!Number.isFinite(prev?.Pr) || !Number.isFinite(next?.Pr)) return null;
+  const prevOffset = prev.theta - Math.PI / 2;
+  const nextOffset = next.theta - Math.PI / 2;
+  const frac = Math.abs(prevOffset) /
+    Math.max(Math.abs(prevOffset) + Math.abs(nextOffset), 1e-12);
+  return prev.Pr + (next.Pr - prev.Pr) * frac;
+}
+
+function discRedshiftPlunge(params, hit, camera, trace, iscoEL) {
+  if (!iscoEL || !(hit.r < iscoEL.rIsco)) return null;
+  const fs = trace?.result?.finalState;
+  const Pt = fs?.Pt;
+  const Pphi = fs?.Pphi;
+  if (!Number.isFinite(Pt) || !Number.isFinite(Pphi)) return null;
+  const Pr = crossingRadialMomentum(trace, hit);
+  if (!Number.isFinite(Pr)) return null;
+  const uEmit = plungingFourVelocity(params, hit.r, iscoEL.E, iscoEL.L);
+  if (!uEmit) return null;
+  const uObs = cameraObserverFourVelocity(params, camera);
+  if (!uObs) return null;
+  // u^theta = 0, so P_theta still drops out; the real P_r is required because u^r != 0.
+  const photonState = { r: hit.r, theta: Math.PI / 2, phi: hit.phi, Pt, Pr, Ptheta: 0, Pphi };
+  const rf = redshiftFactor(params, photonState, { fourVelocity: uEmit }, { fourVelocity: uObs });
+  return Number.isFinite(rf.g) ? clamp(rf.g, 0.05, 8) : null;
+}
+
+/* Resolve the disc redshift g at a crossing: exact circular emitter outside the
+ * ISCO, geodesic plunging emitter inside it, kinematic estimate as last resort. */
+function resolveDiscG(params, hit, camera, trace, geom) {
+  const exact = discRedshiftExact(params, hit, camera, trace);
+  if (exact != null) return exact;
+  const plunge = discRedshiftPlunge(params, hit, camera, trace, geom?.iscoEL);
+  if (plunge != null) return plunge;
+  return discShiftApprox(params, hit, camera);
 }
 
 function tintFromTemperature(temperature) {
@@ -276,8 +376,7 @@ function shadeRay(params, trace, camera, disc, geom, options) {
     ? estimateEquatorialDiscHit(trace, { innerR: geom.innerR, outerR: geom.outerR })
     : null;
   if (discHit && discHit.hit) {
-    const g = discRedshiftExact(params, discHit, camera, trace);
-    if (g != null) discHit.g = g;
+    discHit.g = resolveDiscG(params, discHit, camera, trace, geom);
   }
   // Lensed background sampled along the ray's asymptotic heading (skip for
   // captured rays, whose endpoint sits at the horizon).
@@ -335,7 +434,10 @@ function lensingGeometry(p, camera, disc, options) {
     : (ring.retrograde?.rPhoton ?? 3 * p.M);
   const innerR = disc ? (disc.innerR ?? diskInnerRadius(p, disc)) : 0;
   const outerR = disc ? (disc.outerR ?? innerR * 12) : 0;
-  return { ring, rPhoton, geom: { rPhoton, innerR, outerR } };
+  // (E, L) of the marginally stable orbit, shared by every disc-hit pixel that
+  // crosses inside the ISCO (plunging-region redshift). Prograde to match the disc.
+  const iscoEL = disc ? iscoConservedEL(p, true) : null;
+  return { ring, rPhoton, geom: { rPhoton, innerR, outerR, iscoEL } };
 }
 
 /* ---- main renderer ----------------------------------------------------- */
@@ -442,10 +544,10 @@ export function buildDeflectionLUT(params = {}, camera = {}, options = {}) {
         discHit[cell] = 1;
         discR[cell] = hit.r;
         discPhi[cell] = hit.phi - camPhi0;
-        // Exact redshift is azimuth-invariant, so cache it per pixel; fall back to
-        // the kinematic estimate (also azimuth-invariant) when it cannot be formed.
-        const g = discRedshiftExact(p, hit, camera, trace);
-        discG[cell] = g != null ? g : discShiftApprox(p, hit, camera);
+        // Redshift is azimuth-invariant, so cache it per pixel: exact circular
+        // emitter outside the ISCO, plunging-region geodesic emitter inside it,
+        // kinematic estimate only as a last resort.
+        discG[cell] = resolveDiscG(p, hit, camera, trace, geom);
       }
     }
   }

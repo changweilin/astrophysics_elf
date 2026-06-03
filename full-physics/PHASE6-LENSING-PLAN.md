@@ -276,11 +276,26 @@ desktop+mobile browser drives.
 Pphi are conserved along the geodesic and both the disc circular-orbit emitter
 and the ZAMO camera observer have only t/phi 4-velocity components, the exact
 g = nu_obs/nu_emit follows from `redshiftFactor()` using just the per-ray
-conserved Pt/Pphi on `finalState` — no integrator/frame change. g is
-azimuth-invariant, so it is cached per pixel in the deflection LUT (`discG`) and
-interpolated on shade; `shadeSample` falls back to the kinematic estimate inside
-the ISCO. Verified: disc g straddles 1 (true Doppler beaming), LUT base shade
-still matches the direct render byte-for-byte, benchmarks 26/26, muted in-browser.
+conserved Pt/Pphi on `finalState`. g is azimuth-invariant, so it is cached per
+pixel in the deflection LUT (`discG`) and interpolated on shade.
+
+**Inside-ISCO plunging-region emitter (sec 7 follow-up): DONE.** Down to the
+ISCO the emitter is a circular orbit (above); inside it no timelike circular
+orbit exists and the first pass dropped back to the kinematic `discShiftApprox`.
+`resolveDiscG` now models the gas as geodesically PLUNGING from the marginally
+stable orbit, carrying the ISCO's conserved (E, L) (Cunningham 1975; Reynolds &
+Begelman 1997): the emitter at r < r_isco is the equatorial timelike geodesic
+with those (E, L) (`iscoConservedEL` + `plungingFourVelocity`). That u^mu has a
+radial part u^r != 0, so unlike the circular case the photon's own P_r at the
+crossing enters -k.u; the adaptive integrator now records `Pr`/`Ptheta` per
+frame and `crossingRadialMomentum` interpolates P_r at the equatorial crossing
+(u^theta is still 0, so P_theta drops out). g stays azimuth-invariant (an
+azimuth rotation moves photon + crossing rigidly), so the per-pixel LUT cache is
+preserved; `discShiftApprox` is now only a last-resort fallback. Verified: with a
+disc reaching inside the ISCO, 356/356 inside-ISCO hits give finite positive g in
+0.34..1.46 (straddles 1, deeper redshift than the circular region from the
+extra infall); disc g straddles 1, LUT base shade still matches the direct
+render byte-for-byte, benchmarks 26/26, muted in-browser.
 
 **Starfield warp (P6.1 note): DONE (validated near-exact).** The literal fix
 (longer affine budget so rays escape) was measured impractical (10-70 s/build at
