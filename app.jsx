@@ -318,7 +318,7 @@ function App() {
           const vc = window.KNSim.circularizeBinary(SIM);
           setPlaying(true);   // double-click → resume play
           window.KNSim.logEv(SIM, 'good', trp(
-            'binary → stable circular orbit · v_rel={v} c · GW decay paused (re-throw to inspiral)',
+            'binary → circular orbit · v_rel={v} c · GR inspiral active',
             { v: vc.toFixed(3) }));
           force();
           return;

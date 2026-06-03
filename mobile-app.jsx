@@ -175,7 +175,7 @@ function MobileApp() {
           const vc = window.KNSim.circularizeBinary(MSIM);
           setPlaying(true);   // double-tap → resume play
           window.KNSim.logEv(MSIM, 'good', trp(
-            'binary → stable circular orbit · v_rel={v} c · GW decay paused (re-throw to inspiral)',
+            'binary → circular orbit · v_rel={v} c · GR inspiral active',
             { v: vc.toFixed(3) }));
           return true;
         }

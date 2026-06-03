@@ -612,7 +612,7 @@
     return vc;
   }
 
-  // Binary pair: put both stars onto a classical stable circular orbit about
+  // Binary pair: seed both stars with the classical stable circular orbit about
   // their common barycentre. The relative (separation) speed is the two-body
   // circular value √((M1+M2) / d), tangential; splitTwoBody shares it between the
   // stars by mass fraction so the barycentre stays fixed. Returns the companion's
@@ -624,9 +624,11 @@
     const dx = bin.x2 - bin.x1, dy = bin.y2 - bin.y1;
     const d = Math.max(0.5, Math.hypot(dx, dy));
     bin.d = d;
-    // Settle into a STABLE classical circle: pause the GW inspiral so the pair
-    // holds its separation (re-throwing via setBinaryVelocity resumes inspiral).
-    bin.classical = true;
+    // The circular speed is only the INITIAL condition: a real binary is a GR
+    // source, so once time flows it must inspiral. Keep classical = false so the
+    // Peters radiation reaction acts from this clean circular start (it does not
+    // hold a perpetual Newtonian circle).
+    bin.classical = false;
     const vrel = Math.sqrt(Mt / d);
     const dir = Math.sign(sim.params.a || 1);
     const Vx = -dy / d * vrel * dir;
