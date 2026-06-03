@@ -15,6 +15,7 @@ import {
   solveCircularMassiveOrbit,
 } from "./full-physics/orbit-diagnostics.mjs";
 import { tidalTensorDiagnostics } from "./full-physics/tidal-tensor.mjs";
+import { OBJECT_LIBRARY } from "./full-physics/object-library.mjs";
 import {
   blandfordZnajekJet,
   horizons,
@@ -27,6 +28,49 @@ import {
 
 const PI_2 = Math.PI / 2;
 const POLE_EPS = 1e-7;
+
+/* ---- object library -> demo spawn catalog ------------------------------- *
+ * The demo's picker (panel-bottom.jsx / mobile-panels.jsx) spawns bodies with the
+ * schema { name, name_zh, kind, radius, binding, charge, spawnR }, where kind is
+ * one of the five the drop flow understands (name prefix + CSS + glyph). This maps
+ * the richer full-physics OBJECT_LIBRARY onto that schema so the picker can source
+ * a single, physically-grounded catalog instead of a hardcoded list. The pickers
+ * keep their inline list as a fallback when this bridge has not loaded.           */
+const DEMO_KIND = {
+  planet: "planet", gas: "gas", star: "star", "compact-star": "star",
+  ship: "ship", probe: "probe", plasma: "probe", disc: "gas",
+};
+// Traditional-Chinese labels for the demo's bilingual tr(en, zh) cards, keyed by
+// the (ASCII) library id. Other locales fall back to the English label via tr().
+const ZH_LABEL = {
+  rockyPlanet: "岩質行星", gasGiant: "氣態巨行星", mainSequenceStar: "主序星",
+  whiteDwarf: "白矮星", neutronStar: "中子星", crewedShip: "載人飛船",
+  neutralProbe: "中性探測器", chargedProbePositive: "帶正電探測器",
+  chargedProbeNegative: "帶負電探測器", magnetizedPlasmaBlob: "磁化電漿團",
+};
+
+function buildDemoObjectCatalog() {
+  const out = [];
+  for (const spec of Object.values(OBJECT_LIBRARY)) {
+    // Only massive, destructible bodies the spawner can place: skip null geodesics
+    // (photon) and indestructible parcels (binding = Infinity, e.g. dust).
+    if (spec.kind === "photon" || !Number.isFinite(spec.binding)) continue;
+    const kind = DEMO_KIND[spec.kind];
+    if (!kind) continue;
+    out.push({
+      id: spec.id,
+      name: spec.label,
+      name_zh: ZH_LABEL[spec.id] ?? spec.label,
+      kind,
+      radius: spec.radius,
+      binding: spec.binding,
+      charge: spec.chargeToMass ?? 0,
+      spawnR: Math.round(spec.defaultOrbit?.r ?? 12),
+      description: spec.description,
+    });
+  }
+  return out;
+}
 
 function sanitize(params) {
   const M = Math.max(1e-4, Number(params?.M) || 1.5);
@@ -52,6 +96,8 @@ class FullPhysicsBridge {
     this._geometryCache = { key: null, value: null };
     this._orbitCache    = { key: null, value: null };
     this._jetCache      = { key: null, accretion: -1, value: null };
+    // Static spawn catalog derived from the full-physics object library.
+    this.objectCatalog = buildDemoObjectCatalog();
   }
 
   syncParams(params) {

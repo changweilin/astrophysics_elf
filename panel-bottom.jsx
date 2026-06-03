@@ -1,6 +1,18 @@
 /* Bottom strip — Spawner library + time controls + event log */
 
 function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale }) {
+  // Source the spawn catalog from the full-physics bridge once it has loaded
+  // (window.KNFull.objectCatalog); fall back to the inline LIBRARY otherwise so
+  // the picker works even if the module bridge is unavailable.
+  const [knReady, setKnReady] = React.useState(() => !!window.KNFull);
+  React.useEffect(() => {
+    const onReady = () => setKnReady(true);
+    window.addEventListener('knfull-ready', onReady);
+    if (window.KNFull) setKnReady(true);
+    return () => window.removeEventListener('knfull-ready', onReady);
+  }, []);
+  const library = (knReady && window.KNFull && window.KNFull.objectCatalog && window.KNFull.objectCatalog.length)
+    ? window.KNFull.objectCatalog : LIBRARY;
   return (
     <div className="bottom">
       <div className="pane">
@@ -9,7 +21,7 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
           <span className="hint">{tr('drag card → release to place · then drag from body to aim launch vector', '拖曳卡片 → 放開以放置 · 再從天體拖曳以瞄準發射向量')}</span>
         </div>
         <div className="spawner">
-          {LIBRARY.map((it, i) => {
+          {library.map((it, i) => {
             const active = sim.placement && sim.placement.item.name === it.name;
             return (
             <button key={i} className={`spawn-card ${it.kind === 'gas' ? 'gasG' : it.kind} ${active ? 'active' : ''}`}
@@ -149,6 +161,8 @@ function SpeedScrubber({ timescale, setTimescale }) {
 }
 window.SpeedScrubber = SpeedScrubber;
 
+// Fallback catalog used only when the full-physics bridge (window.KNFull.objectCatalog)
+// has not loaded; the richer mapped library replaces this at runtime.
 const LIBRARY = [
   { name: 'Rocky planet',  name_zh: '岩質行星', kind: 'planet', radius: 0.30, binding: 2.5, charge: 0,    spawnR: 12 },
   { name: 'Gas giant',     name_zh: '氣態巨行星', kind: 'gas',    radius: 0.55, binding: 0.9, charge: 0,    spawnR: 14 },

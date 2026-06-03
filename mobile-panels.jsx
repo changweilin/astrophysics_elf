@@ -925,6 +925,8 @@ function stateLabel(s) {
 }
 
 // ─── SPAWN tab ─────────────────────────────────────────────
+// Fallback catalog used only when the full-physics bridge (window.KNFull.objectCatalog)
+// has not loaded; the richer mapped library replaces this at runtime.
 const M_LIBRARY = [
   { name: 'Rocky planet',  name_zh: '岩質行星', kind: 'planet', radius: 0.30, binding: 2.5,  charge: 0,    spawnR: 12 },
   { name: 'Gas giant',     name_zh: '氣態巨行星', kind: 'gas',    radius: 0.55, binding: 0.9,  charge: 0,    spawnR: 14 },
@@ -937,6 +939,17 @@ const M_LIBRARY = [
 ];
 
 function TabSpawn({ sim, force, onArm }) {
+  // Source the spawn catalog from the full-physics bridge (window.KNFull.objectCatalog)
+  // once loaded; fall back to the inline M_LIBRARY so the picker always works.
+  const [knReady, setKnReady] = React.useState(() => !!window.KNFull);
+  React.useEffect(() => {
+    const onReady = () => setKnReady(true);
+    window.addEventListener('knfull-ready', onReady);
+    if (window.KNFull) setKnReady(true);
+    return () => window.removeEventListener('knfull-ready', onReady);
+  }, []);
+  const library = (knReady && window.KNFull && window.KNFull.objectCatalog && window.KNFull.objectCatalog.length)
+    ? window.KNFull.objectCatalog : M_LIBRARY;
   return (
     <>
       <div className="m-sec">
@@ -945,7 +958,7 @@ function TabSpawn({ sim, force, onArm }) {
           <span className="idx">{tr('tap → tap viewport', '點選 → 點視圖')}</span>
         </div>
         <div className="m-libgrid">
-          {M_LIBRARY.map((it, i) => {
+          {library.map((it, i) => {
             const active = sim.placement && sim.placement.item.name === it.name;
             return (
               <button key={i} className={`m-libcard ${it.kind === 'gas' ? 'gasG' : it.kind} ${active ? 'active' : ''}`}

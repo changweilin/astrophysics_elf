@@ -150,27 +150,38 @@ Original files touched: none.
 
 ## Phase 6: Review Gate Before Original File Edits
 
-Status: blocked until explicitly approved.
+Status: in progress (approved per-target).
 
 Only after the add-only layers are stable should we consider modifying the
-original browser demo files.
+original browser demo files. Each target below is approved and landed
+individually, keeping the change set small and reversible.
 
-Potential integration targets:
+Integration targets:
 
-- Replace or wrap `physics.js` with the new facade.
-- Replace preview trajectory logic in `sim.js`.
-- Add Object Library data to the current object picker.
-- Feed MHD jet output into existing MHD panels.
-- Move heavy physics into a Web Worker.
+- Replace or wrap `physics.js` with the new facade. — not started.
+- Replace preview trajectory logic in `sim.js`. — not started.
+- Add Object Library data to the current object picker. — **DONE (2026-06-03).**
+  `full-physics-bridge.mjs` maps `OBJECT_LIBRARY` onto the demo spawn schema
+  (`{ name, name_zh, kind, radius, binding, charge, spawnR }`, kinds collapsed to
+  the five the drop flow understands; photon + Infinity-binding parcels excluded)
+  and exposes it as `window.KNFull.objectCatalog` (10 bodies). The desktop picker
+  (`panel-bottom.jsx`) and mobile SPAWN tab (`mobile-panels.jsx`) now source that
+  catalog via the existing `knfull-ready` pattern, falling back to their inline
+  lists if the bridge has not loaded. Verified in-browser (Playwright, desktop +
+  mobile): both pickers render the 10 mapped cards with zh labels and a placed
+  White-dwarf card spawns a `star` body. The only console 404 is the pre-existing
+  external favicon for the AboutMe Portfolio link.
+- Feed MHD jet output into existing MHD panels. — not started.
+- Move heavy physics into a Web Worker. — not started.
 
-Original files touched: yes, but only after explicit approval.
+Original files touched: yes, per approved target (so far: `panel-bottom.jsx`,
+`mobile-panels.jsx`, and the add-only `full-physics-bridge.mjs`).
 
 ## Recommended Next Task
 
-Review the add-only package and decide whether to approve Phase 6 UI
-integration.
-
-Reason: all planned add-only physics, reliability, facade, units,
-performance/worker, and rendering-preparation layers are now in place. The
-remaining work requires explicit approval because it would modify original
-browser demo files.
+Phase 6 has started (object library -> picker landed). Pick the next approved
+target. Lowest-risk-first ordering: feed MHD jet output into the existing MHD
+panels, then replace the `sim.js` preview trajectory with the adaptive
+integrator, then wrap `physics.js` with the facade, and finally move heavy
+physics into a Web Worker. Each remains gated on explicit per-target approval
+before editing the corresponding root demo file.
