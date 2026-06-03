@@ -37,6 +37,16 @@ function knGravityCenter(sim, kind) {
   return { x: useBin ? bin.x1 : 0, y: useBin ? bin.y1 : 0 };
 }
 
+// System centre of mass: the conserved barycentre for a binary, the world origin
+// for a lone primary. Both the gravity-well and the GW slices anchor here when
+// shown side by side, so the two diagrams share one centred coordinate frame
+// ("質心座標對齊").
+function knSystemCenter(sim) {
+  const bin = sim.binary;
+  if (bin && bin.enabled) return { x: bin.cx || 0, y: bin.cy || 0 };
+  return { x: 0, y: 0 };
+}
+
 // GW source + amplitude, mirroring renderGWGrid in sim.js so the slice agrees
 // with the main viewport's ripples.
 function knGwParams(sim) {
@@ -66,7 +76,12 @@ function knGwParams(sim) {
 }
 
 // ── Heatmap renderer (direct cell fill, no offscreen buffer) ───────────────
-function renderFieldSection(ctx, w, h, kind, sim) {
+// `opts` (optional): { center, span } override the per-view centre/half-FOV so
+// the desktop split can pin both the gravity and GW slices to the system centre
+// of mass at a shared scale. Omitting it keeps the original per-view defaults
+// (used by the mobile PROFILE cycler).
+function renderFieldSection(ctx, w, h, kind, sim, opts) {
+  opts = opts || {};
   ctx.clearRect(0, 0, w, h);
   if (w < 2 || h < 2) return;
 
@@ -75,12 +90,12 @@ function renderFieldSection(ctx, w, h, kind, sim) {
   if (kind === 'gw') {
     gw = knGwParams(sim);
     ok = gw.ok;
-    center = ok ? { x: gw.cx, y: gw.cy } : null;
-    span = 28;
+    center = ok ? (opts.center || { x: gw.cx, y: gw.cy }) : null;
+    span = opts.span || 28;
   } else {
-    center = knGravityCenter(sim, kind);
+    center = opts.center || knGravityCenter(sim, kind);
     ok = !!center;
-    span = 14;
+    span = opts.span || 14;
   }
 
   if (!ok) {
@@ -182,75 +197,76 @@ function renderFieldSection(ctx, w, h, kind, sim) {
   ctx.fillText('±' + spanX.toFixed(0) + ' M', 6, h - 6);
 }
 
-// ── Desktop: single draggable, viewport-clamped window with view tabs ──────
+// ── Desktop: draggable, viewport-clamped window comparing the gravity well and
+//    the GW strain in two stacked panes split by a draggable divider ──────────
+// Both slices are pinned to the system centre of mass at one shared scale, so a
+// point at a given world offset lands at the same pixel in either pane (the
+// gravity well on top, the gravitational-wave strain below). The horizontal
+// divider reallocates height between them.
 function FieldScope({ sim }) {
   const [collapsed, setCollapsed] = knUseWinPref('field', 'collapsed', false);
-  const [tab, setTab] = knUseWinPref('field', 'tab', 'primary');
-  const canvasRef = React.useRef(null);
+  const fieldRef = React.useRef(null);   // top pane: gravity well
+  const gwRef = React.useRef(null);      // bottom pane: GW strain
   const drag = knUseDragMove('field', { x: 14, y: 70 });   // drag-to-move + resize (persisted)
+  const split = knUseSplit('field', 0.5);                  // top-pane height fraction (persisted)
 
-  const hasBin = !!(sim.binary && sim.binary.enabled);
-  // Available views (companion only exists in binary mode), cycled by a single
-  // click on the header switch.
-  const order = ['primary'];
-  if (hasBin) order.push('companion');
-  order.push('gw');
-  const labelOf = (k) => k === 'primary'   ? tr('M1 FIELD', '主星重力場')
-                       : k === 'companion' ? tr('M2 FIELD', '伴星重力場')
-                       :                     tr('GW SLICE', '重力波');
-  // Fall back to the primary view if the active view vanished (companion removed).
-  const active = order.indexOf(tab) >= 0 ? tab : 'primary';
-  const cycle = () => setTab(order[(order.indexOf(active) + 1) % order.length]);
+  // Shared half-FOV (in M) so both panes use the same px-per-M scale, aligning
+  // their coordinate grids about the centre of mass.
+  const SPAN = 22;
 
   // Re-clamp inside the viewport when the collapse toggle changes the height.
   React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
   React.useEffect(() => {
-    if (collapsed) return;
-    const c = canvasRef.current;
-    if (!c) return;
-    const ctx = c.getContext('2d');
+    if (collapsed) return undefined;
     let raf;
-    function tick() {
+    function draw(c, kind) {
+      if (!c) return;
+      const ctx = c.getContext('2d');
       const dpr = window.devicePixelRatio || 1;
       const w = c.clientWidth, h = c.clientHeight;
+      if (w < 1 || h < 1) return;
       if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      renderFieldSection(ctx, w, h, active, sim);
+      renderFieldSection(ctx, w, h, kind, sim, { center: knSystemCenter(sim), span: SPAN });
+    }
+    function tick() {
+      draw(fieldRef.current, 'field');
+      draw(gwRef.current, 'gw');
       raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [collapsed, active]);
+  }, [collapsed]);
 
   return (
     <div ref={drag.rootRef}
          className={`field-section kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''} ${drag.resized ? 'kn-resized' : ''}`}
          style={drag.style}>
-      {/* Top row — same format as the MHD monitor header: chevron + title on the
-          left, view switch on the right. Single click on the switch cycles to
-          the next cross-section. The row is the drag handle (long-press to move);
-          the chevron and switch stop the drag so taps don't move the window. */}
+      {/* Top row — chevron + title (the row is the drag handle; the chevron and
+          title stop the drag so a tap toggles collapse instead of moving). */}
       <div className="microscope-head fs-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
           <span className="mh-title"
-                onPointerUp={() => { if (!drag.movedRef.current) setCollapsed(!collapsed); }}>{tr('FIELD PROFILE', '場剖面圖')}</span>
-        </div>
-        <div className="mh-right">
-          <span className="mh-switch" onPointerDown={(e) => e.stopPropagation()}>
-            <button className="on" onClick={cycle}
-                    title={tr('click to switch cross-section', '單擊切換剖面')}>
-              <span className="mh-name">{labelOf(active)}</span> ⟳
-            </button>
-          </span>
+                onPointerUp={() => { if (!drag.movedRef.current) setCollapsed(!collapsed); }}>{tr('GRAVITATIONAL FIELD', '重力場圖')}</span>
         </div>
       </div>
       {!collapsed && (
-        <div className="fs-body">
-          <canvas ref={canvasRef} className="fs-canvas" />
+        <div ref={split.containerRef}
+             className={`fs-split ${split.dragging ? 'is-splitting' : ''}`}>
+          <div className="fs-pane" style={{ flexGrow: split.frac, flexShrink: 1, flexBasis: 0 }}>
+            <span className="fs-pane-label">{tr('GRAVITY WELL', '重力場')}</span>
+            <canvas ref={fieldRef} className="fs-canvas" />
+          </div>
+          <div className="fs-divider" onPointerDown={split.onDividerDown}
+               title={tr('drag to compare', '拖曳調整比較')} />
+          <div className="fs-pane" style={{ flexGrow: 1 - split.frac, flexShrink: 1, flexBasis: 0 }}>
+            <span className="fs-pane-label">{tr('GW STRAIN', '重力波')}</span>
+            <canvas ref={gwRef} className="fs-canvas" />
+          </div>
         </div>
       )}
       {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}

@@ -739,12 +739,30 @@ export function traceEquatorialRays(params = {}, options = {}) {
   const cameraR = options.cameraR ?? 40;
   const fovY = options.fovY ?? Math.PI / 3;
   const camera = { r: cameraR, theta: Math.PI / 2, phi: options.phi ?? 0, fovY };
+  // `parallel`: launch a parallel bundle (light arriving from infinity) rather
+  // than a camera fan. Each ray starts on the circle r = cameraR offset by an
+  // impact parameter b and travels in the same world direction (-x) toward the
+  // hole, so far from the lens the rays are parallel straight lines.
+  const parallel = !!options.parallel;
+  const bMax = options.bMax ?? cameraR * 0.55;
   const rays = [];
   for (let i = 0; i < count; i++) {
-    const x = count > 1 ? (i / (count - 1)) * 2 - 1 : 0; // -1..1 across the FOV
-    // aspect = 1 and y = 0 keep the ray's local direction in the equatorial
-    // plane (no theta component), so theta stays pi/2 along the geodesic.
-    const ray = makeCameraRay(p, camera, { x, y: 0, pixelX: i, pixelY: 0 }, { aspect: 1, fovY });
+    const span = count > 1 ? (i / (count - 1)) * 2 - 1 : 0;  // -1..1
+    let ray;
+    if (parallel) {
+      const b = span * bMax;                                  // impact parameter
+      const ax = Math.sqrt(Math.max(0, cameraR * cameraR - b * b));
+      const phi0 = Math.atan2(b, ax);                         // start phi on r = cameraR
+      // World velocity (-1, 0) decomposed into the equatorial tetrad at phi0:
+      // e_r = (cos, sin), e_phi = (-sin, cos) ⇒ [radial, theta, phi].
+      const dir = [-Math.cos(phi0), 0, Math.sin(phi0)];
+      ray = makeCameraRay(p, { r: cameraR, theta: Math.PI / 2, phi: phi0 },
+        { direction: dir, pixelX: i, pixelY: 0 });
+    } else {
+      // aspect = 1 and y = 0 keep the ray's local direction in the equatorial
+      // plane (no theta component), so theta stays pi/2 along the geodesic.
+      ray = makeCameraRay(p, camera, { x: span, y: 0, pixelX: i, pixelY: 0 }, { aspect: 1, fovY });
+    }
     const traced = tracePhotonRay(p, ray, {
       targetAffine: options.targetAffine ?? 70,
       initialStep: options.initialStep ?? 0.05,

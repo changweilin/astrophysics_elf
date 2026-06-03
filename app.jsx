@@ -533,8 +533,9 @@ function App() {
         <TidalMicroscope sim={SIM} force={force} />
         <MHDMonitor sim={SIM} force={force} />
 
-        {/* Draggable field cross-section window (desktop). Tabs switch between
-            the primary/companion gravity field and the GW slice. Clamped to the
+        {/* Draggable gravitational-field window (desktop). Two stacked panes —
+            the gravity well over the GW strain, both centred on the system's
+            centre of mass — split by a draggable divider. Clamped to the
             viewport so it can never be dragged off-screen. */}
         <FieldScope sim={SIM} />
 

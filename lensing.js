@@ -209,7 +209,8 @@
 
     /* Equatorial bent-ray polylines for the top-down overlay. Cached per params. */
     equatorialRays(params = this.params, options = {}) {
-      const key = paramsKey(params) + "#eq" + (options.count ?? 13) + "_" + (options.cameraR ?? 40);
+      const key = paramsKey(params) + "#eq" + (options.count ?? 13) + "_" + (options.cameraR ?? 40) +
+        (options.parallel ? "p" : "");
       const cached = this._eqCache.get(key);
       if (cached) return Promise.resolve(cached);
       const exec = this._workerOk && this._worker

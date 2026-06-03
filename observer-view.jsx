@@ -66,6 +66,7 @@ function ObserverView({ sim }) {
   const traceCanvasRef = React.useRef(null);      // lower pane: bent-ray curves
   const traceRef = React.useRef(null);            // cached equatorial-ray polylines
   const drag = knUseDragMove('observer', { x: 14, y: 300 });
+  const split = knUseSplit('observer', 0.56);     // lensed-image / ray-trace divider (persisted)
 
   // Lower pane lens = the system monopole: total mass M1+M2 (charges add; spin is
   // the mass-weighted mean, kept sub-extremal), the self-consistent far-field
@@ -230,7 +231,13 @@ function ObserverView({ sim }) {
     const KNL = window.KNLensing;
     if (!KNL || !KNL.equatorialRays) return undefined;
     let cancelled = false;
-    KNL.equatorialRays({ M: totM, Q: totQ, a: totA, B: sim.params.B }, { count: 17, cameraR: 42 })
+    // Parallel bundle (not a camera fan): rays arrive from infinity on parallel
+    // tracks, bend around the hole, and head back out toward infinity — the
+    // textbook gravitational-lensing diagram.
+    // targetAffine is raised so even the widest-impact-parameter rays integrate
+    // all the way back out to the escape radius (they need ~120 to clear it).
+    KNL.equatorialRays({ M: totM, Q: totQ, a: totA, B: sim.params.B },
+      { count: 17, cameraR: 42, parallel: true, targetAffine: 140 })
       .then((d) => { if (!cancelled) traceRef.current = d; })
       .catch(() => { /* keep last good curves */ });
     return () => { cancelled = true; };
@@ -277,12 +284,20 @@ function ObserverView({ sim }) {
       </div>
       {!collapsed && (
         <React.Fragment>
-          <div className="fs-body">
-            <canvas ref={canvasRef} className="fs-canvas" />
-          </div>
-          {/* Lower pane: bent-ray light-bending curves (system monopole). */}
-          <div className="fs-body lt-body" style={{ borderTop: '1px solid var(--line)' }}>
-            <canvas ref={traceCanvasRef} className="fs-canvas" />
+          {/* Two stacked panes split by a draggable divider: the lensed camera
+              image on top, the bent equatorial light-bending curves below. */}
+          <div ref={split.containerRef}
+               className={`fs-split ${split.dragging ? 'is-splitting' : ''}`}>
+            <div className="fs-pane" style={{ flexGrow: split.frac, flexShrink: 1, flexBasis: 0 }}>
+              <span className="fs-pane-label">{tr('LENS IMAGE', '透鏡圖')}</span>
+              <canvas ref={canvasRef} className="fs-canvas" />
+            </div>
+            <div className="fs-divider" onPointerDown={split.onDividerDown}
+                 title={tr('drag to compare', '拖曳調整比較')} />
+            <div className="fs-pane" style={{ flexGrow: 1 - split.frac, flexShrink: 1, flexBasis: 0 }}>
+              <span className="fs-pane-label">{tr('RAY TRACE', '光跡曲線')}</span>
+              <canvas ref={traceCanvasRef} className="fs-canvas" />
+            </div>
           </div>
           <div className="view-toggles" style={{ borderTop: '1px solid var(--line)' }}>
             <button className={discOn ? 'on' : ''} onClick={() => setDiscOn(!discOn)}
@@ -308,6 +323,9 @@ function ObserverView({ sim }) {
 // Lower-pane renderer: self-contained, lens-centred plot of the bent equatorial
 // geodesics + the critical-impact-parameter circle. Fixed px-per-M scale, so
 // resizing the window widens the field of view rather than zooming the curves.
+// Each traced ray is extended with a straight asymptote at both ends (incoming
+// from, and escaping toward, infinity) so the parallel bundle reads as light
+// arriving from and departing to infinity — captured rays only extend inward.
 function renderLensTrace(ctx, w, h, data) {
   ctx.fillStyle = 'oklch(0.08 0.018 255)';
   ctx.fillRect(0, 0, w, h);
@@ -341,18 +359,32 @@ function renderLensTrace(ctx, w, h, data) {
     ctx.setLineDash([]);
   }
 
-  // Bent geodesics (faint cyan = bends past; faint red = captured).
+  // Bent geodesics (faint cyan = bends past; faint red = captured). Straight
+  // asymptotes carry each ray out to the panel edge (toward infinity): the
+  // incoming end always, the outgoing end only for rays that escape.
+  const SX = (x) => cx + x * PX_PER_M, SY = (y) => cy - y * PX_PER_M;
+  const reach = Math.hypot(w, h) / PX_PER_M;   // M needed to clear the canvas
   ctx.lineWidth = 1;
   for (const ray of data.rays) {
     const pts = ray.points;
     if (!pts || pts.length < 4) continue;
+    const n = pts.length;
     ctx.strokeStyle = ray.captured
       ? 'oklch(0.62 0.13 28 / 0.45)'
       : 'oklch(0.72 0.09 210 / 0.4)';
     ctx.beginPath();
-    ctx.moveTo(cx + pts[0] * PX_PER_M, cy - pts[1] * PX_PER_M);
-    for (let i = 2; i < pts.length; i += 2) {
-      ctx.lineTo(cx + pts[i] * PX_PER_M, cy - pts[i + 1] * PX_PER_M);
+    // Incoming asymptote: continue the first segment outward to infinity.
+    let dx = pts[0] - pts[2], dy = pts[1] - pts[3];
+    let len = Math.hypot(dx, dy) || 1;
+    ctx.moveTo(SX(pts[0] + dx / len * reach), SY(pts[1] + dy / len * reach));
+    ctx.lineTo(SX(pts[0]), SY(pts[1]));
+    for (let i = 2; i < n; i += 2) ctx.lineTo(SX(pts[i]), SY(pts[i + 1]));
+    // Outgoing asymptote: escaping rays straighten out to infinity; captured
+    // rays end at the horizon, so they get no outward extension.
+    if (!ray.captured) {
+      dx = pts[n - 2] - pts[n - 4]; dy = pts[n - 1] - pts[n - 3];
+      len = Math.hypot(dx, dy) || 1;
+      ctx.lineTo(SX(pts[n - 2] + dx / len * reach), SY(pts[n - 1] + dy / len * reach));
     }
     ctx.stroke();
   }

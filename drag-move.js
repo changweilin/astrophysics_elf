@@ -239,3 +239,49 @@ function knUseWinPref(id, key, fallback) {
   return st;
 }
 window.knUseWinPref = knUseWinPref;
+
+/* Draggable horizontal split between two stacked panes inside a floating window.
+ * Returns a persisted top-pane fraction (0..1) plus a divider pointer handler:
+ * the caller sets each pane's flex-grow from `frac`/`1 - frac`, refs the flex
+ * container so the divider can map pointer-Y to a new fraction, and toggles an
+ * `is-splitting` class from `dragging`. The fraction is keyed like the other
+ * window prefs (knwinpref:<id> .split), so the split reopens where it was left.
+ * Optional opts: { min, max } clamp the top fraction (defaults 0.18..0.82). */
+function knUseSplit(id, defaultFrac, opts) {
+  var React = window.React;
+  var min = (opts && opts.min) || 0.18;
+  var max = (opts && opts.max) || 0.82;
+  var pref = knUseWinPref(id, 'split', defaultFrac == null ? 0.5 : defaultFrac);
+  var frac = pref[0], setFrac = pref[1];
+  var dragState = React.useState(false);
+  var dragging = dragState[0], setDragging = dragState[1];
+  var containerRef = React.useRef(null);
+
+  function onDividerDown(e) {
+    if (e.button != null && e.button !== 0) return;
+    var box = containerRef.current;
+    if (!box) return;
+    e.preventDefault();
+    e.stopPropagation();            // don't arm the window-move drag underneath
+    setDragging(true);
+    function onMove(ev) {
+      var r = box.getBoundingClientRect();
+      if (r.height < 1) return;
+      var f = (ev.clientY - r.top) / r.height;
+      setFrac(Math.max(min, Math.min(max, f)));
+    }
+    function onUp() {
+      setDragging(false);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
+  return {
+    frac: frac, setFrac: setFrac, dragging: dragging,
+    containerRef: containerRef, onDividerDown: onDividerDown,
+  };
+}
+window.knUseSplit = knUseSplit;
