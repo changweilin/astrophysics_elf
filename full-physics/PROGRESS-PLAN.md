@@ -171,7 +171,19 @@ Integration targets:
   mobile): both pickers render the 10 mapped cards with zh labels and a placed
   White-dwarf card spawns a `star` body. The only console 404 is the pre-existing
   external favicon for the AboutMe Portfolio link.
-- Feed MHD jet output into existing MHD panels. — not started.
+- Feed MHD jet output into existing MHD panels. — **DONE (2026-06-03).**
+  `full-physics-bridge.mjs` adds `window.KNFull.jetDiagnostics(params, accretionRate)`,
+  which settles the reduced multi-zone `MHDJetEngine` (owned by the facade) for the
+  current (M,Q,a,B) + accretion and returns the calibrated quantities the demo's
+  analytic `KNDisc.jetMetrics` does NOT model — column magnetization sigma,
+  kink-instability risk, and synchrotron luminosity (bursty terms tail-averaged;
+  result cached per params + accretion bucket so the settle runs only on change).
+  The §04d `MHDReadout` (`panel-right.jsx`) shows those three as extra rows below
+  the existing demo metrics, gated on `useFullBridgeReady()` and only when the jet
+  is active/valid. The MHD monitor canvas (`mhd-monitor.jsx`) and demo visual loop
+  are untouched. Verified in-browser (Playwright): jetDiagnostics settles to
+  sensible values (valid for a/B>0, inert for a=B=0) and §04d renders the new
+  sigma / kink / L_synch rows with no new console errors.
 - Move heavy physics into a Web Worker. — not started.
 
 Original files touched: yes, per approved target (so far: `panel-bottom.jsx`,
@@ -179,9 +191,8 @@ Original files touched: yes, per approved target (so far: `panel-bottom.jsx`,
 
 ## Recommended Next Task
 
-Phase 6 has started (object library -> picker landed). Pick the next approved
-target. Lowest-risk-first ordering: feed MHD jet output into the existing MHD
-panels, then replace the `sim.js` preview trajectory with the adaptive
-integrator, then wrap `physics.js` with the facade, and finally move heavy
-physics into a Web Worker. Each remains gated on explicit per-target approval
-before editing the corresponding root demo file.
+Phase 6 in progress: object library -> picker and MHD jet -> panels have landed.
+Pick the next approved target. Remaining, lowest-risk-first: replace the `sim.js`
+preview trajectory with the adaptive integrator, then wrap `physics.js` with the
+facade, and finally move heavy physics into a Web Worker. Each remains gated on
+explicit per-target approval before editing the corresponding root demo file.

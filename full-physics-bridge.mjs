@@ -96,6 +96,7 @@ class FullPhysicsBridge {
     this._geometryCache = { key: null, value: null };
     this._orbitCache    = { key: null, value: null };
     this._jetCache      = { key: null, accretion: -1, value: null };
+    this._jetDiagCache  = { key: null, value: null };
     // Static spawn catalog derived from the full-physics object library.
     this.objectCatalog = buildDemoObjectCatalog();
   }
@@ -207,6 +208,50 @@ class FullPhysicsBridge {
     }
     const value = blandfordZnajekJet(p, { accretionRate, magneticField: p.B });
     this._jetCache = { key, accretion: accretionRate, value };
+    return value;
+  }
+
+  /* Dynamic MHD-jet diagnostics: settle the reduced multi-zone jet engine
+   * (mhd-jet-engine.mjs, owned by the facade) for the current (M,Q,a,B) and
+   * accretion rate, then report the calibrated quantities the demo's analytic
+   * jetMetrics does NOT model — column magnetization sigma, kink-instability
+   * risk, and synchrotron radiative luminosity — alongside the converged bulk
+   * Lorentz factor and opening angle. The accretion rate is bucketed and the
+   * result cached per (params, bucket) so the costly settle runs only on change. */
+  jetDiagnostics(params, accretionRate = 0) {
+    const p = this.syncParams(params);
+    const acc = Math.max(0, Math.round((accretionRate || 0) / 0.05) * 0.05);
+    const key = paramsKey(p) + "|" + acc.toFixed(2);
+    if (this._jetDiagCache.key === key) return this._jetDiagCache.value;
+
+    // Re-seed the jet column for this geometry, then evolve to a settled column.
+    if (this.engine.jet) this.engine.jet.setParams(p);
+    const input = { magneticField: p.B, accretionRate: acc };
+    const STEPS = 300;
+    const TAIL = 80; // average the bursty (reconnection/synchrotron) terms over the tail
+    let snap = null, radSum = 0, recSum = 0, n = 0;
+    for (let i = 0; i < STEPS; i++) {
+      snap = this.engine.updateJet(input); // lazily creates the engine on first use
+      if (i >= STEPS - TAIL) {
+        radSum += snap.global.radiativeLuminosity;
+        recSum += snap.global.reconnectionLuminosity;
+        n++;
+      }
+    }
+    const g = snap ? snap.global : {};
+    const value = {
+      valid: (g.totalPower > 0) || (g.bzPower > 0),
+      bzPower: g.bzPower ?? 0,
+      totalPower: g.totalPower ?? 0,
+      lorentzFactor: g.lorentzFactor ?? 1,
+      openingAngleDeg: g.openingAngleDeg ?? 0,
+      magnetization: g.magnetizationBase ?? 0,
+      kinkRisk: g.kinkRisk ?? 0,
+      radiativeLuminosity: n ? radSum / n : (g.radiativeLuminosity ?? 0),
+      reconnectionLuminosity: n ? recSum / n : (g.reconnectionLuminosity ?? 0),
+      massFlux: g.massFlux ?? 0,
+    };
+    this._jetDiagCache = { key, value };
     return value;
   }
 }

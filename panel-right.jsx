@@ -530,12 +530,20 @@ function TidalReadout({ sim }) {
 }
 
 function MHDReadout({ sim }) {
+  // Re-render once the module bridge loads so the full-physics jet diagnostics appear.
+  const knReady = useFullBridgeReady();
   if (!window.mhdView || !window.KNDisc) return null;
   const which = sim.mhdActive || 'primary';
   const view = window.mhdView(sim, which);
   const m = view.m;
   const off = window.bodyHasMHD ? !window.bodyHasMHD(sim, which) : false;
   const pColor = m.P > 5 ? 'var(--warn)' : m.P > 1 ? 'var(--amber)' : 'var(--fg-3)';
+  // Calibrated dynamic-jet diagnostics from the full-physics multi-zone engine —
+  // quantities the demo's analytic jetMetrics does not model (column magnetization,
+  // kink-instability risk, synchrotron luminosity). Driven by the disc accretion
+  // rate the demo already tracks; null until the bridge is ready or when inert.
+  const fp = (knReady && window.KNFull && window.KNFull.jetDiagnostics && !off)
+    ? window.KNFull.jetDiagnostics(view.params, m.mDot || 0) : null;
   return (
     <div className="section">
       <div className="section-head">
@@ -555,10 +563,25 @@ function MHDReadout({ sim }) {
           <span className="v">{m.theta.toFixed(1)}<small>°</small></span></div>
         <div className="item"><span className="k">{tr('η radiative', 'η 輻射效率')}</span>
           <span className="v">{(m.eta * 100).toFixed(1)}<small>%</small></span></div>
+        {fp && fp.valid && (
+          <>
+            <div className="item full-engine"><span className="k">{tr('σ magnetization', 'σ 磁化度')}</span>
+              <span className="v">{fmtNum(fp.magnetization, 2)}</span></div>
+            <div className="item full-engine"><span className="k">{tr('kink risk', '扭結風險')}</span>
+              <span className="v" style={{color: fp.kinkRisk > 0.66 ? 'var(--warn)' : fp.kinkRisk > 0.33 ? 'var(--amber)' : 'var(--fg-3)'}}>{(fp.kinkRisk * 100).toFixed(0)}<small>%</small></span></div>
+            <div className="item full-engine"><span className="k">{tr('L synchrotron', 'L 同步輻射')}</span>
+              <span className="v">{fmtNum(fp.radiativeLuminosity, 3)}</span></div>
+          </>
+        )}
       </div>
       <div style={{fontFamily:'var(--mono)', fontSize:9, marginTop:6, lineHeight:1.5, letterSpacing:'0.06em', color: pColor}}>
         {window.mhdStatus ? window.mhdStatus(off, m) : ''}
       </div>
+      {fp && fp.valid && (
+        <div style={{fontFamily:'var(--mono)', fontSize:9, marginTop:3, lineHeight:1.4, letterSpacing:'0.06em', color:'var(--fg-3)'}}>
+          {tr('σ / kink / L_synch from the full-physics multi-zone jet engine.', 'σ／扭結／L_synch 來自完整物理多區噴流引擎。')}
+        </div>
+      )}
     </div>
   );
 }
