@@ -9,6 +9,10 @@
  *      extra ray integration.
  *   3. Re-shading at a rotated camera azimuth leaves the shadow/ring intact
  *      (Kerr-Newman is axisymmetric) while the lensed starfield moves.
+ *   4. A disc reaching inside the ISCO exercises the plunging-region redshift
+ *      (PHASE6-LENSING-PLAN.md sec 7 follow-up): every inside-ISCO crossing must
+ *      still produce a finite positive g, and the inside-ISCO range must straddle
+ *      1 — proof the geodesic plunging emitter replaced the kinematic fallback.
  *
  *   node .\full-physics\run-lensing-lut-sample.mjs
  *
@@ -16,6 +20,7 @@
  */
 
 import { renderLensingImage, buildDeflectionLUT, shadeLUTImage } from "./lensing-worker.mjs";
+import { iscoRadiusKerrApprox, horizons } from "./kn-full-physics.mjs";
 
 const params = { M: 1.5, Q: 0.22, a: 0.6, B: 0.4 };
 const camera = { r: 26, theta: Math.PI / 2 + 0.32, phi: 0.0, fovY: Math.PI / 2.5, localEnergy: 1 };
@@ -85,6 +90,30 @@ const discRedshift = gN
   ? { hits: gN, gMin: +gMin.toFixed(3), gMax: +gMax.toFixed(3), gMean: +(gSum / gN).toFixed(3) }
   : { hits: 0 };
 
+// (4) Plunging-region redshift inside the ISCO. The default disc starts at the
+// ISCO, so it never enters the plunging region; build a second LUT with a disc
+// whose inner edge reaches well inside the ISCO (between r+ and the ISCO) so the
+// geodesic plunging emitter is exercised. Every inside-ISCO crossing must give a
+// finite positive g, and that inside-ISCO range must still straddle 1.
+const isco = iscoRadiusKerrApprox(params, true);
+const rPlus = horizons(params).rPlus;
+const plungeDisc = { ...disc, innerR: rPlus + 0.4 * (isco - rPlus), outerR: isco * 4 };
+const plungeLUT = buildDeflectionLUT(params, camera, { width: baseW, height: baseH, ...traceOpts, disc: plungeDisc });
+let pgMin = Infinity, pgMax = -Infinity, pInside = 0, pBad = 0;
+for (let i = 0; i < plungeLUT.base.discHit.length; i++) {
+  if (!plungeLUT.base.discHit[i]) continue;
+  if (!(plungeLUT.base.discR[i] < isco)) continue; // only the plunging region
+  pInside++;
+  const g = plungeLUT.base.discG[i];
+  if (!Number.isFinite(g) || g <= 0) { pBad++; continue; }
+  if (g < pgMin) pgMin = g;
+  if (g > pgMax) pgMax = g;
+}
+const plungeRedshift = pInside
+  ? { insideIscoHits: pInside, nonFiniteOrNegative: pBad, gMin: +pgMin.toFixed(3), gMax: +pgMax.toFixed(3),
+      iscoRadius: +isco.toFixed(3), discInnerR: +plungeDisc.innerR.toFixed(3) }
+  : { insideIscoHits: 0 };
+
 const RAMP = " .:-=+*#%@";
 function ascii(buf, w, h) {
   const rows = [];
@@ -112,6 +141,7 @@ console.log(JSON.stringify({
     skyTotalByteDelta: skyMoved,
   },
   discRedshift,
+  plungeRedshift,
   photonRing: lut.photonRing,
   counts: lut.counts,
 }, null, 2));
@@ -127,6 +157,9 @@ if (hiPeak < 0.25) problems.push(`upsampled photon ring not bright (peak ${hiPea
 if (Math.abs(rotCenter - hiCenter) > 0.05 && rotCenter > 0.05) problems.push("azimuth rotation disturbed the shadow center");
 if (skyMoved === 0) problems.push("azimuth rotation did not move the lensed starfield");
 if (gN && !(gMin < 1 && gMax > 1)) problems.push(`disc redshift range did not straddle g=1 (g in [${gMin.toFixed(3)}, ${gMax.toFixed(3)}]) — Doppler asymmetry missing`);
+if (!pInside) problems.push("plunging-region disc produced no inside-ISCO crossings — test no longer exercises the plunging path");
+if (pBad) problems.push(`plunging-region redshift produced ${pBad} non-finite/non-positive g values inside the ISCO`);
+if (pInside && !(pgMin < 1 && pgMax > 1)) problems.push(`inside-ISCO redshift range did not straddle g=1 (g in [${pgMin.toFixed(3)}, ${pgMax.toFixed(3)}])`);
 if (problems.length) {
   console.error("\nFAIL:\n- " + problems.join("\n- "));
   process.exit(1);
