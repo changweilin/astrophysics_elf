@@ -88,6 +88,8 @@
       vx1: 0, vy1: 0,    // primary velocity
       vx2: 0, vy2: 0,    // secondary velocity
       inspiralRate: 1,   // ×Peters GW back-reaction (1 = true GR rate; ~4 visible orbits)
+      classical: false,  // true = GW inspiral paused (stable circle); set only by
+                         // circularizeBinary (double-click). Default: free-inspiral.
       merged: false,
       mergerFlash: 0,
       ringdownPhase: 0,
@@ -131,6 +133,10 @@
     }
     splitTwoBody(bin, M1, M2, Vx, Vy);
     bin.enabled = true;
+    // A freshly placed companion always free-inspirals; never inherit a stale
+    // classical-freeze left by a previous double-click circularisation. The
+    // stable-circle mode is only ever entered explicitly via circularizeBinary.
+    bin.classical = false;
     bin.merged = false;
     bin.mergerFlash = 0;
     bin.trail1.length = 0;

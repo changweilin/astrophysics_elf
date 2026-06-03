@@ -81,7 +81,16 @@ function MValEditor({ val, min, max, step, fmt, onChange, disabled }) {
 }
 
 // ─── Slider with header ────────────────────────────────────
-function MParam({ sym, name, val, unit, min, max, step, onChange, fmt, color, scaleLabels, locked, lockHint }) {
+function MParam({ sym, name, val, unit, min, max, step, onChange, fmt, color, scaleLabels, locked, lockHint, scale }) {
+  // `scale="log"` maps the linear thumb onto a base-10 log value axis (mobile
+  // twin of the desktop Param) so multi-decade params (masses) get usable low-end
+  // resolution. Thumb runs in log10 space; typed editor + labels stay real.
+  const isLog = scale === 'log' && min > 0 && max > 0;
+  const lo = isLog ? Math.log10(min) : min;
+  const hi = isLog ? Math.log10(max) : max;
+  const sStep = isLog ? (hi - lo) / 240 : step;
+  const sVal = isLog ? Math.min(hi, Math.max(lo, Math.log10(Math.max(min, val || min)))) : val;
+  const sChange = isLog ? (s) => onChange(Math.min(max, Math.max(min, Math.pow(10, s)))) : onChange;
   return (
     <div className={`m-param ${color || ''} ${locked ? 'locked' : ''}`}>
       <div className="row">
@@ -96,9 +105,9 @@ function MParam({ sym, name, val, unit, min, max, step, onChange, fmt, color, sc
           {unit && <span className="unit">{unit}</span>}
         </div>
       </div>
-      <input type="range" min={min} max={max} step={step} value={val}
+      <input type="range" min={lo} max={hi} step={sStep} value={sVal}
              disabled={!!locked}
-             {...window.KNUI.rangeGuard(onChange)} />
+             {...window.KNUI.rangeGuard(sChange)} />
       <div className="scale">
         {scaleLabels.map((l, i) => <span key={i}>{l}</span>)}
       </div>
@@ -116,13 +125,15 @@ function MBodyEditor({ sim, force, role }) {
     type: sim.params.type || 'bh',
     M: sim.params.M, Q: sim.params.Q, a: sim.params.a,
     R_star: sim.params.R_star || 3.0, T_eff: sim.params.T_eff || 1e6,
-    massUnit: 'M⊙×10⁶', mMin: 0.3, mMax: 3.5,
+    massUnit: 'M⊙×10⁶', mMin: 0.1, mMax: 3.5,
   } : {
     type: (bin && bin.type) || 'bh',
     M: (bin && bin.M2) || 0.8, Q: (bin && bin.Q2) || 0, a: (bin && bin.a2) || 0,
     R_star: (bin && bin.R_star2) || 3.0, T_eff: (bin && bin.T_eff2) || 1e6,
     B: (bin && bin.B2) || 0,
-    massUnit: 'M', mMin: 0.1, mMax: 3.5,
+    // Same geometric unit as the primary (M and M2 enter the physics identically,
+    // no 10^6 factor); match the label so the scale gap is not misread.
+    massUnit: 'M⊙×10⁶', mMin: 0.01, mMax: 3.5,
   };
   const isBH = A.type === 'bh';
   const collapseHint = !isBH && phys.wouldCollapse(A.M, A.Q, A.a, A.R_star);
@@ -190,9 +201,9 @@ function MBodyEditor({ sim, force, role }) {
         ))}
       </div>
       <MParam sym={isCentral ? 'M' : 'M₂'} name={tr('Mass', '質量')} val={A.M} unit={A.massUnit}
-              min={A.mMin} max={A.mMax} step={0.05}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => setField('M', v)}
-              scaleLabels={[A.mMin.toString(), tr('stellar', '恆星'), A.mMax.toString()]} />
+              min={A.mMin} max={A.mMax} step={0.01} scale="log"
+              fmt={(v) => v < 1 ? v.toFixed(3) : v.toFixed(2)} onChange={(v) => setField('M', v)}
+              scaleLabels={[A.mMin.toString(), 'log', A.mMax.toString()]} />
       <MParam sym={isCentral ? 'Q' : 'Q₂'} name={tr('Charge', '電荷')} val={A.Q} unit="√(M)"
               min={-1.5} max={1.5} step={0.01}
               color="magenta" fmt={(v) => (v >= 0 ? '+' : '') + v.toFixed(2)}
@@ -458,10 +469,13 @@ function TabBinary({ sim, force }) {
             // circular binary at the chosen separation along +x from the primary.
             const degenerate = Math.hypot(bin.x2 - bin.x1, bin.y2 - bin.y1) < 0.5;
             if (degenerate) {
+              // placeCompanion already arms a stable two-body circular orbit that
+              // free-inspirals; do NOT circularizeBinary here (it would set
+              // classical=true and freeze the GW inspiral until a page refresh).
               window.KNSim.placeCompanion(sim, sim.primary.x + bin.d, sim.primary.y);
-              window.KNSim.circularizeBinary(sim);
             } else {
               bin.enabled = true;
+              bin.classical = false;   // re-enabling an existing pair resumes inspiral
             }
             bin.merged  = false;
             bin.mergerFlash = 0;
@@ -479,11 +493,11 @@ function TabBinary({ sim, force }) {
         {bin.enabled ? tr('Binary · INSPIRAL ACTIVE', '雙星 · 旋近進行中') : tr('Activate binary companion', '啟用雙星伴星')}
       </button>
 
-      <MParam sym="M₂" name={tr('Companion mass', '伴星質量')} val={bin.M2} unit="M"
-              min={0.1} max={2.5} step={0.05}
-              fmt={(v) => v.toFixed(2)}
+      <MParam sym="M₂" name={tr('Companion mass', '伴星質量')} val={bin.M2} unit="M⊙×10⁶"
+              min={0.01} max={3.5} step={0.01} scale="log"
+              fmt={(v) => v < 1 ? v.toFixed(3) : v.toFixed(2)}
               onChange={(v) => { bin.M2 = v; force(); }}
-              scaleLabels={['0.1', tr('equal', '等質量'), '2.5']} />
+              scaleLabels={['0.01', 'log', '3.5']} />
 
       <MParam sym="d₀" name={tr('Separation', '間距')} val={bin.d} unit="M"
               min={3} max={30} step={0.5}

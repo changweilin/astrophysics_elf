@@ -121,7 +121,20 @@ function ValEditor({ val, min, max, step, fmt, onChange, disabled, klass }) {
 }
 
 // ---------- Slider with header ----------
-function Param({ sym, name, val, unit, min, max, step, onChange, fmt, color, scaleLabels, locked, lockHint }) {
+// `scale="log"` maps the native (linear) range thumb onto a base-10 logarithmic
+// value axis — essential when a parameter spans several decades (e.g. masses for
+// large/extreme mass ratios), so the low end is not crushed into a few pixels.
+// The thumb operates in log10 space; the typed editor + scale labels stay in the
+// real value space. Requires min > 0.
+function Param({ sym, name, val, unit, min, max, step, onChange, fmt, color, scaleLabels, locked, lockHint, scale }) {
+  const isLog = scale === 'log' && min > 0 && max > 0;
+  const lo = isLog ? Math.log10(min) : min;
+  const hi = isLog ? Math.log10(max) : max;
+  const sStep = isLog ? (hi - lo) / 240 : step;
+  const sVal = isLog ? Math.min(hi, Math.max(lo, Math.log10(Math.max(min, val || min)))) : val;
+  // rangeGuard hands back the raw thumb value; in log mode convert it to the real
+  // value (clamped) before the caller's onChange sees it.
+  const sChange = isLog ? (s) => onChange(Math.min(max, Math.max(min, Math.pow(10, s)))) : onChange;
   return (
     <div className={`param ${color || ''} ${locked ? 'locked' : ''}`}>
       <div className="row">
@@ -137,9 +150,9 @@ function Param({ sym, name, val, unit, min, max, step, onChange, fmt, color, sca
         </div>
       </div>
       <div className="slider">
-        <input type="range" min={min} max={max} step={step} value={val}
+        <input type="range" min={lo} max={hi} step={sStep} value={sVal}
                disabled={!!locked}
-               {...window.KNUI.rangeGuard(onChange)} />
+               {...window.KNUI.rangeGuard(sChange)} />
       </div>
       <div className="scale">
         {scaleLabels.map((l, i) => <span key={i}>{l}</span>)}
@@ -159,13 +172,16 @@ function BodyEditor({ sim, force, role }) {
     type: sim.params.type || 'bh',
     M: sim.params.M, Q: sim.params.Q, a: sim.params.a,
     R_star: sim.params.R_star || 3.0, T_eff: sim.params.T_eff || 1e6,
-    massUnit: 'M⊙×10⁶', mMin: 0.3, mMax: 3.5,
+    massUnit: 'M⊙×10⁶', mMin: 0.1, mMax: 3.5,
   } : {
     type: (bin && bin.type) || 'bh',
     M: (bin && bin.M2) || 0.8, Q: (bin && bin.Q2) || 0, a: (bin && bin.a2) || 0,
     R_star: (bin && bin.R_star2) || 3.0, T_eff: (bin && bin.T_eff2) || 1e6,
     B: (bin && bin.B2) || 0,
-    massUnit: 'M', mMin: 0.1, mMax: 3.5,
+    // Same geometric mass unit as the primary (peters()/horizons treat M and M2
+    // identically — no 10^6 factor anywhere); label them alike so a 1.5 + 0.8
+    // pair reads as a ~1.9:1 binary, not a spurious 10^6 scale gap.
+    massUnit: 'M⊙×10⁶', mMin: 0.01, mMax: 3.5,
   };
 
   const isBH = accessors.type === 'bh';
@@ -238,9 +254,9 @@ function BodyEditor({ sim, force, role }) {
       </div>
 
       <Param sym={isCentral ? 'M' : 'M₂'} name={tr('Mass', '質量')} val={accessors.M} unit={accessors.massUnit}
-             min={accessors.mMin} max={accessors.mMax} step={0.05}
-             fmt={(v) => v.toFixed(2)} onChange={(v) => setField('M', v)}
-             scaleLabels={[accessors.mMin.toString(), tr('stellar', '恆星'), accessors.mMax.toString()]} />
+             min={accessors.mMin} max={accessors.mMax} step={0.01} scale="log"
+             fmt={(v) => v < 1 ? v.toFixed(3) : v.toFixed(2)} onChange={(v) => setField('M', v)}
+             scaleLabels={[accessors.mMin.toString(), 'log', accessors.mMax.toString()]} />
       <Param sym={isCentral ? 'Q' : 'Q₂'} name={tr('Charge', '電荷')} unit="√(M)" val={accessors.Q}
              min={-1.5} max={1.5} step={0.01}
              color="magenta" fmt={(v) => (v >= 0 ? '+' : '') + v.toFixed(2)}
