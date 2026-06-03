@@ -20,8 +20,8 @@
     const isBH = type === 'bh';
     const { rplus, naked } = phys.horizons(M, Q, a);
     const rErg = phys.ergosphereEq(M, Q);
-    const rIsco = phys.isco(M, a);
-    const rPh = phys.photonSphereEq(M, a);
+    const rIsco = phys.isco(M, a, Q);
+    const rPh = phys.photonSphereEq(M, a, Q);
     const s = sim.view.scale;
     const [cx, cy] = worldToScreen(sim, w, h, 0, 0);
 

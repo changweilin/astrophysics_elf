@@ -163,7 +163,7 @@ function Telemetry({ sim, body }) {
   const v = Math.hypot(body.vx, body.vy);
   const { M, Q, a } = sim.params;
   const { rplus } = phys.horizons(M, Q, a);
-  const rIsco = phys.isco(M, a);
+  const rIsco = phys.isco(M, a, Q);
   const rErg = phys.ergosphereEq(M, Q);
   // Angular momentum per unit mass (approx)
   const L = body.x * body.vy - body.y * body.vx;
@@ -203,7 +203,7 @@ function Diagnosis({ sim, body, rplus }) {
   const r = Math.hypot(body.x, body.y);
   const { M, Q, a } = sim.params;
   const rErg = phys.ergosphereEq(M, Q);
-  const rIsco = phys.isco(M, a);
+  const rIsco = phys.isco(M, a, Q);
   const lines = [];
   if (body.state === 'captured') lines.push({ t: 'critical', m: tr('Crossed event horizon — added to BH mass register.', '越過事件視界 — 已計入黑洞質量。') });
   if (body.state === 'spaghettified') lines.push({ t: 'critical', m: tr('Disrupted by tidal field. Material dispersed into accretion stream.', '被潮汐場撕裂。物質散入吸積流。') });

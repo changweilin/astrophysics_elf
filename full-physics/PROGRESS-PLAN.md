@@ -158,7 +158,20 @@ individually, keeping the change set small and reversible.
 
 Integration targets:
 
-- Replace or wrap `physics.js` with the new facade. — not started.
+- Replace or wrap `physics.js` with the new facade. — **DONE (2026-06-03),
+  geometry-numerics scope** (user chose "wrap the scalars, not the motion RHS").
+  The motion RHS (`acceleration`) stays pseudo-Newtonian on purpose. `physics.js`
+  `isco` and `photonSphereEq` gain an optional `Q` and, when it is non-zero AND the
+  bridge has loaded, delegate to `window.KNFull.geometryScalars({M,Q,a})` for the
+  EXACT Kerr-Newman prograde radii (charge-aware) — falling back to the existing
+  charge-ignoring Kerr analytic otherwise, so Q=0 scenes are byte-identical and pay
+  zero cost. The bridge caches the heavy `findISCO` (prograde) + `findPhotonCircularOrbit`
+  under a coarse (M,Q,a) bucket. Call sites that have Q in scope now pass it
+  (render.js, disc.js capture radius, panel-left/right, mobile-panels). The
+  `ergosphereEq/Pole` are already exact and `circularSpeed`/`tidalStress` drive
+  motion/fate so all three are left alone. Verified in-browser: isco(M,a,0)=Kerr
+  6.92, isco(M,a,0.5)=exact KN 6.62 (matches facade, smaller as charge demands),
+  first charged call ~11 ms then 0 ms cached, no console errors.
 - Replace preview trajectory logic in `sim.js`. — **DONE (2026-06-03), additive
   variant.** Swapping the preview wholesale would break a deliberate invariant:
   `predictTrajectory` is identical to the live integrator (both pseudo-Newtonian
@@ -205,11 +218,11 @@ Original files touched: yes, per approved target (so far: `panel-bottom.jsx`,
 
 ## Recommended Next Task
 
-Phase 6 in progress: object library -> picker, MHD jet -> panels, and the
-sim.js preview trajectory (additive GR reference line) have landed. Remaining
-targets: wrap `physics.js` with the facade, and move heavy physics into a Web
-Worker. NOTE the preview-line finding generalizes — the live N-body loop is still
-pseudo-Newtonian `phys.acceleration`, so "wrap physics.js with the facade" means
-porting the live integrator (charge, binary, tidal, capture, perf) to the
-adaptive integrator; it is the large, higher-risk target. Each remains gated on
-explicit per-target approval before editing the corresponding root demo file.
+Phase 6 in progress: object library -> picker, MHD jet -> panels, the sim.js
+preview trajectory (additive GR reference line), and the physics.js geometry-scalar
+wrap have landed. ONE target remains: move heavy physics into a Web Worker. NOTE
+the live N-body motion is STILL pseudo-Newtonian `phys.acceleration` by design —
+only the displayed geometry scalars were wrapped. A future "exact-GR motion" pass
+(port `acceleration` / the live loop to the adaptive integrator) is a separate,
+larger, higher-risk effort that was explicitly NOT taken. The Web Worker target
+remains gated on explicit approval before editing root demo files.

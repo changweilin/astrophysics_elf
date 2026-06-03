@@ -102,6 +102,7 @@ class FullPhysicsBridge {
     this._jetCache      = { key: null, accretion: -1, value: null };
     this._jetDiagCache  = { key: null, value: null };
     this._previewCache  = { key: null, value: null };
+    this._scalarCache   = new Map(); // bucketed (M,Q,a) -> { iscoPrograde, photonPrograde }
     // Static spawn catalog derived from the full-physics object library.
     this.objectCatalog = buildDemoObjectCatalog();
   }
@@ -159,6 +160,28 @@ class FullPhysicsBridge {
       value = { params: p, error: err.message };
     }
     this._orbitCache = { key, value };
+    return value;
+  }
+
+  /* Exact Kerr-Newman geometry scalars (prograde) for the demo's physics.js to
+   * delegate to: the numeric ISCO and photon-orbit radii, which physics.js
+   * otherwise approximates with the charge-IGNORING Kerr analytic forms. findISCO
+   * is a heavy nested solve, so the result is cached in a small map under a coarse
+   * (M,Q,a) bucket — a slider drag reuses neighbouring buckets and a steady scene
+   * is a free lookup. Falls back to NaN (the caller keeps its analytic form) on
+   * any solver failure. */
+  geometryScalars(params) {
+    const p = sanitize(params);
+    const b = (v, s) => Math.round(v / s) * s;
+    const key = `${b(p.M, 0.05).toFixed(2)}|${b(p.Q, 0.02).toFixed(2)}|${b(p.a, 0.02).toFixed(2)}`;
+    const hit = this._scalarCache.get(key);
+    if (hit) return hit;
+    let iscoPrograde = NaN, photonPrograde = NaN;
+    try { iscoPrograde = findISCO(p, { prograde: true, samples: 100 }).rISCO; } catch (e) { /* keep NaN */ }
+    try { photonPrograde = findPhotonCircularOrbit(p, { prograde: true, samples: 160 }).rPhoton; } catch (e) { /* keep NaN */ }
+    const value = { iscoPrograde, photonPrograde };
+    if (this._scalarCache.size > 48) this._scalarCache.clear();
+    this._scalarCache.set(key, value);
     return value;
   }
 

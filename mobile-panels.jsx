@@ -249,8 +249,8 @@ function TabBlackHole({ sim, force }) {
   const cls = phys.classify(p.M, p.Q, p.a, type);
   const { rplus, rminus, naked } = phys.horizons(p.M, p.Q, p.a);
   const rErg = phys.ergosphereEq(p.M, p.Q);
-  const rIsco = naked ? NaN : phys.isco(p.M, p.a);
-  const rPh = phys.photonSphereEq(p.M, p.a);
+  const rIsco = naked ? NaN : phys.isco(p.M, p.a, p.Q);
+  const rPh = phys.photonSphereEq(p.M, p.a, p.Q);
   const aN = p.a / p.M;
   const qN = p.Q / p.M;
   const ext = (aN * aN + qN * qN).toFixed(3);
@@ -721,7 +721,7 @@ function MTelemetry({ sim, body }) {
   const v = Math.hypot(body.vx, body.vy);
   const { M, Q, a } = sim.params;
   const { rplus } = phys.horizons(M, Q, a);
-  const rIsco = phys.isco(M, a);
+  const rIsco = phys.isco(M, a, Q);
   const rErg = phys.ergosphereEq(M, Q);
   const L = body.x * body.vy - body.y * body.vx;
   const E = 0.5 * v * v - M / Math.max(r, 0.1);
@@ -768,7 +768,7 @@ function MDiagnosis({ sim, body, rplus }) {
   const r = Math.hypot(body.x, body.y);
   const { M, Q, a } = sim.params;
   const rErg = phys.ergosphereEq(M, Q);
-  const rIsco = phys.isco(M, a);
+  const rIsco = phys.isco(M, a, Q);
   const lines = [];
   if (body.state === 'captured') lines.push({ t: 'crit', m: tr('Crossed event horizon — added to BH mass register.', '越過事件視界 — 已計入黑洞質量。') });
   if (body.state === 'spaghettified') lines.push({ t: 'crit', m: tr('Disrupted by tidal field. Material dispersed.', '被潮汐場撕裂。物質散逸。') });

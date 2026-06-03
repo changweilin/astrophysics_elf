@@ -62,7 +62,7 @@
     if (host.type !== 'bh') return Math.max(0.4, host.R_star || 3);
     const { rplus, naked } = phys.horizons(host.M, host.Q, host.a);
     if (naked) return 0.4;
-    return Math.max(rplus, phys.isco(host.M, host.a) * 0.85);
+    return Math.max(rplus, phys.isco(host.M, host.a, host.Q) * 0.85);
   }
 
   function spawnParticle(disc, host) {

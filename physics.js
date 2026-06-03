@@ -35,8 +35,8 @@
     return disc < 0 ? NaN : M + Math.sqrt(disc);
   }
 
-  function isco(M, a) {
-    // Bardeen-Press-Teukolsky for prograde Kerr; analytic
+  function iscoKerr(M, a) {
+    // Bardeen-Press-Teukolsky for prograde Kerr; analytic (charge-ignoring).
     const aN = a / M;
     const Z1 = 1 + Math.cbrt(1 - aN * aN) * (Math.cbrt(1 + aN) + Math.cbrt(1 - aN));
     const Z2 = Math.sqrt(3 * aN * aN + Z1 * Z1);
@@ -44,10 +44,35 @@
     return r_isco_M * M;
   }
 
-  function photonSphereEq(M, a) {
+  // Prograde ISCO radius. Delegates to the full-physics facade for the EXACT
+  // Kerr-Newman value (charge-aware) when the optional Q is supplied and the bridge
+  // (window.KNFull) has loaded; otherwise falls back to the charge-ignoring Kerr
+  // analytic above. Q defaults to 0 so existing callers are unchanged.
+  function isco(M, a, Q = 0) {
+    const F = window.KNFull;
+    if (F && F.geometryScalars && Math.abs(Q) > 1e-9) {
+      const r = F.geometryScalars({ M, Q, a }).iscoPrograde;
+      if (Number.isFinite(r)) return r;
+    }
+    return iscoKerr(M, a);
+  }
+
+  function photonSphereKerr(M, a) {
     // prograde equatorial photon orbit: r_ph = 2M{1 + cos[(2/3)arccos(-|a|/M)]}
     const aN = Math.min(0.99999, Math.abs(a) / M);
     return 2 * M * (1 + Math.cos((2 / 3) * Math.acos(-aN)));
+  }
+
+  // Prograde equatorial photon-orbit radius. Delegates to the facade for the exact
+  // Kerr-Newman value when Q is supplied and the bridge is loaded; else the Kerr
+  // analytic. Q defaults to 0 so existing callers are unchanged.
+  function photonSphereEq(M, a, Q = 0) {
+    const F = window.KNFull;
+    if (F && F.geometryScalars && Math.abs(Q) > 1e-9) {
+      const r = F.geometryScalars({ M, Q, a }).photonPrograde;
+      if (Number.isFinite(r)) return r;
+    }
+    return photonSphereKerr(M, a);
   }
 
   function classify(M, Q, a, type) {

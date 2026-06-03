@@ -299,8 +299,8 @@ function LeftPanel({ sim, force }) {
   const cls = phys.classify(p.M, p.Q, p.a, type);
   const { rplus, rminus, naked } = phys.horizons(p.M, p.Q, p.a);
   const rErg = phys.ergosphereEq(p.M, p.Q);
-  const rIsco = naked ? NaN : phys.isco(p.M, p.a);
-  const rPh = phys.photonSphereEq(p.M, p.a);
+  const rIsco = naked ? NaN : phys.isco(p.M, p.a, p.Q);
+  const rPh = phys.photonSphereEq(p.M, p.a, p.Q);
   const aN = p.a / p.M;
   const qN = p.Q / p.M;
   const ext = (aN * aN + qN * qN).toFixed(3);
