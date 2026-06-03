@@ -105,6 +105,91 @@ class FullPhysicsBridge {
     this._scalarCache   = new Map(); // bucketed (M,Q,a) -> { iscoPrograde, photonPrograde }
     // Static spawn catalog derived from the full-physics object library.
     this.objectCatalog = buildDemoObjectCatalog();
+    // Off-thread worker for the heavy ISCO/photon root-finding (orbitDiagnostics).
+    this._worker = null;
+    this._workerOk = false;
+    this._pending = new Map();   // request id -> { resolve, reject }
+    this._seq = 0;
+    this._latest = {};           // channel -> { params, key } pending the worker
+    this._busy = {};             // channel -> bool (single-flight, latest-wins)
+    this._initWorker();
+  }
+
+  /* ---- off-thread worker plumbing (mirrors lensing.js) ------------------- */
+
+  _initWorker() {
+    if (typeof Worker === "undefined") return; // -> synchronous fallback
+    try {
+      this._worker = new Worker("physics-worker-entry.mjs", { type: "module" });
+      this._worker.onmessage = (event) => this._onWorkerMessage(event.data);
+      this._worker.onerror = () => this._onWorkerFailure();
+      this._workerOk = true;
+    } catch (err) {
+      this._worker = null;
+      this._workerOk = false;
+    }
+  }
+
+  _onWorkerMessage(data) {
+    if (!data || data.id == null) return;
+    const pend = this._pending.get(data.id);
+    if (!pend) return;
+    this._pending.delete(data.id);
+    if (data.ok) pend.resolve(data.result);
+    else pend.reject(new Error(data.error || "physics worker failed"));
+  }
+
+  /* A module-worker load failure surfaces async; disable it and let the
+   * synchronous getters take over so no diagnostic is permanently stuck stale. */
+  _onWorkerFailure() {
+    this._workerOk = false;
+    for (const pend of this._pending.values()) pend.reject(new Error("physics worker terminated"));
+    this._pending.clear();
+    this._busy = {};
+    this._latest = {};
+    this._emitUpdate(); // prompt a re-render so consumers re-read via the sync fallback
+  }
+
+  _postRaw(type, params) {
+    return new Promise((resolve, reject) => {
+      const id = ++this._seq;
+      this._pending.set(id, { resolve, reject });
+      try {
+        this._worker.postMessage({ id, type, payload: { params } });
+      } catch (err) {
+        this._pending.delete(id);
+        reject(err);
+      }
+    });
+  }
+
+  /* Latest-wins single-flight per channel: while one request is in flight, later
+   * requests only remember the newest params so a fast slider drag cannot back up
+   * a queue of stale computes. onResult runs on the main thread with the result. */
+  _requestLatest(channel, type, params, key, onResult) {
+    this._latest[channel] = { params, key, onResult };
+    if (this._busy[channel]) return;
+    this._drain(channel, type);
+  }
+
+  _drain(channel, type) {
+    const job = this._latest[channel];
+    if (!job) return;
+    this._latest[channel] = null;
+    this._busy[channel] = true;
+    this._postRaw(type, job.params).then(
+      (result) => { job.onResult(result); },
+      () => { /* worker failed; sync getters resume */ },
+    ).finally(() => {
+      this._busy[channel] = false;
+      if (this._latest[channel]) this._drain(channel, type);
+    });
+  }
+
+  _emitUpdate() {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("knfull-update"));
+    }
   }
 
   syncParams(params) {
@@ -138,14 +223,9 @@ class FullPhysicsBridge {
     return value;
   }
 
-  /* Numerical ISCO and photon-circular-orbit radii (prograde & retrograde). */
-  orbitDiagnostics(params, options = {}) {
-    const p = this.syncParams(params);
-    const key = paramsKey(p);
-    if (this._orbitCache.key === key && !options.force) return this._orbitCache.value;
-    let value;
+  _orbitSync(p) {
     try {
-      value = {
+      return {
         params: p,
         isco: {
           prograde:   findISCO(p, { samples: 180, prograde: true }),
@@ -157,8 +237,37 @@ class FullPhysicsBridge {
         },
       };
     } catch (err) {
-      value = { params: p, error: err.message };
+      return { params: p, error: err.message };
     }
+  }
+
+  // A pending shape so panels render "—" rather than crash before the first
+  // worker result lands (only used when there is no last-known value to reuse).
+  _orbitPlaceholder(p) {
+    const nanR = { rISCO: NaN }, nanP = { rPhoton: NaN };
+    return { params: p, pending: true, isco: { prograde: nanR, retrograde: nanR }, photonOrbit: { prograde: nanP, retrograde: nanP } };
+  }
+
+  /* Numerical ISCO and photon-circular-orbit radii (prograde & retrograde). The
+   * root-finding is the heaviest synchronous compute, so it runs in the physics
+   * worker: this returns the cached value, or the last-known / a placeholder while
+   * the worker recomputes, then fires `knfull-update` so the panels re-render with
+   * the fresh result. Falls back to a synchronous solve when no worker is available
+   * (or `options.force` is set, used by callers that need an immediate exact value). */
+  orbitDiagnostics(params, options = {}) {
+    const p = this.syncParams(params);
+    const key = paramsKey(p);
+    if (this._orbitCache.key === key && !options.force) return this._orbitCache.value;
+    if (this._workerOk && !options.force) {
+      this._requestLatest("orbit", "orbit-diagnostics", p, key, (value) => {
+        this._orbitCache = { key, value };
+        this._emitUpdate();
+      });
+      // Reuse the last-known result (trails the slider by a frame) until the
+      // worker answers; placeholder only on the very first request.
+      return this._orbitCache.value ?? this._orbitPlaceholder(p);
+    }
+    const value = this._orbitSync(p);
     this._orbitCache = { key, value };
     return value;
   }

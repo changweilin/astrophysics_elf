@@ -822,13 +822,26 @@ function mFmt(v, d = 3) {
   return v.toFixed(d);
 }
 
+// Bumps on 'knfull-update' so a worker-backed value (orbit diagnostics) refreshes
+// when it lands, even though (M,Q,a) did not change.
+function useMFullBridgeTick() {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const onUpdate = () => setTick((t) => t + 1);
+    window.addEventListener('knfull-update', onUpdate);
+    return () => window.removeEventListener('knfull-update', onUpdate);
+  }, []);
+  return tick;
+}
+
 function MSpacetimeDiagnostics({ sim }) {
   const KNFull = window.KNFull;
   const { M, Q, a, B = 0 } = sim.params;
+  const bridgeTick = useMFullBridgeTick();
   const geom  = React.useMemo(() => KNFull.geometry(sim.params),
                               [KNFull, M, Q, a, B]);
   const orbit = React.useMemo(() => KNFull.orbitDiagnostics(sim.params),
-                              [KNFull, M, Q, a, B]);
+                              [KNFull, M, Q, a, B, bridgeTick]);
   const captures = sim.events ? sim.events.filter(
     (e) => e.type === 'warn' && /captured|crossed|impacted/i.test(e.msg)
   ).length : 0;

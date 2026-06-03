@@ -15,6 +15,19 @@ function useFullBridgeReady() {
   return ready;
 }
 
+// Counter that bumps when the bridge posts an async result ('knfull-update', e.g.
+// the off-thread orbit diagnostics landing). Feed it into a useMemo dep list so a
+// worker-backed value refreshes once it arrives even though (M,Q,a) did not change.
+function useFullBridgeTick() {
+  const [tick, setTick] = useStateR(0);
+  useEffectR(() => {
+    const onUpdate = () => setTick((t) => t + 1);
+    window.addEventListener('knfull-update', onUpdate);
+    return () => window.removeEventListener('knfull-update', onUpdate);
+  }, []);
+  return tick;
+}
+
 // Cheap throttle for the expensive tidal-tensor / orbit-diagnostic calls.
 // Returns the cached value, re-evaluates at most every `intervalMs`.
 function useThrottledFull(compute, deps, intervalMs = 240) {
@@ -302,10 +315,12 @@ function SpacetimeDiagnostics({ sim }) {
   const type = sim.params.type || 'bh';
 
   // Re-evaluate when (M,Q,a,B) change — values themselves are cached inside the bridge.
+  // bridgeTick also refreshes orbit when its off-thread worker result arrives.
+  const bridgeTick = useFullBridgeTick();
   const geom  = useMemoR(() => KNFull.geometry(sim.params),
                           [KNFull, M, Q, a, B]);
   const orbit = useMemoR(() => KNFull.orbitDiagnostics(sim.params),
-                          [KNFull, M, Q, a, B]);
+                          [KNFull, M, Q, a, B, bridgeTick]);
 
   // Reduced accretion-rate proxy: capture events per recent log window.
   const recentCaptures = sim.events ? sim.events.filter(

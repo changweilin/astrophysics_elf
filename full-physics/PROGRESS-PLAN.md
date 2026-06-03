@@ -211,18 +211,36 @@ Integration targets:
   are untouched. Verified in-browser (Playwright): jetDiagnostics settles to
   sensible values (valid for a/B>0, inert for a=B=0) and §04d renders the new
   sigma / kink / L_synch rows with no new console errors.
-- Move heavy physics into a Web Worker. — not started.
+- Move heavy physics into a Web Worker. — **DONE (2026-06-03).** The heaviest
+  synchronous bridge compute is `orbitDiagnostics` (4x `findISCO`/photon root-finding,
+  ~20 ms on every M/Q/a change). New root `physics-worker-entry.mjs` (module worker,
+  imports the add-only `full-physics/orbit-diagnostics.mjs`) computes EXACTLY the
+  bridge's orbit shape off-thread. `full-physics-bridge.mjs` gains a worker client
+  (id-based promises, latest-wins single-flight per channel so a fast slider can't
+  back up a queue) and `orbitDiagnostics` now returns the cached / last-known value
+  (or a NaN placeholder -> "—") instantly and fires `knfull-update` when the worker
+  answers; it keeps the original synchronous solve as a fallback when no Worker is
+  available or `options.force` is set. The two consumers (panel-right §04b,
+  mobile-panels) add a `useFullBridgeTick()` to the orbit `useMemo` deps so the
+  worker result refreshes the readout. Verified in-browser: physics-worker-entry.mjs
+  loads (HTTP 200, Worker attached), `orbitDiagnostics` returns in 0.1 ms (was
+  ~20 ms blocking), §04b settles to correct prograde/retrograde ISCO (a=0.5 ->
+  7.29 / 10.58 M), no console errors.
+
+Phase 6 integration complete: all five targets landed (per-target approved).
 
 Original files touched: yes, per approved target (so far: `panel-bottom.jsx`,
 `mobile-panels.jsx`, and the add-only `full-physics-bridge.mjs`).
 
 ## Recommended Next Task
 
-Phase 6 in progress: object library -> picker, MHD jet -> panels, the sim.js
-preview trajectory (additive GR reference line), and the physics.js geometry-scalar
-wrap have landed. ONE target remains: move heavy physics into a Web Worker. NOTE
-the live N-body motion is STILL pseudo-Newtonian `phys.acceleration` by design —
-only the displayed geometry scalars were wrapped. A future "exact-GR motion" pass
-(port `acceleration` / the live loop to the adaptive integrator) is a separate,
-larger, higher-risk effort that was explicitly NOT taken. The Web Worker target
-remains gated on explicit approval before editing root demo files.
+Phase 6 integration COMPLETE (all five targets approved + landed per-target):
+object library -> picker, MHD jet -> panels, sim.js preview trajectory (additive
+GR reference line), physics.js geometry-scalar wrap, and heavy physics -> Web
+Worker (orbit diagnostics).
+
+The one deliberately-untaken follow-up: the live N-body motion is STILL
+pseudo-Newtonian `phys.acceleration` by design — only the DISPLAYED geometry was
+wrapped. A future "exact-GR motion" pass (port `acceleration` / the live loop to
+the adaptive integrator, incl. binary/charge/tidal/capture/perf) is a separate,
+larger, higher-risk effort; gate on explicit approval if ever pursued.
