@@ -180,6 +180,8 @@ function BodyEditor({ sim, force, role }) {
     Msun: sim.params.Msun != null ? sim.params.Msun : range.def,
     Q: sim.params.Q, a: sim.params.a,
     R_star: sim.params.R_star || 3.0, T_eff: sim.params.T_eff || 1e6,
+    age: sim.params.age || 0, Z: sim.params.Z != null ? sim.params.Z : 0.5,
+    B: sim.params.B || 0,
     massUnit: 'M⊙', mMin: range.min, mMax: range.max,
   } : {
     type, category,
@@ -187,26 +189,59 @@ function BodyEditor({ sim, force, role }) {
     Msun: (bin && bin.M2sun) || 8,
     Q: (bin && bin.Q2) || 0, a: (bin && bin.a2) || 0,
     R_star: (bin && bin.R_star2) || 3.0, T_eff: (bin && bin.T_eff2) || 1e6,
+    age: (bin && bin.age2) || 0, Z: (bin && bin.Z2 != null) ? bin.Z2 : 0.5,
     B: (bin && bin.B2) || 0,
     massUnit: 'M⊙', mMin: range.min, mMax: range.max,
   };
 
   const isBH = accessors.type === 'bh';
-  const collapseHint = !isBH && phys.wouldCollapse(accessors.Mgeo, accessors.Q, accessors.a, accessors.R_star);
-  const bhLockReason = isCentral
-    ? tr('Central body is a black hole — no stellar surface parameters inside the horizon', '主天體為黑洞 — 視界內無星體表面參數')
-    : tr('Companion is a black hole — no stellar surface parameters inside the horizon', '伴星為黑洞 — 視界內無星體表面參數');
+  // No stellar body's surface is a free variable: R★, T★, colour and L are all
+  // physical consequences of the mass plus stage-specific drivers — age (ms),
+  // metallicity (giant), or spin + magnetic field (wd/ns). The engine derives
+  // them every frame (KNSim.syncStellar → KNphysics.deriveStellar); the panel
+  // only exposes those drivers and shows R★/T★ as read-outs, never sliders.
+  const isDerived = !isBH;
+  const stellarState = isDerived
+    ? phys.deriveStellar(accessors.type, accessors.Msun,
+        { age: accessors.age, Z: accessors.Z, B: accessors.B || 0, a: accessors.a })
+    : null;
+  // Live derived geometric radius — the collapse check must use it, not the
+  // possibly one-frame-stale stored R_star.
+  const liveR = stellarState ? stellarState.R_star : accessors.R_star;
+  const collapseHint = !isBH && phys.wouldCollapse(accessors.Mgeo, accessors.Q, accessors.a, liveR);
+  const surfaceDriver = {
+    ms:    tr('derived from mass + age', '由質量＋年齡推導'),
+    giant: tr('derived from mass + metallicity', '由質量＋金屬量推導'),
+    wd:    tr('derived from mass + spin', '由質量＋自旋推導'),
+    ns:    tr('derived from mass + field + spin', '由質量＋磁場＋自旋推導'),
+  }[accessors.type] || tr('visible photosphere', '可見光球層');
+  const fmtYears = (yr) => yr >= 1e9 ? (yr / 1e9).toFixed(yr < 1e10 ? 2 : 0) + ' Gyr'
+    : yr >= 1e6 ? (yr / 1e6).toFixed(0) + ' Myr'
+    : Math.round(yr).toLocaleString() + ' yr';
+  const fmtLum = (L) => L >= 1e4 ? (L / 1e3).toFixed(0) + 'k' : L >= 100 ? Math.round(L).toString()
+    : L >= 1 ? L.toFixed(1) : L.toFixed(3);
+  const fmtTemp = (T) => T >= 1e5 ? (T / 1e6).toFixed(2) + '×10⁶' : Math.round(T).toLocaleString();
 
   function setField(k, v) {
     if (isCentral) {
       if (k === 'Q' || k === 'a') sim.params[k] = v;
-      else if (k === 'R_star') { sim.params.R_star = v; sim.params._stellarTouched = true; }
-      else if (k === 'T_eff') { sim.params.T_eff = v; sim.params._stellarTouched = true; }
     } else if (bin) {
-      const m = { Q: 'Q2', a: 'a2', R_star: 'R_star2', T_eff: 'T_eff2', B: 'B2' };
+      const m = { Q: 'Q2', a: 'a2', B: 'B2' };
       bin[m[k]] = v;
-      if (k === 'R_star' || k === 'T_eff') bin._stellarTouched = true;
     }
+    force();
+  }
+
+  // Stage drivers. R★/T★ are not set here — KNSim.syncStellar re-derives them
+  // from these inputs every frame, so just record the knob and re-render.
+  function setAge(v) {
+    if (isCentral) sim.params.age = v;
+    else if (bin) bin.age2 = v;
+    force();
+  }
+  function setMetallicity(v) {
+    if (isCentral) sim.params.Z = v;
+    else if (bin) bin.Z2 = v;
     force();
   }
 
@@ -251,7 +286,7 @@ function BodyEditor({ sim, force, role }) {
         if (Math.abs(bin.Q2) > bin.M2) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * 0.9;
       }
     }
-    force();
+    force();   // R★/T★ re-derived from the new mass by KNSim.syncStellar
   }
 
   // Picker — selects an evolutionary stage (main sequence / giant / remnant).
@@ -268,12 +303,15 @@ function BodyEditor({ sim, force, role }) {
       slot[accessors.category] = {
         Msun: sim.params.Msun, Q: sim.params.Q, a: sim.params.a, type: sim.params.type,
         R_star: sim.params.R_star, T_eff: sim.params.T_eff,
+        age: sim.params.age, Z: sim.params.Z,
         _stellarTouched: sim.params._stellarTouched, viewScale: sim.view.scale,
       };
       const saved = slot[cat];
       if (saved) {
         sim.params.Msun = saved.Msun; sim.params.Q = saved.Q; sim.params.a = saved.a;
         sim.params.type = saved.type; sim.params.R_star = saved.R_star; sim.params.T_eff = saved.T_eff;
+        sim.params.age = saved.age != null ? saved.age : 0;
+        sim.params.Z = saved.Z != null ? saved.Z : 0.5;
         sim.params._stellarTouched = saved._stellarTouched;
         sim.view.scale = saved.viewScale || phys.VIEW_SCALES[cat];
         window.KNSim.logEv(sim, saved.type === 'bh' ? 'warn' : 'good',
@@ -285,6 +323,8 @@ function BodyEditor({ sim, force, role }) {
         const newType = phys.typeForStage(cat, Msun);
         sim.params.Msun = Msun;
         sim.params.type = newType;
+        sim.params.age = 0;       // fresh stage starts at ZAMS / solar metallicity
+        sim.params.Z = 0.5;
         if (newType !== 'bh') {
           const d = phys.STELLAR_DEFAULTS[newType];
           if (d) { sim.params.R_star = d.R; sim.params.T_eff = d.T; }
@@ -301,12 +341,15 @@ function BodyEditor({ sim, force, role }) {
     } else if (bin) {
       slot[accessors.category] = {
         M2sun: bin.M2sun, Q2: bin.Q2, a2: bin.a2, type: bin.type,
-        R_star2: bin.R_star2, T_eff2: bin.T_eff2, _stellarTouched: bin._stellarTouched,
+        R_star2: bin.R_star2, T_eff2: bin.T_eff2,
+        age2: bin.age2, Z2: bin.Z2, _stellarTouched: bin._stellarTouched,
       };
       const saved = slot[cat];
       if (saved) {
         bin.M2sun = saved.M2sun; bin.Q2 = saved.Q2; bin.a2 = saved.a2; bin.type = saved.type;
         bin.R_star2 = saved.R_star2; bin.T_eff2 = saved.T_eff2; bin._stellarTouched = saved._stellarTouched;
+        bin.age2 = saved.age2 != null ? saved.age2 : 0;
+        bin.Z2 = saved.Z2 != null ? saved.Z2 : 0.5;
         window.KNSim.logEv(sim, saved.type === 'bh' ? 'warn' : 'good',
           trp('companion → {type}', { type: stageName(saved.type) }));
       } else {
@@ -316,6 +359,8 @@ function BodyEditor({ sim, force, role }) {
         const newType = phys.typeForStage(cat, Msun);
         bin.M2sun = Msun;
         bin.type = newType;
+        bin.age2 = 0;       // fresh stage starts at ZAMS / solar metallicity
+        bin.Z2 = 0.5;
         if (newType !== 'bh') {
           const d = phys.STELLAR_DEFAULTS[newType];
           if (d) { bin.R_star2 = d.R; bin.T_eff2 = d.T; }
@@ -331,7 +376,7 @@ function BodyEditor({ sim, force, role }) {
         if (Math.abs(bin.Q2) > bin.M2) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * 0.9;
       }
     }
-    force();
+    force();   // R★/T★ re-derived for the new stage by KNSim.syncStellar
   }
 
   return (
@@ -398,20 +443,85 @@ function BodyEditor({ sim, force, role }) {
       <div className="stellar-sub">
         <div className="sub-head">
           <span>{tr('Surface state', '表面狀態')}</span>
-          <span className="hint">{isBH ? tr('sealed under r₊', '封閉於 r₊ 之內') : (collapseHint ? tr('◆ R★ ≤ r₊ · will collapse', '◆ R★ ≤ r₊ · 將塌縮') : tr('visible photosphere', '可見光球層'))}</span>
+          <span className="hint">{isBH ? tr('sealed under r₊', '封閉於 r₊ 之內') : (collapseHint ? tr('◆ R★ ≤ r₊ · will collapse', '◆ R★ ≤ r₊ · 將塌縮') : surfaceDriver)}</span>
         </div>
-        <Param sym={isCentral ? 'R★' : 'R★₂'} name={tr('Surface radius', '表面半徑')} val={accessors.R_star} unit="M"
-               min={1.5} max={32} step={0.1}
-               fmt={(v) => v.toFixed(2)} onChange={(v) => setField('R_star', v)}
-               locked={isBH} lockHint={bhLockReason}
-               scaleLabels={[tr('compact', '緻密'), 'WD', tr('stellar', '恆星')]} />
-        <Param sym={isCentral ? 'T★' : 'T★₂'} name={tr('Photosphere T', '光球層溫度')} val={accessors.T_eff} unit="K"
-               min={2500} max={5e6} step={50}
-               color="cyan"
-               fmt={(v) => v >= 1e5 ? (v/1e6).toFixed(2) + '×10⁶' : Math.round(v).toLocaleString()}
-               onChange={(v) => setField('T_eff', v)}
-               locked={isBH} lockHint={bhLockReason}
-               scaleLabels={[tr('red', '紅'), tr('G/sun', 'G/太陽'), tr('X-ray', 'X 射線')]} />
+
+        {/* Stage drivers — the only knobs; R★/T★/colour are derived from them. */}
+        {accessors.type === 'ms' && (
+          <Param sym={isCentral ? 'τ' : 'τ₂'} name={tr('Age (of main-seq. life)', '年齡（佔主序壽命）')}
+                 val={accessors.age} unit=""
+                 min={0} max={1} step={0.01}
+                 color="amber" fmt={(v) => (v * 100).toFixed(0) + '%'}
+                 onChange={setAge}
+                 scaleLabels={[tr('ZAMS', '零齡'), tr('mid-life', '中年'), tr('turnoff', '末端')]} />
+        )}
+        {accessors.type === 'giant' && (
+          <Param sym={isCentral ? 'Z' : 'Z₂'} name={tr('Metallicity (heavy elements)', '金屬量（重元素）')}
+                 val={accessors.Z} unit=""
+                 min={0} max={1} step={0.01}
+                 color="amber" fmt={(v) => v === 0.5 ? tr('solar', '太陽') : (v < 0.5 ? '−' : '+') + Math.abs(v - 0.5).toFixed(2)}
+                 onChange={setMetallicity}
+                 scaleLabels={[tr('metal-poor', '貧金屬'), tr('solar', '太陽'), tr('metal-rich', '富金屬')]} />
+        )}
+        {(accessors.type === 'wd' || accessors.type === 'ns') && (
+          <div className="sub-note" style={{ fontSize: '0.78em', opacity: 0.7, margin: '2px 0 8px' }}>
+            {accessors.type === 'wd'
+              ? tr('R★ shrinks with mass (degeneracy); spin enlarges it, mass + field heat it.',
+                   'R★ 隨質量縮小（簡併壓）；自旋使其變大，質量與磁場使其變熱。')
+              : tr('R★ ≈ const; spin flattens it; magnetic field (magnetar) sets the temperature.',
+                   'R★ ≈ 定值；自旋使其變扁；磁場（磁星）決定溫度。')}
+          </div>
+        )}
+
+        {/* Derived read-outs — R★ and T★ are values here, never sliders. */}
+        {stellarState && (
+          <div className="derived" style={{ marginTop: 6 }}>
+            <div className="cell">
+              <span className="k">{(isCentral ? 'R★' : 'R★₂') + ' ' + tr('radius', '半徑')}</span>
+              <span className="v" style={{ color: collapseHint ? 'var(--warn)' : 'inherit' }}>
+                {stellarState.R_star.toFixed(2)}<small>M</small>
+              </span>
+            </div>
+            <div className="cell">
+              <span className="k">{(isCentral ? 'T★' : 'T★₂') + ' ' + tr('photosphere', '光球')}</span>
+              <span className="v">
+                <i style={{ display: 'inline-block', width: '0.7em', height: '0.7em', borderRadius: '50%',
+                            marginRight: 5, verticalAlign: 'middle',
+                            background: phys.tempToColor(stellarState.T_eff, 1) }} />
+                {fmtTemp(stellarState.T_eff)}<small>K</small>
+              </span>
+            </div>
+            <div className="cell">
+              <span className="k">{tr('L luminosity', 'L 光度')}</span>
+              <span className="v">{fmtLum(stellarState.L)}<small>L⊙</small></span>
+            </div>
+            {accessors.type === 'ns' ? (
+              <div className="cell">
+                <span className="k">{tr('R radius', 'R 半徑')}</span>
+                <span className="v">{stellarState.Rkm.toFixed(1)}<small>km</small></span>
+              </div>
+            ) : (
+              <div className="cell">
+                <span className="k">{tr('R photosphere', 'R 光球')}</span>
+                <span className="v">{stellarState.R_solar < 0.1 ? stellarState.R_solar.toFixed(3) : stellarState.R_solar.toFixed(stellarState.R_solar < 10 ? 2 : 0)}<small>R⊙</small></span>
+              </div>
+            )}
+            {accessors.type === 'wd' && (
+              <div className="cell">
+                <span className="k">M / M_Ch</span>
+                <span className="v" style={{ color: stellarState.MoverMch > 0.9 ? 'var(--warn)' : 'inherit' }}>
+                  {stellarState.MoverMch.toFixed(2)}
+                </span>
+              </div>
+            )}
+            {accessors.type === 'ms' && (
+              <div className="cell" style={{ gridColumn: 'span 2' }}>
+                <span className="k">{tr('t main-sequence (max life ∝ mass)', 't 主序壽命（上限 ∝ 質量）')}</span>
+                <span className="v">{fmtYears(stellarState.lifetime)}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </>
   );
@@ -663,9 +773,15 @@ function LeftPanel({ sim, force }) {
                                sim.params.Msun = pr.Msun;        // physical mass (solar) — drives class
                                sim.params.Q = pr.Q; sim.params.a = pr.a;  // dimensionless Q/M, a/M
                                sim.params.type = pr.type || 'bh';
-                               sim.params._stellarTouched = (pr.R_star != null || pr.T_eff != null);
-                               if (pr.R_star != null) sim.params.R_star = pr.R_star;
-                               if (pr.T_eff != null) sim.params.T_eff = pr.T_eff;
+                               sim.params.age = 0; sim.params.Z = 0.5;     // ms/giant: start at ZAMS / solar
+                               // ms & giant surfaces are derived from mass; wd/ns honour the preset's value.
+                               const ds = phys.deriveStellar(sim.params.type, pr.Msun, { age: 0, Z: 0.5 });
+                               if (ds) { sim.params.R_star = ds.R_star; sim.params.T_eff = ds.T_eff; sim.params._stellarTouched = false; }
+                               else {
+                                 sim.params._stellarTouched = (pr.R_star != null || pr.T_eff != null);
+                                 if (pr.R_star != null) sim.params.R_star = pr.R_star;
+                                 if (pr.T_eff != null) sim.params.T_eff = pr.T_eff;
+                               }
                                if (pr.B != null) sim.params.B = pr.B;
                                if (pr.disc != null) sim.disc.enabled = pr.disc;
                                if (sim.binary) sim.binary.M2 = Math.max(0.01, (sim.binary.M2sun || 8) / Math.max(0.01, pr.Msun));

@@ -21,9 +21,18 @@
         // (wd/ns/bh are the collapsed-remnant flavours, auto-picked from Msun)
         type: 'bh',
         // physical surface radius (geometric units, M). Only used when type !== 'bh'.
+        // For ms/giant this is DERIVED from Msun (+ age/Z) via KNphysics.deriveStellar,
+        // not a free knob; for wd/ns it is the degenerate-surface default.
         R_star: 3.0,
         // effective surface temperature (Kelvin) — colours the rendered sphere.
+        // Derived alongside R_star for ms/giant.
         T_eff: 1e6,
+        // Main-sequence age as a fraction of the hydrogen-burning lifetime
+        // (0 = ZAMS / birth, 1 = turnoff). Drives ms R★/T★/L evolution.
+        age: 0,
+        // Heavy-element (metallicity) fraction, 0..1 with 0.5 ≈ solar. Drives
+        // giant R★/T★ (metal-rich → cooler, more swollen, redder).
+        Z: 0.5,
         // surface magnetic field strength (decorative; main MHD field is sim.params.B added below as needed)
       },
       // Central body kinematic state (world frame). All scene rendering pivots on this.
@@ -86,6 +95,8 @@
       a2: 0,             // companion spin (J2 / M2 c)
       R_star2: 3.0,      // companion surface radius (used when type !== 'bh')
       T_eff2: 1e6,       // companion photosphere temperature
+      age2: 0,           // companion main-sequence age fraction (ms evolution)
+      Z2: 0.5,           // companion metallicity fraction (giant envelope tuning)
       B2: 0.30,          // companion magnetic field (matches the primary's default
                          // so a placed companion is magnetised symmetrically — drives
                          // its own Blandford-Znajek jet and shows poloidal field lines)
@@ -580,7 +591,29 @@
     return value;
   }
 
+  // Keep the derived stellar surfaces (R_star / T_eff) in lock-step with the
+  // physical inputs. For ms/giant/wd/ns the photosphere is NOT a free variable —
+  // it follows the mass and the stage's drivers (age, metallicity, spin, magnetic
+  // field) through KNphysics.deriveStellar. A black hole has no surface. Called
+  // every frame (step + render) so the canvas, the collision surfaces and the
+  // panel read-outs can never drift apart.
+  function syncStellar(sim) {
+    const p = sim.params;
+    if (p) {
+      const d = phys.deriveStellar(p.type, p.Msun,
+        { age: p.age || 0, Z: p.Z != null ? p.Z : 0.5, B: p.B || 0, a: p.a || 0 });
+      if (d) { p.R_star = d.R_star; p.T_eff = d.T_eff; }
+    }
+    const b = sim.binary;
+    if (b) {
+      const d2 = phys.deriveStellar(b.type, b.M2sun,
+        { age: b.age2 || 0, Z: b.Z2 != null ? b.Z2 : 0.5, B: b.B2 || 0, a: b.a2 || 0 });
+      if (d2) { b.R_star2 = d2.R_star; b.T_eff2 = d2.T_eff; }
+    }
+  }
+
   function step(sim, realDt) {
+    syncStellar(sim);            // R★/T★ track M + age/Z/B/spin before integrating
     if (sim.paused) return;
     // Total sim-time to advance this frame. The per-macro-step dt is capped at
     // `maxStep` for integrator stability, so a large timescale advances by
@@ -718,7 +751,7 @@
   }
 
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
-                   step, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
+                   step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
                    worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

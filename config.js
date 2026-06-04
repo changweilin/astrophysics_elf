@@ -21,6 +21,7 @@
     const binSnap = b ? {
       type: b.type, M2: b.M2, M2sun: b.M2sun, Q2: b.Q2, a2: b.a2,
       R_star2: b.R_star2, T_eff2: b.T_eff2, B2: b.B2, d: b.d,
+      age2: b.age2, Z2: b.Z2,
       _stellarTouched: !!b._stellarTouched,
       enabled: !!b.enabled,
       merged: !!b.merged, eMergerGW: b.eMergerGW || 0,
@@ -36,6 +37,7 @@
       params: {
         Msun: p.Msun, Q: p.Q, a: p.a, type: p.type,
         R_star: p.R_star, T_eff: p.T_eff, B: p.B,
+        age: p.age, Z: p.Z,
         _stellarTouched: !!p._stellarTouched,
       },
       disc: d ? { enabled: !!d.enabled, alpha: d.alpha, emissionRate: d.emissionRate } : null,
@@ -100,7 +102,14 @@
       if (isNum(p.R_star)) sim.params.R_star = p.R_star;
       if (isNum(p.T_eff)) sim.params.T_eff = p.T_eff;
       if (isNum(p.B)) sim.params.B = p.B;
+      sim.params.age = isNum(p.age) ? p.age : 0;
+      sim.params.Z = isNum(p.Z) ? p.Z : 0.5;
       sim.params._stellarTouched = !!p._stellarTouched;
+      // Stellar photosphere is derived — re-derive so restored R★/T★/colour always
+      // match the persisted mass + drivers (and fix any legacy stored values).
+      const ds = window.KNphysics.deriveStellar(sim.params.type, sim.params.Msun,
+        { age: sim.params.age, Z: sim.params.Z, B: sim.params.B || 0, a: sim.params.a || 0 });
+      if (ds) { sim.params.R_star = ds.R_star; sim.params.T_eff = ds.T_eff; }
     }
     if (cfg.disc && sim.disc) {
       sim.disc.enabled = !!cfg.disc.enabled;
@@ -125,7 +134,13 @@
       if (isNum(b.T_eff2)) B.T_eff2 = b.T_eff2;
       if (isNum(b.B2)) B.B2 = b.B2;
       if (isNum(b.d)) { B.d = b.d; B.d0 = b.d; }
+      B.age2 = isNum(b.age2) ? b.age2 : 0;
+      B.Z2 = isNum(b.Z2) ? b.Z2 : 0.5;
       B._stellarTouched = !!b._stellarTouched;
+      // Companion photosphere is derived from its mass + drivers (age/Z/B/spin).
+      const ds2 = window.KNphysics.deriveStellar(B.type, B.M2sun,
+        { age: B.age2, Z: B.Z2, B: B.B2 || 0, a: B.a2 || 0 });
+      if (ds2) { B.R_star2 = ds2.R_star; B.T_eff2 = ds2.T_eff; }
       B.merged = !!b.merged;
       if (isNum(b.eMergerGW)) B.eMergerGW = b.eMergerGW;
       // Restore a placed companion's live orbit (positions/velocities/barycentre).

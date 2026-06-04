@@ -195,6 +195,125 @@
     return remnantType(Msun);
   }
 
+  // ── Main-sequence & giant structure model (solar units) ──────────────
+  // Everything keys off the displayed solar mass M⊙. Empirical ZAMS power laws
+  // give luminosity and radius; the effective temperature then follows from
+  // Stefan-Boltzmann (L = 4π R² σ T⁴), and tempToColor turns T into the rendered
+  // surface colour. So for a main-sequence star the radius, luminosity, effective
+  // temperature AND colour are ALL functions of M — and, through slow evolution,
+  // of its fractional main-sequence age. These are derived, not free knobs.
+  const T_SUN = 5772;             // K  — solar effective temperature
+  const MS_LIFETIME_SUN = 1.0e10; // yr — nuclear timescale of the Sun on the MS
+
+  // Mass–luminosity relation, L in L⊙ (piecewise power law).
+  function msLuminosity(Msun) {
+    const M = Math.max(0.05, Msun);
+    if (M < 0.43) return 0.23 * Math.pow(M, 2.3);
+    if (M < 2)    return Math.pow(M, 4);
+    if (M < 55)   return 1.4 * Math.pow(M, 3.5);
+    return 32000 * M;
+  }
+
+  // Mass–radius relation, R in R⊙ (ZAMS, two-branch power law).
+  function msRadius(Msun) {
+    const M = Math.max(0.05, Msun);
+    return M < 1 ? Math.pow(M, 0.8) : Math.pow(M, 0.57);
+  }
+
+  // Hydrogen-burning (main-sequence) lifetime in years: t ≈ t_sun · M / L.
+  // The upper limit on a star's main-sequence life is therefore set by its mass
+  // alone (massive stars burn out fast; red dwarfs outlive the universe).
+  function msLifetime(Msun) {
+    const M = Math.max(0.05, Msun);
+    return MS_LIFETIME_SUN * (M / msLuminosity(M));
+  }
+
+  // Effective temperature from Stefan-Boltzmann, given L and R in solar units.
+  function effTemp(Lsun, Rsun) {
+    return T_SUN * Math.pow(Lsun / (Rsun * Rsun), 0.25);
+  }
+
+  // Map a physical photosphere radius (R⊙) to the geometric display radius
+  // (units of M). Compressed power law + clamp so dwarfs stay visible and
+  // supergiants do not overflow the frame; the read-out still shows true R⊙.
+  function geomRadius(Rsun, anchor, power, lo, hi) {
+    return Math.max(lo, Math.min(hi, anchor * Math.pow(Math.max(1e-3, Rsun), power)));
+  }
+
+  // Full main-sequence state. `age` ∈ [0,1] is the fraction of the star's
+  // main-sequence lifetime elapsed; as it ages the star brightens (~+90%) and
+  // swells (~+50%), and Stefan-Boltzmann cools the larger photosphere.
+  function mainSequenceState(Msun, age = 0) {
+    const f = Math.max(0, Math.min(1, age));
+    const L = msLuminosity(Msun) * (1 + 0.9 * f);
+    const R_solar = msRadius(Msun) * (1 + 0.5 * f);
+    const T_eff = effTemp(L, R_solar);
+    return { L, R_solar, T_eff, lifetime: msLifetime(Msun),
+             R_star: geomRadius(R_solar, 18, 0.55, 6, 40) };
+  }
+
+  // Giant state. Beyond mass, a heavy-element (metallicity) knob Z ∈ [0,1]
+  // (0.5 ≈ solar) raises envelope opacity: metal-rich → cooler, more swollen,
+  // redder; metal-poor → hotter, more compact, bluer (Population II giants).
+  function giantState(Msun, Z = 0.5) {
+    const M = Math.max(0.1, Msun);
+    const z = Math.max(0, Math.min(1, Z));
+    const L = 60 * Math.pow(M, 1.5);
+    const T_eff = 4800 - 1600 * z;             // K — metal-rich cools the envelope
+    const R_solar = Math.sqrt(L) / Math.pow(T_eff / T_SUN, 2);
+    return { L, R_solar, T_eff, R_star: geomRadius(R_solar, 7.2, 0.4, 12, 40) };
+  }
+
+  // White-dwarf state. Electron degeneracy gives an INVERSE mass-radius relation:
+  // R ∝ M^(-1/3)·√(1−(M/M_Ch)^(4/3)), shrinking to zero as the mass approaches the
+  // Chandrasekhar limit. Rotation (spin) adds centrifugal support → a larger star;
+  // a denser (heavier) or strongly magnetic white dwarf runs hotter. So R and T are
+  // both consequences of M plus the spin / magnetic-field knobs — not free.
+  function whiteDwarfState(Msun, opts = {}) {
+    const Mch = M_CHANDRASEKHAR;
+    const M = Math.max(0.15, Math.min(Mch * 0.99, Msun));
+    const a = Math.abs(opts.a || 0);
+    const B = Math.max(0, opts.B || 0);
+    const x = M / Mch;
+    const compact = Math.pow(0.6 / M, 1 / 3) * Math.sqrt(Math.max(0.015, 1 - Math.pow(x, 4 / 3)));
+    const support = 1 + 0.12 * a;                       // spin centrifugal support
+    const R_solar = 0.0126 * compact * support;         // ~ Earth-sized
+    const R_star = Math.max(1.8, Math.min(11, 8.5 * compact * support));
+    const T_eff = 9000 * Math.pow(M / 0.6, 0.55) * (1 + 0.6 * B);
+    const L = R_solar * R_solar * Math.pow(T_eff / T_SUN, 4);
+    return { L, R_solar, T_eff, R_star, MoverMch: x };
+  }
+
+  // Neutron-star state. The stiff nuclear equation of state pins the radius near
+  // 10–12 km almost independently of mass (it shrinks slightly toward the TOV
+  // limit); rotation flattens and enlarges the equatorial radius. The surface runs
+  // ~0.7 MK for a quiet pulsar, but a strong magnetic field (a magnetar) heats the
+  // crust to several MK and a young fast rotator is hotter still — so the magnetic
+  // field and spin set the temperature.
+  function neutronStarState(Msun, opts = {}) {
+    const M = Math.max(M_CHANDRASEKHAR, Math.min(M_TOV, Msun));
+    const a = Math.abs(opts.a || 0);
+    const B = Math.max(0, opts.B || 0);
+    const R_star = Math.max(2.4, Math.min(4.2, 3.2 * Math.pow(M_TOV / M, 0.05) * (1 + 0.18 * a)));
+    const T_eff = 0.7e6 * (1 + 4.5 * B) * (1 + 0.25 * a);
+    const Rkm = 12 * (R_star / 3.2);                     // rough physical radius (km)
+    const R_solar = Rkm / 6.957e5;                       // R⊙ (tiny; for L only)
+    const L = R_solar * R_solar * Math.pow(T_eff / T_SUN, 4);
+    return { L, R_solar, T_eff, R_star, Rkm };
+  }
+
+  // Derived photosphere (geometric R★ + T★, plus L/R⊙ read-outs) for any stellar
+  // stage. Returns null only for a black hole, which has no surface. The optional
+  // knobs are stage-specific: age (ms), metallicity Z (giant), spin a + magnetic
+  // field B (wd/ns). R and T are therefore never independent variables.
+  function deriveStellar(type, Msun, opts = {}) {
+    if (type === 'ms')    return mainSequenceState(Msun, opts.age != null ? opts.age : 0);
+    if (type === 'giant') return giantState(Msun, opts.Z != null ? opts.Z : 0.5);
+    if (type === 'wd')    return whiteDwarfState(Msun, opts);
+    if (type === 'ns')    return neutronStarState(Msun, opts);
+    return null;
+  }
+
   // Will the configuration **physically** collapse into a BH?
   // Returns true when user-set surface radius is at or below r₊ (or r_s if no horizon).
   function wouldCollapse(M, Q, a, R_star) {
@@ -389,5 +508,7 @@
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
     M_CHANDRASEKHAR, M_TOV,
+    msLuminosity, msRadius, msLifetime, effTemp,
+    mainSequenceState, giantState, whiteDwarfState, neutronStarState, deriveStellar,
   };
 })();

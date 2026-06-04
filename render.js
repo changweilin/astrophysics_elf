@@ -13,6 +13,7 @@
           applyFrameLock, predictTrajectory, predictBinaryTrajectory } = KN;
 
   function render(sim, ctx, w, h) {
+    if (KN.syncStellar) KN.syncStellar(sim);   // derived R★/T★ stay current even while paused
     sim._vw = w; sim._vh = h;   // last canvas size — used to fit the camera on placement
     ctx.clearRect(0, 0, w, h);
     applyFrameLock(sim); // re-centre camera before any worldToScreen calls
