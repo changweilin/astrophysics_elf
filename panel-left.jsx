@@ -255,40 +255,80 @@ function BodyEditor({ sim, force, role }) {
   }
 
   // Picker — selects an evolutionary stage (main sequence / giant / remnant).
-  // Keeps the current mass if it fits the stage, else adopts the stage default.
+  // Because the stages differ so much in size, each remembers its own settings
+  // and camera zoom: leaving a stage stashes it, returning restores it verbatim.
+  // A never-visited stage falls back to defaults + that stage's framing zoom.
   function switchCategory(cat) {
     if (cat === accessors.category) return;
-    const r = phys.MASS_RANGES[cat];
-    let Msun = accessors.Msun;
-    if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
-    const newType = phys.typeForStage(cat, Msun);
+    const stash = (sim._stageStash = sim._stageStash || { central: {}, companion: {} });
+    const slot = isCentral ? stash.central : stash.companion;
+    const stageName = (t) => t === 'bh' ? tr('BLACK HOLE', '黑洞') : phys.STELLAR_INFO[t].name;
+
     if (isCentral) {
-      sim.params.Msun = Msun;
-      sim.params.type = newType;
-      if (newType !== 'bh') {
-        const d = phys.STELLAR_DEFAULTS[newType];
-        if (d) { sim.params.R_star = d.R; sim.params.T_eff = d.T; }
-        sim.params._stellarTouched = false;
-        if (Math.abs(sim.params.a) > sim.params.M) sim.params.a = Math.sign(sim.params.a || 1) * sim.params.M * 0.9;
-        if (Math.abs(sim.params.Q) > sim.params.M) sim.params.Q = Math.sign(sim.params.Q || 1) * sim.params.M * 0.9;
-        window.KNSim.logEv(sim, 'good', trp('central → {type}', { type: phys.STELLAR_INFO[newType].name }));
+      slot[accessors.category] = {
+        Msun: sim.params.Msun, Q: sim.params.Q, a: sim.params.a, type: sim.params.type,
+        R_star: sim.params.R_star, T_eff: sim.params.T_eff,
+        _stellarTouched: sim.params._stellarTouched, viewScale: sim.view.scale,
+      };
+      const saved = slot[cat];
+      if (saved) {
+        sim.params.Msun = saved.Msun; sim.params.Q = saved.Q; sim.params.a = saved.a;
+        sim.params.type = saved.type; sim.params.R_star = saved.R_star; sim.params.T_eff = saved.T_eff;
+        sim.params._stellarTouched = saved._stellarTouched;
+        sim.view.scale = saved.viewScale || phys.VIEW_SCALES[cat];
+        window.KNSim.logEv(sim, saved.type === 'bh' ? 'warn' : 'good',
+          trp('central → {type}', { type: stageName(saved.type) }));
       } else {
-        window.KNSim.logEv(sim, 'warn', tr('central → BLACK HOLE · stellar params locked', '主天體 → 黑洞 · 星體參數已鎖定'));
+        const r = phys.MASS_RANGES[cat];
+        let Msun = accessors.Msun;
+        if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
+        const newType = phys.typeForStage(cat, Msun);
+        sim.params.Msun = Msun;
+        sim.params.type = newType;
+        if (newType !== 'bh') {
+          const d = phys.STELLAR_DEFAULTS[newType];
+          if (d) { sim.params.R_star = d.R; sim.params.T_eff = d.T; }
+          sim.params._stellarTouched = false;
+          if (Math.abs(sim.params.a) > sim.params.M) sim.params.a = Math.sign(sim.params.a || 1) * sim.params.M * 0.9;
+          if (Math.abs(sim.params.Q) > sim.params.M) sim.params.Q = Math.sign(sim.params.Q || 1) * sim.params.M * 0.9;
+          window.KNSim.logEv(sim, 'good', trp('central → {type}', { type: phys.STELLAR_INFO[newType].name }));
+        } else {
+          window.KNSim.logEv(sim, 'warn', tr('central → BLACK HOLE · stellar params locked', '主天體 → 黑洞 · 星體參數已鎖定'));
+        }
+        sim.view.scale = phys.VIEW_SCALES[cat];
       }
-      if (bin) bin.M2 = Math.max(0.01, (bin.M2sun || 8) / Math.max(0.01, Msun));
+      if (bin) bin.M2 = Math.max(0.01, (bin.M2sun || 8) / Math.max(0.01, sim.params.Msun || 1));
     } else if (bin) {
-      bin.M2sun = Msun;
-      bin.type = newType;
-      bin.M2 = Math.max(0.01, Msun / Math.max(0.01, sim.params.Msun || 1));
-      if (newType !== 'bh') {
-        const d = phys.STELLAR_DEFAULTS[newType];
-        if (d) { bin.R_star2 = d.R; bin.T_eff2 = d.T; }
-        bin._stellarTouched = false;
+      slot[accessors.category] = {
+        M2sun: bin.M2sun, Q2: bin.Q2, a2: bin.a2, type: bin.type,
+        R_star2: bin.R_star2, T_eff2: bin.T_eff2, _stellarTouched: bin._stellarTouched,
+      };
+      const saved = slot[cat];
+      if (saved) {
+        bin.M2sun = saved.M2sun; bin.Q2 = saved.Q2; bin.a2 = saved.a2; bin.type = saved.type;
+        bin.R_star2 = saved.R_star2; bin.T_eff2 = saved.T_eff2; bin._stellarTouched = saved._stellarTouched;
+        window.KNSim.logEv(sim, saved.type === 'bh' ? 'warn' : 'good',
+          trp('companion → {type}', { type: stageName(saved.type) }));
+      } else {
+        const r = phys.MASS_RANGES[cat];
+        let Msun = accessors.Msun;
+        if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
+        const newType = phys.typeForStage(cat, Msun);
+        bin.M2sun = Msun;
+        bin.type = newType;
+        if (newType !== 'bh') {
+          const d = phys.STELLAR_DEFAULTS[newType];
+          if (d) { bin.R_star2 = d.R; bin.T_eff2 = d.T; }
+          bin._stellarTouched = false;
+          window.KNSim.logEv(sim, 'good', trp('companion → {type}', { type: phys.STELLAR_INFO[newType].name }));
+        } else {
+          window.KNSim.logEv(sim, 'warn', tr('companion → BLACK HOLE', '伴星 → 黑洞'));
+        }
+      }
+      bin.M2 = Math.max(0.01, (bin.M2sun || 8) / Math.max(0.01, sim.params.Msun || 1));
+      if (bin.type !== 'bh') {
         if (Math.abs(bin.a2) > bin.M2) bin.a2 = Math.sign(bin.a2 || 1) * bin.M2 * 0.9;
         if (Math.abs(bin.Q2) > bin.M2) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * 0.9;
-        window.KNSim.logEv(sim, 'good', trp('companion → {type}', { type: phys.STELLAR_INFO[newType].name }));
-      } else {
-        window.KNSim.logEv(sim, 'warn', tr('companion → BLACK HOLE', '伴星 → 黑洞'));
       }
     }
     force();
@@ -629,6 +669,7 @@ function LeftPanel({ sim, force }) {
                                if (pr.B != null) sim.params.B = pr.B;
                                if (pr.disc != null) sim.disc.enabled = pr.disc;
                                if (sim.binary) sim.binary.M2 = Math.max(0.01, (sim.binary.M2sun || 8) / Math.max(0.01, pr.Msun));
+                               sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(pr.type || 'bh')];
                                force(); }}>
               <span className="ico">{pr.glyph}</span>
               <span className="nm">{tr(pr.name, pr.name_zh)}</span>

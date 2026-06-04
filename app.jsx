@@ -527,6 +527,14 @@ function App() {
           <FrameLock sim={SIM} force={force} />
         </div>
         <div className="overlay-br">
+          <div className="view-zoom" role="group" aria-label={tr('Zoom', '縮放')}>
+            <button title={tr('Zoom in', '放大')} onClick={() => { SIM.view.scale = Math.min(80, SIM.view.scale * 1.25); force(); }}>+</button>
+            <button title={tr('Fit body to view', '符合天體尺度')} onClick={() => {
+              SIM.view.scale = window.KNphysics.VIEW_SCALES[window.KNphysics.uiCategory(SIM.params.type || 'bh')];
+              SIM.view.ox = 0; SIM.view.oy = 0; force();
+            }}>⤢</button>
+            <button title={tr('Zoom out', '縮小')} onClick={() => { SIM.view.scale = Math.max(4, SIM.view.scale * 0.8); force(); }}>−</button>
+          </div>
           <div>{tr('RENDER', '繪製')} · CANVAS2D · {Math.round(SIM.view.scale)}px/M</div>
         </div>
 

@@ -725,6 +725,26 @@ html, body {
   color: var(--fg-3);
   letter-spacing: 0.1em;
 }
+/* Universe-map zoom control (desktop): + / fit / − above the render read-out.
+   Mouse wheel still zooms; this gives a discoverable, precise alternative. */
+.viewport .overlay-br .view-zoom {
+  display: flex; gap: 1px;
+  pointer-events: auto;
+  background: var(--line);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+}
+.viewport .overlay-br .view-zoom button {
+  background: oklch(0.16 0.020 255 / 0.85);
+  border: none;
+  width: 26px; height: 24px;
+  font-family: var(--mono); font-size: 13px; line-height: 1;
+  color: var(--fg-1); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+.viewport .overlay-br .view-zoom button:hover { background: var(--bg-2); color: var(--amber); }
+.viewport .overlay-br .view-zoom button:active { background: var(--bg-1); }
 .overlay-tl .frame-id {
   font-family: var(--mono);
   font-size: 10px;

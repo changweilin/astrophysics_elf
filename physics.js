@@ -165,6 +165,13 @@
     remnant: { min: 0.1,  max: 150, def: 1.0  },  // collapsed: WD / NS / BH by mass
   };
 
+  // The stages differ enormously in physical size (units of M): a giant photosphere
+  // is R ~ 24, a main-sequence star R ~ 18, but a remnant is compact (BH r+ ~ 1-2,
+  // NS R ~ 3, WD R ~ 7). Each stage therefore gets its own default camera zoom
+  // (view.scale, px per unit M) so the body is framed instead of overflowing or
+  // shrinking to a dot. The UI remembers the user's per-stage zoom on top of this.
+  const VIEW_SCALES = { star: 9, giant: 6, remnant: 18 };
+
   // Which evolutionary stage a concrete type belongs to.
   function uiCategory(type) {
     if (type === 'ms') return 'star';
@@ -380,7 +387,7 @@
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
     classify, acceleration, circularSpeed, tidalStress, r_s, peters, mergerRemnant,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
-    uiCategory, remnantType, typeForStage, MASS_RANGES,
+    uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
     M_CHANDRASEKHAR, M_TOV,
   };
 })();

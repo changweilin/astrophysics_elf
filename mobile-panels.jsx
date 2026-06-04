@@ -200,39 +200,76 @@ function MBodyEditor({ sim, force, role }) {
     force();
   }
 
+  // Each stage remembers its own settings + camera zoom (sizes differ enormously);
+  // leaving stashes, returning restores; an unvisited stage gets defaults + zoom.
   function switchCategory(cat) {
     if (cat === A.category) return;
-    const r = phys.MASS_RANGES[cat];
-    let Msun = A.Msun;
-    if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
-    const newType = phys.typeForStage(cat, Msun);
+    const stash = (sim._stageStash = sim._stageStash || { central: {}, companion: {} });
+    const slot = isCentral ? stash.central : stash.companion;
+    const stageName = (t) => t === 'bh' ? tr('BLACK HOLE', '黑洞') : phys.STELLAR_INFO[t].name;
     if (isCentral) {
-      sim.params.Msun = Msun;
-      sim.params.type = newType;
-      if (newType !== 'bh') {
-        const d = phys.STELLAR_DEFAULTS[newType];
-        if (d) { sim.params.R_star = d.R; sim.params.T_eff = d.T; }
-        sim.params._stellarTouched = false;
-        if (Math.abs(sim.params.a) > sim.params.M) sim.params.a = Math.sign(sim.params.a || 1) * sim.params.M * 0.9;
-        if (Math.abs(sim.params.Q) > sim.params.M) sim.params.Q = Math.sign(sim.params.Q || 1) * sim.params.M * 0.9;
-        window.KNSim.logEv(sim, 'good', trp('central → {type}', { type: phys.STELLAR_INFO[newType].name }));
+      slot[A.category] = {
+        Msun: sim.params.Msun, Q: sim.params.Q, a: sim.params.a, type: sim.params.type,
+        R_star: sim.params.R_star, T_eff: sim.params.T_eff,
+        _stellarTouched: sim.params._stellarTouched, viewScale: sim.view.scale,
+      };
+      const saved = slot[cat];
+      if (saved) {
+        sim.params.Msun = saved.Msun; sim.params.Q = saved.Q; sim.params.a = saved.a;
+        sim.params.type = saved.type; sim.params.R_star = saved.R_star; sim.params.T_eff = saved.T_eff;
+        sim.params._stellarTouched = saved._stellarTouched;
+        sim.view.scale = saved.viewScale || phys.VIEW_SCALES[cat];
+        window.KNSim.logEv(sim, saved.type === 'bh' ? 'warn' : 'good', trp('central → {type}', { type: stageName(saved.type) }));
       } else {
-        window.KNSim.logEv(sim, 'warn', tr('central → BLACK HOLE', '主天體 → 黑洞'));
+        const r = phys.MASS_RANGES[cat];
+        let Msun = A.Msun;
+        if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
+        const newType = phys.typeForStage(cat, Msun);
+        sim.params.Msun = Msun;
+        sim.params.type = newType;
+        if (newType !== 'bh') {
+          const d = phys.STELLAR_DEFAULTS[newType];
+          if (d) { sim.params.R_star = d.R; sim.params.T_eff = d.T; }
+          sim.params._stellarTouched = false;
+          if (Math.abs(sim.params.a) > sim.params.M) sim.params.a = Math.sign(sim.params.a || 1) * sim.params.M * 0.9;
+          if (Math.abs(sim.params.Q) > sim.params.M) sim.params.Q = Math.sign(sim.params.Q || 1) * sim.params.M * 0.9;
+          window.KNSim.logEv(sim, 'good', trp('central → {type}', { type: phys.STELLAR_INFO[newType].name }));
+        } else {
+          window.KNSim.logEv(sim, 'warn', tr('central → BLACK HOLE', '主天體 → 黑洞'));
+        }
+        sim.view.scale = phys.VIEW_SCALES[cat];
       }
-      if (bin) bin.M2 = Math.max(0.01, (bin.M2sun || 8) / Math.max(0.01, Msun));
+      if (bin) bin.M2 = Math.max(0.01, (bin.M2sun || 8) / Math.max(0.01, sim.params.Msun || 1));
     } else if (bin) {
-      bin.M2sun = Msun;
-      bin.type = newType;
-      bin.M2 = Math.max(0.01, Msun / Math.max(0.01, sim.params.Msun || 1));
-      if (newType !== 'bh') {
-        const d = phys.STELLAR_DEFAULTS[newType];
-        if (d) { bin.R_star2 = d.R; bin.T_eff2 = d.T; }
-        bin._stellarTouched = false;
+      slot[A.category] = {
+        M2sun: bin.M2sun, Q2: bin.Q2, a2: bin.a2, type: bin.type,
+        R_star2: bin.R_star2, T_eff2: bin.T_eff2, _stellarTouched: bin._stellarTouched,
+      };
+      const saved = slot[cat];
+      if (saved) {
+        bin.M2sun = saved.M2sun; bin.Q2 = saved.Q2; bin.a2 = saved.a2; bin.type = saved.type;
+        bin.R_star2 = saved.R_star2; bin.T_eff2 = saved.T_eff2; bin._stellarTouched = saved._stellarTouched;
+        window.KNSim.logEv(sim, saved.type === 'bh' ? 'warn' : 'good', trp('companion → {type}', { type: stageName(saved.type) }));
+      } else {
+        const r = phys.MASS_RANGES[cat];
+        let Msun = A.Msun;
+        if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
+        const newType = phys.typeForStage(cat, Msun);
+        bin.M2sun = Msun;
+        bin.type = newType;
+        if (newType !== 'bh') {
+          const d = phys.STELLAR_DEFAULTS[newType];
+          if (d) { bin.R_star2 = d.R; bin.T_eff2 = d.T; }
+          bin._stellarTouched = false;
+          window.KNSim.logEv(sim, 'good', trp('companion → {type}', { type: phys.STELLAR_INFO[newType].name }));
+        } else {
+          window.KNSim.logEv(sim, 'warn', tr('companion → BLACK HOLE', '伴星 → 黑洞'));
+        }
+      }
+      bin.M2 = Math.max(0.01, (bin.M2sun || 8) / Math.max(0.01, sim.params.Msun || 1));
+      if (bin.type !== 'bh') {
         if (Math.abs(bin.a2) > bin.M2) bin.a2 = Math.sign(bin.a2 || 1) * bin.M2 * 0.9;
         if (Math.abs(bin.Q2) > bin.M2) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * 0.9;
-        window.KNSim.logEv(sim, 'good', trp('companion → {type}', { type: phys.STELLAR_INFO[newType].name }));
-      } else {
-        window.KNSim.logEv(sim, 'warn', tr('companion → BLACK HOLE', '伴星 → 黑洞'));
       }
     }
     force();
@@ -494,6 +531,7 @@ function TabBlackHole({ sim, force }) {
                 } else if (!pr.binary && sim.binary) {
                   sim.binary.enabled = false;
                 }
+                sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(pr.type || 'bh')];
                 force();
               }}>
               <span className="ico">{pr.glyph}</span>
