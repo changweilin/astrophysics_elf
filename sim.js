@@ -310,7 +310,14 @@
     bin.trail2.push(bin.x2, bin.y2);
     if (bin.trail2.length > 1200) bin.trail2.splice(0, bin.trail2.length - 1200);
 
-    // Merger / impact / escape
+    // ── Merger / coalescence ──────────────────────────────────
+    // ANY pair coalesces when their surfaces touch. The remnant carries the
+    // COMBINED mass of both progenitors MINUS the energy radiated away as
+    // gravitational waves in the final plunge + ringdown, is reclassified by the
+    // resulting solar mass, and has its surface re-derived. The GW burst is a
+    // strong-field effect, so it is scaled by how compact the progenitors are:
+    // two black holes radiate the full NR-fit (~5.5% at equal mass), while two
+    // diffuse stars merge with negligible GW loss.
     const cType = sim.params.type || 'bh';
     const sType = bin.type || 'bh';
     const { rplus: r1plus, naked: n1 } = phys.horizons(M1, sim.params.Q, sim.params.a);
@@ -321,45 +328,94 @@
     const surface2 = sType === 'bh'
       ? (isFinite(r2plus) && !n2 ? r2plus : M2)
       : (bin.R_star2 || 3);
-    if (cType === 'bh' && sType === 'bh') {
-      const rmerge = surface1 + surface2 * 1.05;
-      if (bin.d <= rmerge && !bin.merged) {
-        // Coalescence: the final plunge + ringdown radiates a GW burst whose
-        // energy and the remnant spin depend on the mass ratio and BOTH
-        // progenitor spins (see phys.mergerRemnant). Equal-mass non-spinning →
-        // ~5.5% of Mt radiated and a_f/M_f ≈ 0.69; extreme ratios radiate little.
-        const chi1 = sim.params.a / Math.max(0.05, M1);   // dimensionless spins a/M
-        const chi2 = (bin.a2 || 0) / Math.max(0.05, M2);
-        const orbitSign = Math.sign(sim.params.a || 1);
-        const rem = phys.mergerRemnant(M1, M2, chi1, chi2, orbitSign);
-        bin.merged = true;
-        bin.mergerFlash = 1.6;
-        bin.eMergerGW = rem.eRad;     // GW energy in the merger/ringdown burst
-        bin.eGW = (bin.eGW || 0) + rem.eRad;
-        // Combined physical mass (solar). rem.Mf is geometric (units of the old
-        // primary M=1), and Msun is the solar-mass-per-unit factor, so the final
-        // solar mass is rem.Mf · Msun. Geometry stays in units of M, so the
-        // geometric mass is reset to 1 and the spin becomes the dimensionless a/M.
-        const MsunFinal = rem.Mf * (sim.params.Msun || 1);
-        sim.params.M = 1;
-        sim.params.Msun = MsunFinal;
-        sim.params.type = 'bh';           // BH + BH coalescence -> black hole
-        sim.params.Q = sim.params.Q + (bin.Q2 || 0);
-        sim.params.a = rem.af;            // a/M (geometric M = 1)
-        bin.enabled = false;
-        logEv(sim, 'warn', trp(
-          'MERGER · η={eta} · M_f={mf} M⊙ · E_GW={egw} c² ({pct}%)',
-          { eta: rem.eta.toFixed(3), mf: MsunFinal.toFixed(1), egw: rem.eRad.toFixed(3), pct: (rem.eRad / Mt * 100).toFixed(1) }));
-        logEv(sim, 'amber', trp('ringdown · a_f/M_f → {af}', { af: rem.af.toFixed(3) }));
-        return;
+    const bothBH = cType === 'bh' && sType === 'bh';
+    // BH pairs coalesce just before the horizons touch (final plunge); bodies
+    // with a real surface coalesce on contact.
+    const rmerge = bothBH ? surface1 + surface2 * 1.05 : surface1 + surface2;
+    if (bin.d <= rmerge && !bin.merged) {
+      // Remnant mass, spin and radiated energy from the NR-fit (mass ratio +
+      // both progenitor spins). Equal-mass non-spinning → ~5.5% of Mt radiated
+      // and a_f/M_f ≈ 0.69; extreme mass ratios radiate little.
+      const chi1 = sim.params.a / Math.max(0.05, M1);   // dimensionless spins a/M
+      const chi2 = (bin.a2 || 0) / Math.max(0.05, M2);
+      const orbitSign = Math.sign(sim.params.a || 1);
+      const rem = phys.mergerRemnant(M1, M2, chi1, chi2, orbitSign);
+
+      // Compactness of each body = (Schwarzschild radius 2M) / (surface radius),
+      // clamped to [0,1]. The GW burst only reaches the full fit for two true
+      // black holes; the more diffuse the surfaces, the less escapes as GW.
+      const comp1 = Math.max(0, Math.min(1, (2 * M1) / Math.max(1e-3, surface1)));
+      const comp2 = Math.max(0, Math.min(1, (2 * M2) / Math.max(1e-3, surface2)));
+      const eMergerGW = rem.eRad * comp1 * comp2;   // geometric GW energy radiated
+
+      // Combined physical (solar) mass: the total mass MINUS the GW energy that
+      // escaped. Mt and eMergerGW are geometric (units of the old primary M=1),
+      // so the final geometric mass is (M1+M2) − eMergerGW and the solar mass is
+      // that × Msun (the solar-mass-per-unit factor). Geometry stays in units of
+      // M, so the geometric mass resets to 1 and a/Q become dimensionless a/M, Q/M.
+      const MfGeo = (M1 + M2) - eMergerGW;
+      const MsunFinal = MfGeo * (sim.params.Msun || 1);
+
+      // Reclassify the remnant. A black-hole progenitor always wins; two compact
+      // remnants (WD/NS) collapse by the combined solar mass (WD→NS→BH); a merger
+      // that still involves a star keeps the more evolved stellar stage (two MS
+      // stars → a heavier MS star; anything with a giant → a giant).
+      let newType;
+      if (bothBH || cType === 'bh' || sType === 'bh') {
+        newType = 'bh';
+      } else if ((cType === 'wd' || cType === 'ns') && (sType === 'wd' || sType === 'ns')) {
+        newType = phys.remnantType(MsunFinal);
+      } else if (cType === 'giant' || sType === 'giant') {
+        newType = 'giant';
+      } else {
+        newType = 'ms';
       }
-    } else {
-      // At least one non-BH — collision when surfaces touch.
-      if (bin.d < surface1 + surface2) {
-        bin.enabled = false;
-        logEv(sim, 'warn', trp('companion contact at r={r} M', { r: bin.d.toFixed(2) }));
-        return;
+
+      // Charge and spin combine about the orbital axis, then clamp sub-extremal
+      // (Q² + a² < M², geometric M = 1) so a chance sum never exposes a naked
+      // singularity. The NR-fit a_f already folds in orbital + progenitor spin.
+      let Qf = sim.params.Q + (bin.Q2 || 0);
+      let af = rem.af;
+      const cap = 0.998;
+      if (Math.abs(Qf) > cap) Qf = Math.sign(Qf) * cap;
+      const room = Math.sqrt(Math.max(0, cap * cap - Qf * Qf));
+      if (Math.abs(af) > room) af = Math.sign(af || 1) * room;
+
+      bin.merged = true;
+      bin.mergerFlash = 1.6;
+      bin.eMergerGW = eMergerGW;     // GW energy in the merger/ringdown burst
+      bin.eGW = (bin.eGW || 0) + eMergerGW;
+      sim.params.M = 1;
+      sim.params.Msun = MsunFinal;
+      sim.params.type = newType;
+      sim.params.Q = Qf;
+      sim.params.a = af;            // a/M (geometric M = 1)
+
+      // Re-derive the remnant's surface (R★, T★) for its new stellar stage; a BH
+      // has none. A fresh remnant starts at ZAMS age, with its metallicity kept.
+      if (newType !== 'bh') {
+        sim.params.age = 0;
+        if (sim.params.Z == null) sim.params.Z = 0.5;
+        const ds = phys.deriveStellar(newType, MsunFinal,
+          { age: 0, Z: sim.params.Z, a: sim.params.a, B: sim.params.B || 0 });
+        if (ds) { sim.params.R_star = ds.R_star; sim.params.T_eff = ds.T_eff; }
+        sim.params._stellarTouched = false;
       }
+      // Reframe the camera when the body changed size stage (e.g. two giants →
+      // a compact remnant); leave a BH+BH coalescence framed as it was.
+      if (!bothBH) sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(newType)];
+
+      bin.enabled = false;
+      logEv(sim, 'warn', trp(
+        'MERGER · η={eta} · M_f={mf} M⊙ · E_GW={egw} c² ({pct}%)',
+        { eta: rem.eta.toFixed(3), mf: MsunFinal.toFixed(1),
+          egw: eMergerGW.toFixed(3), pct: (eMergerGW / (M1 + M2) * 100).toFixed(1) }));
+      if (newType === 'bh') {
+        logEv(sim, 'amber', trp('ringdown · a_f/M_f → {af}', { af: af.toFixed(3) }));
+      } else {
+        logEv(sim, 'amber', trp('remnant → {type}', { type: newType.toUpperCase() }));
+      }
+      return;
     }
     if (bin.d > 80) {
       bin.enabled = false;
