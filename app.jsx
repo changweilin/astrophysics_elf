@@ -276,6 +276,7 @@ function App() {
               if (grab.kind === 'companion') { if (SIM.binary) SIM.binary.held = true; }
               else { const b = SIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = true; }
               SIM.moving = { kind: grab.kind, bodyId: grab.bodyId };
+              setPlaying(false);   // long-press pauses and STAYS paused after release
               window.KNSim.logEv(SIM, 'amber', trp('{label} — hold-drag to reposition', { label: grab.label }));
               force();
             }
@@ -394,9 +395,11 @@ function App() {
       // Auto-pause while the user is placing or aiming a body/companion, then
       // resume the instant they commit (drag-launch / double-click clears these).
       // A manual pause (playing=false) still overrides and stays paused.
-      // Only placing a body/companion pauses the sim; slingshot-aiming and
-      // double-click leave it playing.
-      SIM.paused = !playing || !!SIM.placement;
+      // Placing a body/companion pauses the sim; so does a long-press reposition
+      // (SIM.moving gives an instant freeze, and the long-press also flips playing
+      // off so it STAYS paused after release — resume only via play/space).
+      // Slingshot-aiming and double-click leave it playing.
+      SIM.paused = !playing || !!SIM.placement || !!SIM.moving;
       SIM.timescale = timescale;
       window.KNSim.step(SIM, dt);
 

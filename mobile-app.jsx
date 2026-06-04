@@ -277,6 +277,7 @@ function MobileApp() {
               if (grab.kind === 'companion') { if (MSIM.binary) MSIM.binary.held = true; }
               else { const b = MSIM.bodies.find((x) => x.id === grab.bodyId); if (b) b.held = true; }
               MSIM.moving = { kind: grab.kind, bodyId: grab.bodyId };
+              setPlaying(false);   // long-press pauses and STAYS paused after release
               window.KNSim.logEv(MSIM, 'amber', trp('{label} — hold-drag to reposition', { label: grab.label }));
               force();
             }
@@ -533,9 +534,11 @@ function MobileApp() {
       last = now;
       // Auto-pause while placing/aiming, resume on commit (see app.jsx). A
       // manual pause still overrides.
-      // Only placing a body/companion pauses the sim; slingshot-aiming and
-      // double-click leave it playing.
-      MSIM.paused = !playing || !!MSIM.placement;
+      // Placing a body/companion pauses the sim; so does a long-press reposition
+      // (MSIM.moving gives an instant freeze, and the long-press also flips playing
+      // off so it STAYS paused after release — resume only via play/space).
+      // Slingshot-aiming and double-click leave it playing.
+      MSIM.paused = !playing || !!MSIM.placement || !!MSIM.moving;
       MSIM.timescale = timescale;
       window.KNSim.step(MSIM, dt);
 
