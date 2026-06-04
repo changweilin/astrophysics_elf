@@ -467,6 +467,89 @@
     return { Mf, af, eRad, eta, chiEff };
   }
 
+  // ── Binary mass transfer & evolution (Roche-lobe overflow) ───────────
+  // When a star swells to fill its Roche lobe it sheds mass onto its companion
+  // through the inner Lagrange point. These helpers drive the demo's mass-transfer
+  // layer: the critical lobe size, the overflow rate, the orbit's reaction, and
+  // the unstable common-envelope branch. Masses are solar; lengths are geometric
+  // (units of M), matching the rest of the binary code. Constants are calibrated
+  // to be visible on interactive timescales, the same spirit as inspiralRate.
+  const CE_ALPHA   = 3.0;     // common-envelope efficiency (orbital energy → ejection)
+  const CE_LAMBDA  = 1.0;     // envelope structure parameter (binding-energy form factor)
+  const NOVA_RETAIN = 0.15;   // fraction of an accreted H layer a WD keeps after a nova
+  const MT_K       = 0.04;    // overflow-rate scale (M⊙ per unit time at unit overflow)
+
+  // Eggleton (1983) Roche-lobe radius of a star, given its mass, the companion's
+  // mass and the orbital separation a (all consistent units; returns the lobe
+  // radius in the units of a). q = Mself / Mother.
+  function rocheLobeEggleton(Mself, Mother, a) {
+    const q = Math.max(1e-6, Mself) / Math.max(1e-6, Mother);
+    const q23 = Math.pow(q, 2 / 3);
+    return a * 0.49 * q23 / (0.6 * q23 + Math.log(1 + Math.pow(q, 1 / 3)));
+  }
+
+  // Mass-transfer rate (M⊙ per unit time) for a donor of photosphere radius
+  // R_star overflowing a Roche lobe R_L. Zero unless R_star > R_L; otherwise it
+  // grows with the cube of the fractional overflow depth (an isothermal-atmosphere
+  // -like response). K folds in the global scale and the user transfer multiplier.
+  function massTransferRate(R_star, R_L, K = MT_K) {
+    if (!(R_star > R_L) || !(R_L > 0)) return 0;
+    const depth = (R_star - R_L) / R_L;
+    return K * depth * depth * depth;
+  }
+
+  // Fractional orbital-separation response to conservative mass transfer,
+  // (da/dt)/a, from orbital angular-momentum conservation (J ∝ M_d M_a √a):
+  //   (da/dt)/a = 2 · mdot · (M_a − M_d) / (M_d M_a).
+  // Donor heavier than accretor (M_d > M_a) → negative → the orbit shrinks, the
+  // lobe shrinks, and transfer runs away (unstable). Donor lighter → the orbit
+  // widens and transfer self-regulates (stable). mdot is the donor's loss rate.
+  function orbitalResponseRate(Md, Ma, mdot) {
+    if (!(Md > 0) || !(Ma > 0)) return 0;
+    return 2 * mdot * (Ma - Md) / (Md * Ma);
+  }
+
+  // Critical mass ratio q = M_donor / M_accretor above which Roche-lobe overflow
+  // is dynamically unstable and a common envelope forms. Convective (giant)
+  // donors are unstable at modest q; radiative (main-sequence) donors tolerate
+  // higher q; compact (wd) donors are easily unstable.
+  function ceCriticalQ(donorType) {
+    if (donorType === 'giant') return 0.79;
+    if (donorType === 'ms')    return 2.2;
+    if (donorType === 'wd')    return 0.6;
+    return 1.0;
+  }
+
+  // Common-envelope outcome via the α-λ energy formalism. The donor's envelope
+  // (M_env = Md − M_core) is ejected at the expense of orbital energy released as
+  // the cores spiral in from a to a_f:
+  //   α · (M_core M_a / (2 a_f) − Md M_a / (2 a)) = G Md M_env / (λ R_d).
+  // Solving for a_f (G = 1, demo-calibrated): the pair survives as a close binary
+  // if a_f clears the post-CE surfaces, otherwise the cores merge. M_core ≈ 0.45 Md
+  // for a giant (its He/CO core → a white dwarf).
+  function ceOutcome(opts, alpha = CE_ALPHA, lambda = CE_LAMBDA) {
+    const { Md, Ma, Rd, a, donorType } = opts;
+    const coreFrac = donorType === 'giant' ? 0.3 : (donorType === 'ms' ? 0.0 : 1.0);
+    const M_core = Math.max(0.05, coreFrac * Md);
+    const M_env  = Math.max(0, Md - M_core);
+    // No clean core (a main-sequence donor) → the spiral-in always merges.
+    if (M_env <= 0 || coreFrac <= 0) return { survive: false, a_f: 0, M_core: Md };
+    const eBind = (Md * M_env) / (Math.max(0.05, lambda) * Math.max(0.05, Rd));
+    // a_f from the energy balance; the initial-orbit term is usually negligible.
+    const denom = (Md * Ma) / Math.max(1e-3, a) + (2 * eBind) / Math.max(1e-3, alpha);
+    const a_f = (M_core * Ma) / Math.max(1e-6, denom);
+    return { survive: a_f > 0, a_f, M_core };
+  }
+
+  // Accreted-hydrogen layer mass (M⊙) that triggers a nova flash on a white dwarf
+  // of mass M_wd. Heavier (more compact) white dwarfs ignite a thinner shell, so
+  // the ignition mass decreases with M_wd. Scaled so it is reachable on the demo's
+  // interactive transfer timescale (true novae need ~1e-4 M⊙; this is larger).
+  function novaIgnitionMass(M_wd) {
+    const M = Math.max(0.2, Math.min(M_CHANDRASEKHAR, M_wd || 0.6));
+    return 0.02 * Math.pow(0.6 / M, 2);
+  }
+
   // Tidal stress at distance r on a body of radius R_b — units arbitrary, 0..∞.
   // Returns normalised 0..1.2+ against the body's binding threshold thr.
   // The 300× factor scales so disruption happens at observationally interesting
@@ -541,9 +624,11 @@
   window.KNphysics = {
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
     classify, acceleration, circularSpeed, tidalStress, r_s, peters, mergerRemnant,
+    rocheLobeEggleton, massTransferRate, orbitalResponseRate, ceCriticalQ,
+    ceOutcome, novaIgnitionMass,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
-    M_CHANDRASEKHAR, M_TOV,
+    M_CHANDRASEKHAR, M_TOV, CE_ALPHA, CE_LAMBDA, NOVA_RETAIN, MT_K,
     msLuminosity, msRadius, msLifetime, effTemp,
     mainSequenceState, giantState, whiteDwarfState, neutronStarState, deriveStellar,
     stellarGlow,

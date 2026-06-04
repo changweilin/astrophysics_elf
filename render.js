@@ -191,6 +191,69 @@
       ctx.beginPath(); ctx.moveTo(bx1, by1); ctx.lineTo(bx2, by2); ctx.stroke();
       ctx.setLineDash([]);
 
+      // ── Mass transfer: Roche lobes, accretion stream, nova & CE glow ──
+      const mt = bin.mt;
+      // Common-envelope haze — a translucent warm shroud enclosing both stars
+      // while the cores spiral in. Drawn first so the stars/stream sit on top.
+      if (bin.ceFlash > 0) {
+        const k = Math.max(0, Math.min(1, bin.ceFlash / 1.6));
+        const ecx = (bx1 + bx2) / 2, ecy = (by1 + by2) / 2;
+        const er = Math.hypot(bx2 - bx1, by2 - by1) * 0.75 + 30;
+        const hg = ctx.createRadialGradient(ecx, ecy, 0, ecx, ecy, er);
+        hg.addColorStop(0, `oklch(0.70 0.10 60 / ${0.22 * k})`);
+        hg.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+        ctx.fillStyle = hg;
+        ctx.beginPath(); ctx.arc(ecx, ecy, er, 0, Math.PI * 2); ctx.fill();
+      }
+      // Roche-lobe indicator circles (R_L around each star), gated by a flag.
+      if (sim.flags.showRoche && mt && (mt.RL1 > 0 || mt.RL2 > 0)) {
+        ctx.strokeStyle = 'oklch(0.62 0.07 75 / 0.30)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
+        if (mt.RL1 > 0) { ctx.beginPath(); ctx.arc(bx1, by1, mt.RL1 * s, 0, Math.PI * 2); ctx.stroke(); }
+        if (mt.RL2 > 0) { ctx.beginPath(); ctx.arc(bx2, by2, mt.RL2 * s, 0, Math.PI * 2); ctx.stroke(); }
+        ctx.setLineDash([]);
+      }
+      // Accretion stream from the donor toward the accretor (Coriolis-bowed),
+      // coloured by the donor's photosphere. Muted, never glaring.
+      if (mt && mt.active && mt.donor) {
+        const dn = mt.donor === 1 ? [bx1, by1] : [bx2, by2];
+        const ac = mt.donor === 1 ? [bx2, by2] : [bx1, by1];
+        const Tdn = mt.donor === 1 ? (sim.params.T_eff || 6000) : (bin.T_eff2 || 6000);
+        const dx = ac[0] - dn[0], dy = ac[1] - dn[1];
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len, ny = dx / len;
+        const bow = 0.18 * len * Math.sign(sim.params.a || 1);
+        const cxp = (dn[0] + ac[0]) / 2 + nx * bow, cyp = (dn[1] + ac[1]) / 2 + ny * bow;
+        const grd = ctx.createLinearGradient(dn[0], dn[1], ac[0], ac[1]);
+        grd.addColorStop(0, phys.tempToColor(Tdn, 0.55));
+        grd.addColorStop(1, phys.tempToColor(Tdn, 0.05));
+        ctx.strokeStyle = grd;
+        ctx.lineWidth = Math.max(1.5, Math.min(5, 1.5 + (mt.mdot || 0) * 60));
+        ctx.beginPath();
+        ctx.moveTo(dn[0], dn[1]);
+        ctx.quadraticCurveTo(cxp, cyp, ac[0], ac[1]);
+        ctx.stroke();
+        // gentle hot spot where the stream meets the accretor
+        const hg = ctx.createRadialGradient(ac[0], ac[1], 0, ac[0], ac[1], 14);
+        hg.addColorStop(0, phys.tempToColor(Tdn, 0.30));
+        hg.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+        ctx.fillStyle = hg;
+        ctx.beginPath(); ctx.arc(ac[0], ac[1], 14, 0, Math.PI * 2); ctx.fill();
+      }
+      // Nova flash — a brief expanding shell on the accreting white dwarf.
+      if (bin.novaFlash > 0 && mt && mt.accretor) {
+        const t = Math.max(0, Math.min(1, bin.novaFlash / 1.2));
+        const ac = mt.accretor === 1 ? [bx1, by1] : [bx2, by2];
+        const nr = Math.max(2, (1 - t) * 48 + 8);
+        const ng = ctx.createRadialGradient(ac[0], ac[1], 0, ac[0], ac[1], nr);
+        ng.addColorStop(0, `oklch(0.96 0.12 80 / ${t * 0.7})`);
+        ng.addColorStop(0.6, `oklch(0.85 0.10 60 / ${t * 0.25})`);
+        ng.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+        ctx.fillStyle = ng;
+        ctx.beginPath(); ctx.arc(ac[0], ac[1], nr, 0, Math.PI * 2); ctx.fill();
+      }
+
       // Primary — stellar or black hole. A stellar primary is drawn at its
       // photosphere R_star so the visible disk matches the collision surface the
       // inspiral uses (surface1 = R_star); otherwise its tiny horizon would make
@@ -475,6 +538,30 @@
         ctx.fillStyle = `oklch(0.75 0.10 295 / ${(t - 0.6) * 2.5 * alpha})`;
         ctx.fillText(`M_f = ${(sim.params.Msun || 0).toFixed(1)} M⊙`, cx, cy);
         ctx.fillText(`a/M → ${(sim.params.a / sim.params.M).toFixed(2)}`, cx, cy + 12);
+        ctx.textAlign = 'left';
+      }
+    }
+
+    // Type Ia supernova flash — a bright expanding shell from the disrupted white
+    // dwarf. Visible but gentle (warm white→amber), centred on the scene.
+    if (sim.binary && sim.binary.snFlash > 0 && w > 0 && h > 0) {
+      const t = Math.max(0, Math.min(1, sim.binary.snFlash / 1.8));
+      const alpha = Math.min(1, t * 2);
+      const radius = Math.max(1, (1 - t) * Math.min(w, h) * 0.85);
+      const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      grd.addColorStop(0, `oklch(0.97 0.10 90 / ${alpha * 0.85})`);
+      grd.addColorStop(0.45, `oklch(0.82 0.16 55 / ${alpha * 0.4})`);
+      grd.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.fill();
+      if (t > 0.55) {
+        ctx.fillStyle = `oklch(0.97 0.10 80 / ${(t - 0.55) * 2.2 * alpha})`;
+        ctx.font = 'bold 11px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(tr('TYPE Ia SUPERNOVA', 'Ia 型超新星'), cx, cy - 8);
+        ctx.font = '9px JetBrains Mono, monospace';
+        ctx.fillStyle = `oklch(0.85 0.10 55 / ${(t - 0.55) * 2.2 * alpha})`;
+        ctx.fillText(tr('WD → Chandrasekhar · detonation', '白矮星 → 錢德拉塞卡極限 · 爆轟'), cx, cy + 8);
         ctx.textAlign = 'left';
       }
     }

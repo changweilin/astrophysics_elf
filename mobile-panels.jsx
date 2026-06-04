@@ -731,6 +731,22 @@ function TabBinary({ sim, force }) {
               onChange={(v) => { bin.inspiralRate = v; force(); }}
               scaleLabels={['×1', '×60', '×300']} />
 
+      <button className={`m-disc-toggle ${bin.mtEnabled ? 'on' : ''}`} style={{marginTop: '8px'}}
+              onClick={() => { bin.mtEnabled = !bin.mtEnabled; force(); }}>
+        {bin.mtEnabled ? tr('Mass transfer · on', '質量轉移 · 開') : tr('Mass transfer · off', '質量轉移 · 關')}
+      </button>
+      {bin.mtEnabled && (
+        <MParam sym="Ṁ" name={tr('Transfer rate', '質量轉移率')} val={bin.transferRate} unit="×Roche"
+                min={0} max={50} step={1}
+                fmt={(v) => v.toFixed(0)}
+                onChange={(v) => { bin.transferRate = v; force(); }}
+                scaleLabels={['×0', '×25', '×50']} />
+      )}
+      <button className={`m-disc-toggle ${sim.flags.showRoche ? 'on' : ''}`} style={{marginTop: '6px'}}
+              onClick={() => { sim.flags.showRoche = !sim.flags.showRoche; force(); }}>
+        {sim.flags.showRoche ? tr('Roche lobes · shown', '洛希瓣 · 顯示') : tr('Show Roche lobes', '顯示洛希瓣')}
+      </button>
+
       <div className="m-derived" style={{marginTop: '8px'}}>
         <div className="cell">
           <span className="k">M₁ + M₂</span>
@@ -780,6 +796,45 @@ function TabBinary({ sim, force }) {
           </div>
           <div className="note">{trp('* ×{rate} the physical Peters rate (1 = true GR)', { rate: bin.inspiralRate })}</div>
         </div>
+      )}
+
+      {bin.enabled && bin.mt && (bin.mt.active || (bin.mt.novaCount || 0) > 0) && (
+        <div className="m-derived" style={{marginTop: '8px'}}>
+          <div className="cell">
+            <span className="k">{tr('transfer', '轉移')}</span>
+            <span className="v">{(bin.mt.donor === 1 ? 'M₁' : 'M₂')} → {(bin.mt.accretor === 1 ? 'M₁' : 'M₂')}</span>
+          </div>
+          <div className="cell">
+            <span className="k">{tr('mode', '模式')}</span>
+            <span className="v">{bin.mt.mode === 'ce' ? tr('CE', '包層') : bin.mt.mode === 'unstable' ? tr('unstable', '不穩定') : bin.mt.mode === 'stable' ? tr('stable', '穩定') : tr('none', '無')}</span>
+          </div>
+          <div className="cell">
+            <span className="k">q</span>
+            <span className="v">{(bin.mt.q || 0).toFixed(2)}</span>
+          </div>
+          <div className="cell">
+            <span className="k">{tr('transferred', '已轉移')}</span>
+            <span className="v">{(bin.mt.transferred || 0).toFixed(3)}<small>M⊙</small></span>
+          </div>
+          <div className="cell">
+            <span className="k">Ṁ</span>
+            <span className="v">{(bin.mt.mdot || 0) > 1e-5 ? (bin.mt.mdot || 0).toExponential(1) : '—'}</span>
+          </div>
+          <div className="cell">
+            <span className="k">{tr('novae', '新星次數')}</span>
+            <span className="v">{bin.mt.novaCount || 0}</span>
+          </div>
+        </div>
+      )}
+
+      {bin.novaFlash > 0 && (
+        <div className="m-diag"><div className="line">{trp('NOVA · #{n} — accreted H shell ignites', { n: (bin.mt && bin.mt.novaCount) || 0 })}</div></div>
+      )}
+      {bin.snFlash > 0 && (
+        <div className="m-diag"><div className="line warn">{tr('TYPE Ia SUPERNOVA · WD reached Chandrasekhar mass', 'Ia 型超新星 · 白矮星達錢德拉塞卡極限')}</div></div>
+      )}
+      {bin.ceFlash > 0 && (
+        <div className="m-diag"><div className="line">{tr('COMMON ENVELOPE · cores spiral in', '共有包層 · 核心向內旋進')}</div></div>
       )}
 
       {bin.merged && !bin.enabled && (

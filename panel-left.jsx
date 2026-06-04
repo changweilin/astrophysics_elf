@@ -624,6 +624,24 @@ function LeftPanel({ sim, force }) {
                    fmt={(v) => '×' + v.toFixed(0)}
                    onChange={(v) => { bin.inspiralRate = v; force(); }}
                    scaleLabels={['×1', '×60', '×300']} />
+            <button className={`disc-toggle ${bin.mtEnabled ? 'on' : ''}`} style={{marginTop: 8}}
+              onClick={() => { bin.mtEnabled = !bin.mtEnabled; force(); }}>
+              <span className="dt-dot" />
+              {bin.mtEnabled ? tr('MASS TRANSFER · active', '質量轉移 · 啟用') : tr('Enable Roche-lobe transfer', '啟用洛希瓣質量轉移')}
+            </button>
+            {bin.mtEnabled && (
+              <Param sym="Ṁ" name={tr('Transfer rate', '質量轉移率')} val={bin.transferRate} unit="×Roche"
+                     min={0} max={50} step={1}
+                     color="amber"
+                     fmt={(v) => '×' + v.toFixed(0)}
+                     onChange={(v) => { bin.transferRate = v; force(); }}
+                     scaleLabels={['×0', '×25', '×50']} />
+            )}
+            <button className={`disc-toggle ${sim.flags.showRoche ? 'on' : ''}`} style={{marginTop: 6}}
+              onClick={() => { sim.flags.showRoche = !sim.flags.showRoche; force(); }}>
+              <span className="dt-dot" />
+              {sim.flags.showRoche ? tr('Roche lobes · shown', '洛希瓣 · 顯示') : tr('Show Roche lobes', '顯示洛希瓣')}
+            </button>
           </div>
         )}
       </div>
@@ -920,6 +938,50 @@ function BinaryReadout({ sim, force }) {
               ? tr(' Double black hole → inspirals until the horizons touch and merge.', ' 雙黑洞 → 旋近至視界相觸合併。')
               : tr(' Includes a non-BH member → inspirals until the surfaces make contact.', ' 含非黑洞成員 → 旋近至表面相觸（contact）。')}
           </div>
+        </div>
+      )}
+
+      {bin.enabled && bin.mt && (bin.mt.active || (bin.mt.novaCount || 0) > 0) && (() => {
+        const mt = bin.mt;
+        const donorL = mt.donor === 1 ? 'M₁' : 'M₂';
+        const accL = mt.accretor === 1 ? 'M₁' : 'M₂';
+        const Rd = mt.donor === 1 ? (sim.params.R_star || 0) : (bin.R_star2 || 0);
+        const RLd = mt.donor === 1 ? (mt.RL1 || 0) : (mt.RL2 || 0);
+        const modeL = mt.mode === 'ce' ? tr('common envelope', '共有包層')
+          : mt.mode === 'unstable' ? tr('unstable', '不穩定')
+          : mt.mode === 'stable' ? tr('stable', '穩定')
+          : tr('none', '無');
+        return (
+          <div className="stellar-sub" style={{marginTop: 10}}>
+            <div className="sub-head"><span>{tr('Mass transfer', '質量轉移')}</span><span className="hint">{modeL}</span></div>
+            <div className="derived">
+              <div className="cell"><span className="k">{tr('donor → accretor', '施體 → 受體')}</span><span className="v">{donorL} → {accL}</span></div>
+              <div className="cell"><span className="k">q = M_d/M_a</span><span className="v">{(mt.q || 0).toFixed(2)}</span></div>
+              <div className="cell"><span className="k">R★ / R_L {tr('(donor)', '（施體）')}</span><span className="v">{Rd.toFixed(1)} / {RLd.toFixed(1)}<small>M</small></span></div>
+              <div className="cell"><span className="k">Ṁ</span><span className="v">{(mt.mdot || 0) > 1e-5 ? (mt.mdot || 0).toExponential(2) : '—'}<small>M⊙/M</small></span></div>
+              <div className="cell"><span className="k">{tr('transferred', '已轉移')}</span><span className="v">{(mt.transferred || 0).toFixed(3)}<small>M⊙</small></span></div>
+              <div className="cell"><span className="k">{tr('novae', '新星次數')}</span><span className="v">{mt.novaCount || 0}</span></div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {bin.novaFlash > 0 && (
+        <div className="lock-banner" style={{marginTop: 10, borderColor: 'oklch(0.80 0.14 80)'}}>
+          <span className="lock-glyph" style={{color: 'oklch(0.86 0.14 80)'}}>✸</span>
+          <span>{trp('NOVA · #{n} — accreted H shell ignites', { n: (bin.mt && bin.mt.novaCount) || 0 })}</span>
+        </div>
+      )}
+      {bin.snFlash > 0 && (
+        <div className="lock-banner" style={{marginTop: 10, borderColor: 'oklch(0.78 0.18 55)'}}>
+          <span className="lock-glyph" style={{color: 'oklch(0.84 0.16 55)'}}>✦</span>
+          <span>{tr('TYPE Ia SUPERNOVA · white dwarf reached Chandrasekhar mass and detonated', 'Ia 型超新星 · 白矮星達錢德拉塞卡極限並爆轟')}</span>
+        </div>
+      )}
+      {bin.ceFlash > 0 && (
+        <div className="lock-banner" style={{marginTop: 10, borderColor: 'oklch(0.72 0.10 60)'}}>
+          <span className="lock-glyph" style={{color: 'oklch(0.80 0.10 60)'}}>◍</span>
+          <span>{tr('COMMON ENVELOPE · unstable overflow engulfs the pair — cores spiral in', '共有包層 · 不穩定溢流吞沒雙星 — 核心向內旋進')}</span>
         </div>
       )}
 

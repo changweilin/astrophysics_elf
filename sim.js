@@ -45,7 +45,7 @@
       flags: {
         showErgo: true, showHorizon: true, showISCO: true, showPhoton: false,
         showDragField: true, showOrbits: true, showTidal: true, showLabels: true,
-        showGrid: false, showGW: false, showLensing: false
+        showGrid: false, showGW: false, showLensing: false, showRoche: true
       },
       paused: false,
       timescale: 1.0,
@@ -121,6 +121,16 @@
       gwLum: 0, eGW: 0, eMergerGW: 0,
       // last computed metrics (for UI readout)
       lastPeters: { omega: 0, ddot: 0, t_merge: Infinity, Mc: 0, Mt: 0, mu: 0, Lgw: 0 },
+      // ── Mass transfer (Roche-lobe overflow) ──
+      mtEnabled: true,     // master toggle for the mass-transfer layer
+      transferRate: 1,     // ×Roche overflow rate (user-tunable, like inspiralRate)
+      // Live mass-transfer state (set by stepMassTransfer). donor/accretor are
+      // 1 (primary) or 2 (companion); mode classifies the transfer regime.
+      mt: { active: false, donor: 0, accretor: 0, mode: 'none',
+            mdot: 0, transferred: 0, q: 0, RL1: 0, RL2: 0, mAccH: 0, novaCount: 0 },
+      // Surface-flash timers (seconds) and the common-envelope glow flag — these
+      // drive the render-side nova/Ia/CE visuals, mirroring mergerFlash.
+      novaFlash: 0, snFlash: 0, ceFlash: 0, ceActive: false,
     };
   }
 
@@ -187,6 +197,14 @@
     bin.mergerFlash = 0;
     bin.trail1.length = 0;
     bin.trail2.length = 0;
+    resetMassTransfer(bin);
+  }
+
+  // Clear the mass-transfer state + flash timers for a fresh / removed companion.
+  function resetMassTransfer(bin) {
+    bin.mt = { active: false, donor: 0, accretor: 0, mode: 'none',
+               mdot: 0, transferred: 0, q: 0, RL1: 0, RL2: 0, mAccH: 0, novaCount: 0 };
+    bin.novaFlash = 0; bin.snFlash = 0; bin.ceFlash = 0; bin.ceActive = false;
   }
 
   // Split a relative velocity V (= v₂ − v₁) onto the two stars about the
@@ -210,6 +228,7 @@
     bin.vx2 = 0; bin.vy2 = 0;
     bin.trail1.length = 0;
     bin.trail2.length = 0;
+    resetMassTransfer(bin);
   }
 
   function stepBinary(sim, dt) {
@@ -218,10 +237,21 @@
     if (!bin.enabled) {
       bin.x1 = sim.primary.x; bin.y1 = sim.primary.y;
       if (bin.mergerFlash > 0) bin.mergerFlash = Math.max(0, bin.mergerFlash - dt);
+      // Keep terminal-event flashes (Type Ia, last nova) fading after the binary
+      // ends, so the burst is visible even though the pair is no longer evolving.
+      if (bin.novaFlash > 0) bin.novaFlash = Math.max(0, bin.novaFlash - dt);
+      if (bin.snFlash > 0)   bin.snFlash   = Math.max(0, bin.snFlash - dt);
+      if (bin.ceFlash > 0)   bin.ceFlash   = Math.max(0, bin.ceFlash - dt);
       return;
     }
 
     const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
+
+    // Decay the surface-event flashes while the pair keeps evolving (recurrent
+    // novae and the common-envelope glow happen on a still-enabled binary).
+    if (bin.novaFlash > 0) bin.novaFlash = Math.max(0, bin.novaFlash - dt);
+    if (bin.snFlash > 0)   bin.snFlash   = Math.max(0, bin.snFlash - dt);
+    if (bin.ceFlash > 0)   bin.ceFlash   = Math.max(0, bin.ceFlash - dt);
 
     if (bin.held) {
       // User is repositioning the companion — freeze the orbit and re-derive the
@@ -310,14 +340,14 @@
     bin.trail2.push(bin.x2, bin.y2);
     if (bin.trail2.length > 1200) bin.trail2.splice(0, bin.trail2.length - 1200);
 
+    // ── Mass transfer (Roche-lobe overflow) ──────────────────
+    // Evolve any donor that fills its Roche lobe: move mass, react the orbit, and
+    // resolve the nova / Type Ia / common-envelope branches. It may end or
+    // transform the binary, in which case it signals that this step is done.
+    if (stepMassTransfer(sim, dt)) return;
+
     // ── Merger / coalescence ──────────────────────────────────
-    // ANY pair coalesces when their surfaces touch. The remnant carries the
-    // COMBINED mass of both progenitors MINUS the energy radiated away as
-    // gravitational waves in the final plunge + ringdown, is reclassified by the
-    // resulting solar mass, and has its surface re-derived. The GW burst is a
-    // strong-field effect, so it is scaled by how compact the progenitors are:
-    // two black holes radiate the full NR-fit (~5.5% at equal mass), while two
-    // diffuse stars merge with negligible GW loss.
+    // ANY pair coalesces when their surfaces touch.
     const cType = sim.params.type || 'bh';
     const sType = bin.type || 'bh';
     const { rplus: r1plus, naked: n1 } = phys.horizons(M1, sim.params.Q, sim.params.a);
@@ -332,95 +362,335 @@
     // BH pairs coalesce just before the horizons touch (final plunge); bodies
     // with a real surface coalesce on contact.
     const rmerge = bothBH ? surface1 + surface2 * 1.05 : surface1 + surface2;
-    if (bin.d <= rmerge && !bin.merged) {
-      // Remnant mass, spin and radiated energy from the NR-fit (mass ratio +
-      // both progenitor spins). Equal-mass non-spinning → ~5.5% of Mt radiated
-      // and a_f/M_f ≈ 0.69; extreme mass ratios radiate little.
-      const chi1 = sim.params.a / Math.max(0.05, M1);   // dimensionless spins a/M
-      const chi2 = (bin.a2 || 0) / Math.max(0.05, M2);
-      const orbitSign = Math.sign(sim.params.a || 1);
-      const rem = phys.mergerRemnant(M1, M2, chi1, chi2, orbitSign);
+    if (bin.d <= rmerge && !bin.merged) { coalesce(sim, bin, M1, M2); return; }
 
-      // Compactness of each body = (Schwarzschild radius 2M) / (surface radius),
-      // clamped to [0,1]. The GW burst only reaches the full fit for two true
-      // black holes; the more diffuse the surfaces, the less escapes as GW.
-      const comp1 = Math.max(0, Math.min(1, (2 * M1) / Math.max(1e-3, surface1)));
-      const comp2 = Math.max(0, Math.min(1, (2 * M2) / Math.max(1e-3, surface2)));
-      const eMergerGW = rem.eRad * comp1 * comp2;   // geometric GW energy radiated
-
-      // Combined physical (solar) mass: the total mass MINUS the GW energy that
-      // escaped. Mt and eMergerGW are geometric (units of the old primary M=1),
-      // so the final geometric mass is (M1+M2) − eMergerGW and the solar mass is
-      // that × Msun (the solar-mass-per-unit factor). Geometry stays in units of
-      // M, so the geometric mass resets to 1 and a/Q become dimensionless a/M, Q/M.
-      const MfGeo = (M1 + M2) - eMergerGW;
-      const MsunFinal = MfGeo * (sim.params.Msun || 1);
-
-      // Reclassify the remnant. A black-hole progenitor always wins; two compact
-      // remnants (WD/NS) collapse by the combined solar mass (WD→NS→BH); a merger
-      // that still involves a star keeps the more evolved stellar stage (two MS
-      // stars → a heavier MS star; anything with a giant → a giant).
-      let newType;
-      if (bothBH || cType === 'bh' || sType === 'bh') {
-        newType = 'bh';
-      } else if ((cType === 'wd' || cType === 'ns') && (sType === 'wd' || sType === 'ns')) {
-        newType = phys.remnantType(MsunFinal);
-      } else if (cType === 'giant' || sType === 'giant') {
-        newType = 'giant';
-      } else {
-        newType = 'ms';
-      }
-
-      // Charge and spin combine about the orbital axis, then clamp sub-extremal
-      // (Q² + a² < M², geometric M = 1) so a chance sum never exposes a naked
-      // singularity. The NR-fit a_f already folds in orbital + progenitor spin.
-      let Qf = sim.params.Q + (bin.Q2 || 0);
-      let af = rem.af;
-      const cap = 0.998;
-      if (Math.abs(Qf) > cap) Qf = Math.sign(Qf) * cap;
-      const room = Math.sqrt(Math.max(0, cap * cap - Qf * Qf));
-      if (Math.abs(af) > room) af = Math.sign(af || 1) * room;
-
-      bin.merged = true;
-      bin.mergerFlash = 1.6;
-      bin.eMergerGW = eMergerGW;     // GW energy in the merger/ringdown burst
-      bin.eGW = (bin.eGW || 0) + eMergerGW;
-      sim.params.M = 1;
-      sim.params.Msun = MsunFinal;
-      sim.params.type = newType;
-      sim.params.Q = Qf;
-      sim.params.a = af;            // a/M (geometric M = 1)
-
-      // Re-derive the remnant's surface (R★, T★) for its new stellar stage; a BH
-      // has none. A fresh remnant starts at ZAMS age, with its metallicity kept.
-      if (newType !== 'bh') {
-        sim.params.age = 0;
-        if (sim.params.Z == null) sim.params.Z = 0.5;
-        const ds = phys.deriveStellar(newType, MsunFinal,
-          { age: 0, Z: sim.params.Z, a: sim.params.a, B: sim.params.B || 0 });
-        if (ds) { sim.params.R_star = ds.R_star; sim.params.T_eff = ds.T_eff; }
-        sim.params._stellarTouched = false;
-      }
-      // Reframe the camera when the body changed size stage (e.g. two giants →
-      // a compact remnant); leave a BH+BH coalescence framed as it was.
-      if (!bothBH) sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(newType)];
-
-      bin.enabled = false;
-      logEv(sim, 'warn', trp(
-        'MERGER · η={eta} · M_f={mf} M⊙ · E_GW={egw} c² ({pct}%)',
-        { eta: rem.eta.toFixed(3), mf: MsunFinal.toFixed(1),
-          egw: eMergerGW.toFixed(3), pct: (eMergerGW / (M1 + M2) * 100).toFixed(1) }));
-      if (newType === 'bh') {
-        logEv(sim, 'amber', trp('ringdown · a_f/M_f → {af}', { af: af.toFixed(3) }));
-      } else {
-        logEv(sim, 'amber', trp('remnant → {type}', { type: newType.toUpperCase() }));
-      }
-      return;
-    }
     if (bin.d > 80) {
       bin.enabled = false;
       logEv(sim, 'amber', tr('companion escaped binary system', '伴星逃離雙星系統'));
     }
+  }
+
+  // Coalesce the binary into a single remnant. The remnant carries the COMBINED
+  // mass of both progenitors MINUS the energy radiated away as gravitational
+  // waves in the final plunge + ringdown, is reclassified by the resulting solar
+  // mass, and has its surface re-derived. The GW burst is a strong-field effect,
+  // so it is scaled by how compact the progenitors are: two black holes radiate
+  // the full NR-fit (~5.5% at equal mass), while two diffuse stars merge with
+  // negligible GW loss. Used by both the contact path and the common-envelope
+  // spiral-in. `reason` tags the event log ('gw' merger vs 'ce' common envelope).
+  function coalesce(sim, bin, M1, M2, reason = 'gw') {
+    const cType = sim.params.type || 'bh';
+    const sType = bin.type || 'bh';
+    const { rplus: r1plus, naked: n1 } = phys.horizons(M1, sim.params.Q, sim.params.a);
+    const { rplus: r2plus, naked: n2 } = phys.horizons(M2, bin.Q2 || 0, bin.a2 || 0);
+    const surface1 = cType === 'bh' ? (isFinite(r1plus) && !n1 ? r1plus : M1) : (sim.params.R_star || 3);
+    const surface2 = sType === 'bh' ? (isFinite(r2plus) && !n2 ? r2plus : M2) : (bin.R_star2 || 3);
+    const bothBH = cType === 'bh' && sType === 'bh';
+
+    // Remnant mass, spin and radiated energy from the NR-fit (mass ratio +
+    // both progenitor spins). Equal-mass non-spinning → ~5.5% of Mt radiated
+    // and a_f/M_f ≈ 0.69; extreme mass ratios radiate little.
+    const chi1 = sim.params.a / Math.max(0.05, M1);   // dimensionless spins a/M
+    const chi2 = (bin.a2 || 0) / Math.max(0.05, M2);
+    const orbitSign = Math.sign(sim.params.a || 1);
+    const rem = phys.mergerRemnant(M1, M2, chi1, chi2, orbitSign);
+
+    // Compactness of each body = (Schwarzschild radius 2M) / (surface radius),
+    // clamped to [0,1]. The GW burst only reaches the full fit for two true
+    // black holes; the more diffuse the surfaces, the less escapes as GW.
+    const comp1 = Math.max(0, Math.min(1, (2 * M1) / Math.max(1e-3, surface1)));
+    const comp2 = Math.max(0, Math.min(1, (2 * M2) / Math.max(1e-3, surface2)));
+    const eMergerGW = rem.eRad * comp1 * comp2;   // geometric GW energy radiated
+
+    // Combined physical (solar) mass: the total mass MINUS the GW energy that
+    // escaped. Mt and eMergerGW are geometric (units of the old primary M=1),
+    // so the final geometric mass is (M1+M2) − eMergerGW and the solar mass is
+    // that × Msun (the solar-mass-per-unit factor). Geometry stays in units of
+    // M, so the geometric mass resets to 1 and a/Q become dimensionless a/M, Q/M.
+    const MfGeo = (M1 + M2) - eMergerGW;
+    const MsunFinal = MfGeo * (sim.params.Msun || 1);
+
+    // Reclassify the remnant. A black-hole progenitor always wins; two compact
+    // remnants (WD/NS) collapse by the combined solar mass (WD→NS→BH); a merger
+    // that still involves a star keeps the more evolved stellar stage (two MS
+    // stars → a heavier MS star; anything with a giant → a giant).
+    let newType;
+    if (bothBH || cType === 'bh' || sType === 'bh') {
+      newType = 'bh';
+    } else if ((cType === 'wd' || cType === 'ns') && (sType === 'wd' || sType === 'ns')) {
+      newType = phys.remnantType(MsunFinal);
+    } else if (cType === 'giant' || sType === 'giant') {
+      newType = 'giant';
+    } else {
+      newType = 'ms';
+    }
+
+    // Charge and spin combine about the orbital axis, then clamp sub-extremal
+    // (Q² + a² < M², geometric M = 1) so a chance sum never exposes a naked
+    // singularity. The NR-fit a_f already folds in orbital + progenitor spin.
+    let Qf = sim.params.Q + (bin.Q2 || 0);
+    let af = rem.af;
+    const cap = 0.998;
+    if (Math.abs(Qf) > cap) Qf = Math.sign(Qf) * cap;
+    const room = Math.sqrt(Math.max(0, cap * cap - Qf * Qf));
+    if (Math.abs(af) > room) af = Math.sign(af || 1) * room;
+
+    bin.merged = true;
+    bin.mergerFlash = 1.6;
+    bin.eMergerGW = eMergerGW;     // GW energy in the merger/ringdown burst
+    bin.eGW = (bin.eGW || 0) + eMergerGW;
+    sim.params.M = 1;
+    sim.params.Msun = MsunFinal;
+    sim.params.type = newType;
+    sim.params.Q = Qf;
+    sim.params.a = af;            // a/M (geometric M = 1)
+
+    // Re-derive the remnant's surface (R★, T★) for its new stellar stage; a BH
+    // has none. A fresh remnant starts at ZAMS age, with its metallicity kept.
+    if (newType !== 'bh') {
+      sim.params.age = 0;
+      if (sim.params.Z == null) sim.params.Z = 0.5;
+      const ds = phys.deriveStellar(newType, MsunFinal,
+        { age: 0, Z: sim.params.Z, a: sim.params.a, B: sim.params.B || 0 });
+      if (ds) { sim.params.R_star = ds.R_star; sim.params.T_eff = ds.T_eff; }
+      sim.params._stellarTouched = false;
+    }
+    // Reframe the camera when the body changed size stage (e.g. two giants →
+    // a compact remnant); leave a BH+BH coalescence framed as it was.
+    if (!bothBH) sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(newType)];
+
+    bin.enabled = false;
+    if (reason === 'ce') {
+      logEv(sim, 'warn', trp('COMMON ENVELOPE → merger · M_f={mf} M⊙', { mf: MsunFinal.toFixed(1) }));
+    } else {
+      logEv(sim, 'warn', trp(
+        'MERGER · η={eta} · M_f={mf} M⊙ · E_GW={egw} c² ({pct}%)',
+        { eta: rem.eta.toFixed(3), mf: MsunFinal.toFixed(1),
+          egw: eMergerGW.toFixed(3), pct: (eMergerGW / (M1 + M2) * 100).toFixed(1) }));
+    }
+    if (newType === 'bh') {
+      logEv(sim, 'amber', trp('ringdown · a_f/M_f → {af}', { af: af.toFixed(3) }));
+    } else {
+      logEv(sim, 'amber', trp('remnant → {type}', { type: newType.toUpperCase() }));
+    }
+  }
+
+  // ── Mass-transfer helpers ─────────────────────────────────
+  // Read / write a star's physical (solar) mass by index (1 = central primary,
+  // 2 = companion). The primary's solar mass IS the geometric unit, so whenever
+  // either mass changes the companion's geometric mass bin.M2 is re-synced from
+  // bin.M2sun / sim.params.Msun (the demo keeps geometry frozen in units of M).
+  function starMsun(sim, bin, idx) {
+    if (idx === 1) return sim.params.Msun || 1;
+    return bin.M2sun != null ? bin.M2sun : (bin.M2 || 0.8) * (sim.params.Msun || 1);
+  }
+  function setStarMsun(sim, bin, idx, m) {
+    const mv = Math.max(0.05, m);
+    if (idx === 1) sim.params.Msun = mv;
+    else           bin.M2sun = mv;
+    bin.M2 = Math.max(0.001, (bin.M2sun != null ? bin.M2sun : 8) / Math.max(0.05, sim.params.Msun || 1));
+  }
+  function starType(sim, bin, idx) { return idx === 1 ? (sim.params.type || 'bh') : (bin.type || 'bh'); }
+  function setStarType(sim, bin, idx, t) { if (idx === 1) sim.params.type = t; else bin.type = t; }
+
+  // A star's contact surface (geometric units): the outer horizon for a black
+  // hole, otherwise its photosphere R★. Mirrors the surface logic in coalesce.
+  function starSurface(sim, bin, idx) {
+    const t = starType(sim, bin, idx);
+    if (t === 'bh') {
+      const M = idx === 1 ? sim.params.M : bin.M2;
+      const Q = idx === 1 ? sim.params.Q : (bin.Q2 || 0);
+      const a = idx === 1 ? sim.params.a : (bin.a2 || 0);
+      const h = phys.horizons(M, Q, a);
+      return (isFinite(h.rplus) && !h.naked) ? h.rplus : M;
+    }
+    return idx === 1 ? (sim.params.R_star || 3) : (bin.R_star2 || 3);
+  }
+
+  // Re-derive a star's photosphere (R★, T★, L) from its current mass + stage so
+  // the surface tracks mass changes (a donor shrinks and self-regulates overflow,
+  // an accretor swells). A black hole has no surface.
+  function deriveStarSurface(sim, bin, idx) {
+    if (idx === 1) {
+      if ((sim.params.type || 'bh') === 'bh') return;
+      const ds = phys.deriveStellar(sim.params.type, sim.params.Msun,
+        { age: sim.params.age || 0, Z: sim.params.Z != null ? sim.params.Z : 0.5, a: sim.params.a, B: sim.params.B || 0 });
+      if (ds) { sim.params.R_star = ds.R_star; sim.params.T_eff = ds.T_eff; sim.params._L = ds.L; }
+    } else {
+      if ((bin.type || 'bh') === 'bh') return;
+      const ds = phys.deriveStellar(bin.type, bin.M2sun,
+        { age: bin.age2 || 0, Z: bin.Z2 != null ? bin.Z2 : 0.5, a: bin.a2, B: bin.B2 || 0 });
+      if (ds) { bin.R_star2 = ds.R_star; bin.T_eff2 = ds.T_eff; bin._L2 = ds.L; }
+    }
+  }
+
+  // Rescale the orbital separation by factor s about the conserved barycentre,
+  // keeping the orbit quasi-circular (v ∝ 1/√r). Both stars move proportionally
+  // about (cx,cy) so the separation scales by s and the barycentre is preserved.
+  function applySeparationScale(bin, s) {
+    if (!(s > 0) || Math.abs(s - 1) < 1e-9) return;
+    bin.x1 = bin.cx + (bin.x1 - bin.cx) * s; bin.y1 = bin.cy + (bin.y1 - bin.cy) * s;
+    bin.x2 = bin.cx + (bin.x2 - bin.cx) * s; bin.y2 = bin.cy + (bin.y2 - bin.cy) * s;
+    const vb = 1 / Math.sqrt(s);
+    bin.vx1 *= vb; bin.vy1 *= vb; bin.vx2 *= vb; bin.vy2 *= vb;
+    bin.d = Math.hypot(bin.x2 - bin.x1, bin.y2 - bin.y1);
+  }
+
+  // Evolve Roche-lobe overflow + mass transfer one step. Returns true if the
+  // binary was ended/transformed (Type Ia detonation or common-envelope merger),
+  // signalling the caller to stop this step. Masses are solar; lengths geometric.
+  function stepMassTransfer(sim, dt) {
+    const bin = sim.binary;
+    if (!bin || !bin.enabled || bin.merged || !bin.mtEnabled || bin.held) return false;
+    const mt = bin.mt;
+    const a = bin.d;
+    if (!(a > 0)) return false;
+
+    const M1sun = starMsun(sim, bin, 1);
+    let   M2sun = starMsun(sim, bin, 2);
+    if (bin.M2sun == null) bin.M2sun = M2sun;     // ensure the solar mass is materialised
+    const cType = sim.params.type || 'bh';
+    const sType = bin.type || 'bh';
+    const R1 = cType === 'bh' ? 0 : (sim.params.R_star || 3);
+    const R2 = sType === 'bh' ? 0 : (bin.R_star2 || 3);
+
+    // Eggleton Roche-lobe radii and the fractional overflow of each real surface.
+    const RL1 = phys.rocheLobeEggleton(M1sun, M2sun, a);
+    const RL2 = phys.rocheLobeEggleton(M2sun, M1sun, a);
+    mt.RL1 = RL1; mt.RL2 = RL2;
+    const over1 = (cType !== 'bh' && R1 > RL1) ? (R1 - RL1) / RL1 : 0;
+    const over2 = (sType !== 'bh' && R2 > RL2) ? (R2 - RL2) / RL2 : 0;
+
+    if (over1 <= 0 && over2 <= 0) {
+      if (mt.active) { mt.active = false; mt.mode = 'none'; mt.mdot = 0; }
+      return false;
+    }
+
+    // Donor = the deeper overflower; the other star is the accretor.
+    const dPrim = over1 >= over2;
+    const donorIdx = dPrim ? 1 : 2;
+    const accIdx   = dPrim ? 2 : 1;
+    const Md = dPrim ? M1sun : M2sun;
+    const Ma = dPrim ? M2sun : M1sun;
+    const Rd = dPrim ? R1 : R2;
+    const RLd = dPrim ? RL1 : RL2;
+    const donorType = dPrim ? cType : sType;
+    const accType   = dPrim ? sType : cType;
+    const q = Md / Math.max(0.05, Ma);
+
+    const K = phys.MT_K * Math.max(0, bin.transferRate || 1);
+    const mdot = phys.massTransferRate(Rd, RLd, K);
+    // Move at most a small fraction of the donor per step (keeps the orbit and
+    // surfaces smooth), and never drain the donor below a token mass.
+    let dm = Math.min(mdot * dt, 0.02 * Md, Math.max(0, Md - 0.08));
+
+    mt.active = true;
+    mt.donor = donorIdx; mt.accretor = accIdx;
+    mt.mdot = mdot; mt.q = q;
+
+    // ── Common envelope: dynamically-unstable overflow ──
+    // A donor above the critical mass ratio cannot be stabilised; the accretor is
+    // engulfed and the cores spiral in inside a shared envelope (α-λ formalism).
+    if (q > phys.ceCriticalQ(donorType)) {
+      mt.mode = 'ce';
+      bin.ceFlash = 1.6;
+      const out = phys.ceOutcome({ Md, Ma, Rd, a, donorType }, phys.CE_ALPHA, phys.CE_LAMBDA);
+      // Survival is an ENERGY decision: the α-λ balance must leave the cores on a
+      // bound orbit above a small floor; below it the spiral-in is catastrophic and
+      // the cores merge. (Bare giant cores are compact WD/NS/BH — physically tiny,
+      // so the test is in gravitational radii, not the inflated display surface.)
+      const CE_AF_FLOOR = 2.5;
+      const coreType = donorType === 'giant' ? phys.remnantType(out.M_core) : donorType;
+      if (!out.survive || out.a_f <= CE_AF_FLOOR) {
+        // Not enough orbital energy to eject the envelope → the cores merge.
+        coalesce(sim, bin, sim.params.M, bin.M2, 'ce');
+        return true;
+      }
+      // Envelope ejected: the donor is left as its bare core in a tight orbit. Place
+      // the surviving close binary at a_f, but never inside the (inflated) display
+      // surfaces, so it reads as a detached pair instead of instantly re-merging.
+      setStarMsun(sim, bin, donorIdx, out.M_core);
+      setStarType(sim, bin, donorIdx, coreType);
+      deriveStarSurface(sim, bin, donorIdx);
+      const aSurv = Math.max(out.a_f, 1.2 * (starSurface(sim, bin, donorIdx) + starSurface(sim, bin, accIdx)));
+      applySeparationScale(bin, aSurv / Math.max(1e-3, a));
+      mt.mode = q > 1 ? 'unstable' : 'stable';
+      logEv(sim, 'warn', trp('COMMON ENVELOPE → close binary · a_f={af} M · core={mc} M⊙',
+        { af: aSurv.toFixed(2), mc: out.M_core.toFixed(2) }));
+      return false;
+    }
+
+    // ── Stable / unstable (non-CE) conservative transfer ──
+    mt.mode = q > 1 ? 'unstable' : 'stable';
+    if (dm <= 0) return false;
+
+    // Donor loses dm.
+    setStarMsun(sim, bin, donorIdx, Md - dm);
+    mt.transferred = (mt.transferred || 0) + dm;
+
+    // Accretor gains dm — with the white-dwarf nova / Type Ia branches.
+    const MaNew = Ma + dm;
+    if (accType === 'wd') {
+      setStarMsun(sim, bin, accIdx, MaNew);
+      mt.mAccH = (mt.mAccH || 0) + dm;
+      if (MaNew >= phys.M_CHANDRASEKHAR) {
+        // Type Ia supernova: the WD reaches the Chandrasekhar mass and detonates,
+        // unbound entirely. The donor survives (kicked free).
+        typeIaSupernova(sim, bin, accIdx, donorIdx);
+        return true;
+      }
+      if (mt.mAccH >= phys.novaIgnitionMass(MaNew)) {
+        // Recurrent nova: the accreted hydrogen shell ignites and flashes off.
+        mt.mAccH = 0;
+        mt.novaCount = (mt.novaCount || 0) + 1;
+        bin.novaFlash = 1.2;
+        logEv(sim, 'amber', trp('NOVA · #{n} · M_WD={m} M⊙', { n: mt.novaCount, m: MaNew.toFixed(3) }));
+      }
+    } else {
+      setStarMsun(sim, bin, accIdx, MaNew);
+      // A neutron-star accretor pushed past the TOV limit collapses to a BH.
+      if (accType === 'ns' && MaNew >= phys.M_TOV) {
+        setStarType(sim, bin, accIdx, 'bh');
+        logEv(sim, 'warn', trp('accretion-induced collapse → BH · M={m} M⊙', { m: MaNew.toFixed(2) }));
+      }
+    }
+
+    // Orbital reaction to the transfer (J-conserving): shrinks if the donor is
+    // heavier (runaway), widens if lighter (self-regulating).
+    const rate = phys.orbitalResponseRate(Md, Ma, mdot);     // (da/dt)/a
+    let scaleA = 1 + rate * dt;
+    scaleA = Math.max(0.5, Math.min(1.5, scaleA));
+    applySeparationScale(bin, scaleA);
+
+    // Re-derive both surfaces so the donor self-regulates and the accretor swells.
+    deriveStarSurface(sim, bin, donorIdx);
+    deriveStarSurface(sim, bin, accIdx);
+    return false;
+  }
+
+  // Type Ia supernova: a white-dwarf accretor reaches Chandrasekhar and is fully
+  // disrupted. The binary ends; the surviving donor becomes the lone body. If the
+  // destroyed WD was the central primary, the donor (companion) is promoted to the
+  // central body so the scene always has a primary.
+  function typeIaSupernova(sim, bin, accIdx, donorIdx) {
+    const Mwd = starMsun(sim, bin, accIdx);
+    bin.snFlash = 1.8;
+    bin.enabled = false;
+    bin.merged = false;
+    if (accIdx === 1) {
+      // Central WD destroyed → promote the surviving companion to centre.
+      sim.params.Msun = bin.M2sun;
+      sim.params.type = bin.type;
+      sim.params.Q = bin.Q2 || 0;
+      sim.params.a = bin.a2 || 0;
+      sim.params.Z = bin.Z2 != null ? bin.Z2 : 0.5;
+      sim.params.age = bin.age2 || 0;
+      sim.params.B = bin.B2 != null ? bin.B2 : (sim.params.B || 0);
+      deriveStarSurface(sim, bin, 1);
+      sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(sim.params.type)];
+    }
+    logEv(sim, 'warn', trp('TYPE Ia SUPERNOVA · WD M={m} M⊙ detonates', { m: Mwd.toFixed(2) }));
+    logEv(sim, 'amber', tr('white dwarf disrupted · donor unbound', '白矮星瓦解 · 伴星脫離束縛'));
   }
 
   // RK2 midpoint step
