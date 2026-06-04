@@ -477,7 +477,11 @@
   const CE_ALPHA   = 3.0;     // common-envelope efficiency (orbital energy → ejection)
   const CE_LAMBDA  = 1.0;     // envelope structure parameter (binding-energy form factor)
   const NOVA_RETAIN = 0.15;   // fraction of an accreted H layer a WD keeps after a nova
-  const MT_K       = 0.04;    // overflow-rate scale (M⊙ per unit time at unit overflow)
+  // Overflow-rate scale (M⊙ per unit time at unit overflow). Only the tenuous gas
+  // ABOVE the Roche lobe streams across the L1 point — a small fraction of the
+  // donor — so the flux is gentle and the orbit drifts adiabatically rather than
+  // the stars flinging apart. Kept low; the user transfer multiplier speeds it up.
+  const MT_K       = 0.012;
 
   // Eggleton (1983) Roche-lobe radius of a star, given its mass, the companion's
   // mass and the orbital separation a (all consistent units; returns the lobe

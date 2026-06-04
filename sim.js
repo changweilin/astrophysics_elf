@@ -131,6 +131,11 @@
       // Surface-flash timers (seconds) and the common-envelope glow flag — these
       // drive the render-side nova/Ia/CE visuals, mirroring mergerFlash.
       novaFlash: 0, snFlash: 0, ceFlash: 0, ceActive: false,
+      // Common-envelope spiral-in bookkeeping (set when CE is triggered; the orbit
+      // then shrinks over several steps so the pair visibly spirals in rather than
+      // teleporting into a merger). ceSurvive/ceTargetA decide the close-binary vs
+      // merger end state; ceCore/ceCoreType/ceDonor describe the stripped core.
+      ceSurvive: false, ceTargetA: 0, ceCore: 0, ceCoreType: null, ceDonor: 0,
     };
   }
 
@@ -205,6 +210,7 @@
     bin.mt = { active: false, donor: 0, accretor: 0, mode: 'none',
                mdot: 0, transferred: 0, q: 0, RL1: 0, RL2: 0, mAccH: 0, novaCount: 0 };
     bin.novaFlash = 0; bin.snFlash = 0; bin.ceFlash = 0; bin.ceActive = false;
+    bin.ceSurvive = false; bin.ceTargetA = 0; bin.ceCore = 0; bin.ceCoreType = null; bin.ceDonor = 0;
   }
 
   // Split a relative velocity V (= v₂ − v₁) onto the two stars about the
@@ -362,7 +368,29 @@
     // BH pairs coalesce just before the horizons touch (final plunge); bodies
     // with a real surface coalesce on contact.
     const rmerge = bothBH ? surface1 + surface2 * 1.05 : surface1 + surface2;
-    if (bin.d <= rmerge && !bin.merged) { coalesce(sim, bin, M1, M2); return; }
+    if (bin.d <= rmerge && !bin.merged) {
+      const isCompact = (t) => t === 'bh' || t === 'ns' || t === 'wd';
+      if (bin.ceActive) {
+        // A common envelope is spiralling in. Only the MERGER branch coalesces at
+        // contact; a SURVIVOR's inflated envelope overlapping the companion IS the
+        // shared envelope, not a core collision — let it finish ejecting (handled
+        // by stepCommonEnvelope), so it is not wrongly merged on the way in.
+        if (!bin.ceSurvive) coalesce(sim, bin, M1, M2, 'ce');
+        return;
+      }
+      if (isCompact(cType) && isCompact(sType)) {
+        // Two compact bodies touching → a clean compact merger / GW ringdown.
+        coalesce(sim, bin, M1, M2, 'gw');
+      } else {
+        // At least one EXTENDED star (MS/giant) makes contact → the envelope
+        // engulfs the companion and a common envelope forms; the cores spiral in
+        // rather than the stars cleanly merging on touch. Donor = more extended.
+        const r1 = isCompact(cType) ? 0 : (sim.params.R_star || 0);
+        const r2 = isCompact(sType) ? 0 : (bin.R_star2 || 0);
+        beginCommonEnvelope(sim, bin, r1 >= r2 ? 1 : 2);
+      }
+      return;
+    }
 
     if (bin.d > 80) {
       bin.enabled = false;
@@ -536,6 +564,58 @@
     bin.d = Math.hypot(bin.x2 - bin.x1, bin.y2 - bin.y1);
   }
 
+  // Re-seat the pair on a CLEAN circular orbit at separation aTarget about the
+  // barycentre, along the current orbital phase, with the exact circular relative
+  // speed √(Mt/a). Used after a discrete orbit change (e.g. common-envelope
+  // ejection) so the system lands on a proper bound orbit instead of an eccentric
+  // state that would spuriously pump energy and drift the cores apart.
+  function setCircularOrbit(sim, bin, aTarget) {
+    const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
+    const th = bin.theta, c = Math.cos(th), s = Math.sin(th);
+    const dir = Math.sign(bin.omega || sim.params.a || 1) || 1;
+    const f1 = M2 / Mt, f2 = M1 / Mt;
+    bin.x1 = bin.cx - f1 * aTarget * c; bin.y1 = bin.cy - f1 * aTarget * s;
+    bin.x2 = bin.cx + f2 * aTarget * c; bin.y2 = bin.cy + f2 * aTarget * s;
+    const vrel = Math.sqrt(Mt / Math.max(0.5, aTarget));
+    const vx = -s * vrel * dir, vy = c * vrel * dir;       // perpendicular to the axis
+    bin.vx1 = -f1 * vx; bin.vy1 = -f1 * vy;
+    bin.vx2 =  f2 * vx; bin.vy2 =  f2 * vy;
+    bin.d = aTarget; bin.omega = vrel / aTarget;
+  }
+
+  const CE_DRAG = 1.5;     // common-envelope orbital-decay rate (visible spiral-in)
+  const CE_STRIP = 1.6;    // rate the donor sheds its envelope toward the bare core
+
+  // Begin a common envelope: decide the end state once (α-λ energy balance) and
+  // arm the spiral-in. The cores then come together over several steps via
+  // stepCommonEnvelope rather than snapping together. donorIdx is the engulfing
+  // (more extended) star whose envelope is shared/ejected.
+  function beginCommonEnvelope(sim, bin, donorIdx) {
+    const accIdx = donorIdx === 1 ? 2 : 1;
+    const Md = starMsun(sim, bin, donorIdx), Ma = starMsun(sim, bin, accIdx);
+    const Rd = starSurface(sim, bin, donorIdx);
+    const donorType = starType(sim, bin, donorIdx);
+    const out = phys.ceOutcome({ Md, Ma, Rd, a: bin.d, donorType }, phys.CE_ALPHA, phys.CE_LAMBDA);
+    // Survival is an energy decision: enough orbital energy must remain to eject the
+    // envelope and leave the cores bound above a small floor (gravitational radii — a
+    // bare giant core is a compact WD/NS/BH, not its inflated display surface).
+    const CE_AF_FLOOR = 2.5;
+    bin.ceCore = out.M_core;
+    bin.ceCoreType = donorType === 'giant' ? phys.remnantType(out.M_core) : donorType;
+    bin.ceDonor = donorIdx;
+    bin.ceSurvive = out.survive && out.a_f > CE_AF_FLOOR;
+    if (bin.ceSurvive) {
+      const coreDs = phys.deriveStellar(bin.ceCoreType, out.M_core, { age: 0, Z: 0.5 });
+      const coreR = coreDs ? coreDs.R_star : 2;
+      bin.ceTargetA = Math.max(out.a_f, 1.2 * (coreR + starSurface(sim, bin, accIdx)));
+    } else bin.ceTargetA = 0;
+    bin.ceActive = true; bin.ceFlash = 1.6;
+    bin.mt.mode = 'ce'; bin.mt.active = true; bin.mt.donor = donorIdx; bin.mt.accretor = accIdx;
+    logEv(sim, 'warn', bin.ceSurvive
+      ? trp('common envelope · spiral-in → close binary (core {mc} M⊙)', { mc: out.M_core.toFixed(2) })
+      : tr('common envelope · spiral-in → merger', '共有包層 · 旋進 → 合併'));
+  }
+
   // Evolve Roche-lobe overflow + mass transfer one step. Returns true if the
   // binary was ended/transformed (Type Ia detonation or common-envelope merger),
   // signalling the caller to stop this step. Masses are solar; lengths geometric.
@@ -546,6 +626,11 @@
     const a = bin.d;
     if (!(a > 0)) return false;
 
+    // A common envelope already underway drives a rapid orbital spiral-in (handled
+    // separately so the pair visibly comes together before it merges or ejects the
+    // envelope) — skip the normal overflow bookkeeping while it runs.
+    if (bin.ceActive) return stepCommonEnvelope(sim, bin, dt);
+
     const M1sun = starMsun(sim, bin, 1);
     let   M2sun = starMsun(sim, bin, 2);
     if (bin.M2sun == null) bin.M2sun = M2sun;     // ensure the solar mass is materialised
@@ -554,12 +639,17 @@
     const R1 = cType === 'bh' ? 0 : (sim.params.R_star || 3);
     const R2 = sType === 'bh' ? 0 : (bin.R_star2 || 3);
 
-    // Eggleton Roche-lobe radii and the fractional overflow of each real surface.
+    // Eggleton Roche-lobe radii and the fractional overflow of each surface. Only
+    // EXTENDED stars (main-sequence, giant) can fill a Roche lobe — a compact
+    // remnant (WD/NS/BH) is physically tiny (its drawn disk is inflated for
+    // visibility) and acts only as an accretor, so it never overflows here.
+    const extended1 = cType === 'ms' || cType === 'giant';
+    const extended2 = sType === 'ms' || sType === 'giant';
     const RL1 = phys.rocheLobeEggleton(M1sun, M2sun, a);
     const RL2 = phys.rocheLobeEggleton(M2sun, M1sun, a);
     mt.RL1 = RL1; mt.RL2 = RL2;
-    const over1 = (cType !== 'bh' && R1 > RL1) ? (R1 - RL1) / RL1 : 0;
-    const over2 = (sType !== 'bh' && R2 > RL2) ? (R2 - RL2) / RL2 : 0;
+    const over1 = (extended1 && R1 > RL1) ? (R1 - RL1) / RL1 : 0;
+    const over2 = (extended2 && R2 > RL2) ? (R2 - RL2) / RL2 : 0;
 
     if (over1 <= 0 && over2 <= 0) {
       if (mt.active) { mt.active = false; mt.mode = 'none'; mt.mdot = 0; }
@@ -581,47 +671,27 @@
     const K = phys.MT_K * Math.max(0, bin.transferRate || 1);
     const mdot = phys.massTransferRate(Rd, RLd, K);
     // Move at most a small fraction of the donor per step (keeps the orbit and
-    // surfaces smooth), and never drain the donor below a token mass.
-    let dm = Math.min(mdot * dt, 0.02 * Md, Math.max(0, Md - 0.08));
+    // surfaces smooth — only surface gas streams across L1), and never drain the
+    // donor below a token mass.
+    let dm = Math.min(mdot * dt, 0.008 * Md, Math.max(0, Md - 0.08));
 
     mt.active = true;
     mt.donor = donorIdx; mt.accretor = accIdx;
     mt.mdot = mdot; mt.q = q;
 
-    // ── Common envelope: dynamically-unstable overflow ──
-    // A donor above the critical mass ratio cannot be stabilised; the accretor is
-    // engulfed and the cores spiral in inside a shared envelope (α-λ formalism).
+    // ── Dynamically-unstable overflow → common envelope ──
+    // Above the critical mass ratio the donor's envelope cannot be stabilised
+    // (its radius response outruns the shrinking lobe), so the accretor is engulfed
+    // and a common envelope forms. The cores then spiral in over several steps
+    // (stepCommonEnvelope), shedding the envelope gradually — the donor does NOT
+    // teleport into a bare compact core.
     if (q > phys.ceCriticalQ(donorType)) {
-      mt.mode = 'ce';
-      bin.ceFlash = 1.6;
-      const out = phys.ceOutcome({ Md, Ma, Rd, a, donorType }, phys.CE_ALPHA, phys.CE_LAMBDA);
-      // Survival is an ENERGY decision: the α-λ balance must leave the cores on a
-      // bound orbit above a small floor; below it the spiral-in is catastrophic and
-      // the cores merge. (Bare giant cores are compact WD/NS/BH — physically tiny,
-      // so the test is in gravitational radii, not the inflated display surface.)
-      const CE_AF_FLOOR = 2.5;
-      const coreType = donorType === 'giant' ? phys.remnantType(out.M_core) : donorType;
-      if (!out.survive || out.a_f <= CE_AF_FLOOR) {
-        // Not enough orbital energy to eject the envelope → the cores merge.
-        coalesce(sim, bin, sim.params.M, bin.M2, 'ce');
-        return true;
-      }
-      // Envelope ejected: the donor is left as its bare core in a tight orbit. Place
-      // the surviving close binary at a_f, but never inside the (inflated) display
-      // surfaces, so it reads as a detached pair instead of instantly re-merging.
-      setStarMsun(sim, bin, donorIdx, out.M_core);
-      setStarType(sim, bin, donorIdx, coreType);
-      deriveStarSurface(sim, bin, donorIdx);
-      const aSurv = Math.max(out.a_f, 1.2 * (starSurface(sim, bin, donorIdx) + starSurface(sim, bin, accIdx)));
-      applySeparationScale(bin, aSurv / Math.max(1e-3, a));
-      mt.mode = q > 1 ? 'unstable' : 'stable';
-      logEv(sim, 'warn', trp('COMMON ENVELOPE → close binary · a_f={af} M · core={mc} M⊙',
-        { af: aSurv.toFixed(2), mc: out.M_core.toFixed(2) }));
-      return false;
+      beginCommonEnvelope(sim, bin, donorIdx);
+      return stepCommonEnvelope(sim, bin, dt);
     }
 
-    // ── Stable / unstable (non-CE) conservative transfer ──
-    mt.mode = q > 1 ? 'unstable' : 'stable';
+    // ── Stable conservative transfer ──
+    mt.mode = 'stable';
     if (dm <= 0) return false;
 
     // Donor loses dm.
@@ -656,15 +726,67 @@
     }
 
     // Orbital reaction to the transfer (J-conserving): shrinks if the donor is
-    // heavier (runaway), widens if lighter (self-regulating).
+    // heavier (runaway), widens if lighter (self-regulating). Applied ADIABATICALLY
+    // — a tiny change per step — so the orbit drifts gently as real RLOF does
+    // rather than flinging the stars apart; as it widens the lobe grows and the
+    // overflow self-limits. A hard cap keeps a widening binary on-screen and bound
+    // (it must not run past the d>80 escape cut: the drift is internal, not a kick).
     const rate = phys.orbitalResponseRate(Md, Ma, mdot);     // (da/dt)/a
     let scaleA = 1 + rate * dt;
-    scaleA = Math.max(0.5, Math.min(1.5, scaleA));
+    scaleA = Math.max(0.99, Math.min(1.01, scaleA));
+    const dCap = Math.min(Math.max(2 * (bin.d0 || a), a), 72);
+    if (scaleA > 1 && bin.d * scaleA > dCap) scaleA = Math.max(1, dCap / bin.d);
     applySeparationScale(bin, scaleA);
 
     // Re-derive both surfaces so the donor self-regulates and the accretor swells.
     deriveStarSurface(sim, bin, donorIdx);
     deriveStarSurface(sim, bin, accIdx);
+    return false;
+  }
+
+  // Drive a common envelope already in progress. The orbit decays through drag in
+  // the shared envelope (the orbital angular momentum is carried off by the gas
+  // being ejected — that loss IS what powers the in-spiral), and a survivor sheds
+  // its envelope GRADUALLY so the donor visibly shrinks toward its bare core rather
+  // than snapping compact. A survivor settles on a clean circular orbit once the
+  // envelope is gone; a merger spirals to contact and the normal check coalesces it
+  // (so the merge is always drawn at contact).
+  function stepCommonEnvelope(sim, bin, dt) {
+    const mt = bin.mt;
+    const donorIdx = bin.ceDonor || 1, accIdx = donorIdx === 1 ? 2 : 1;
+    bin.ceFlash = 1.6;                 // keep the envelope haze lit while spiralling
+    mt.mode = 'ce'; mt.active = true; mt.donor = donorIdx; mt.accretor = accIdx;
+
+    if (bin.ceSurvive) {
+      const target = bin.ceTargetA || 0;
+      const Md = starMsun(sim, bin, donorIdx);
+      const env = Md - bin.ceCore;
+      if (env > 1e-3) {
+        // Shed the envelope toward the bare core (mass leaves the system, carrying
+        // angular momentum); the donor shrinks as it loses its loose outer layers.
+        const dEj = Math.min(env, env * (1 - Math.exp(-CE_STRIP * dt)) + 1e-3);
+        setStarMsun(sim, bin, donorIdx, Md - dEj);
+        deriveStarSurface(sim, bin, donorIdx);
+        mt.mdot = dEj / Math.max(1e-6, dt);     // drives the visible stream/glow
+      }
+      if (bin.d > target) applySeparationScale(bin, Math.max(0.9, Math.exp(-CE_DRAG * dt)));
+      // Finalize once the envelope is gone: bare core on a clean circular orbit.
+      if (starMsun(sim, bin, donorIdx) <= bin.ceCore * 1.02 && bin.d <= target * 1.06) {
+        setStarMsun(sim, bin, donorIdx, bin.ceCore);
+        setStarType(sim, bin, donorIdx, bin.ceCoreType);
+        deriveStarSurface(sim, bin, donorIdx);
+        setCircularOrbit(sim, bin, target);
+        bin.ceActive = false;
+        mt.mode = 'stable';
+        logEv(sim, 'warn', trp('COMMON ENVELOPE → close binary · a_f={af} M · core={mc} M⊙',
+          { af: target.toFixed(2), mc: bin.ceCore.toFixed(2) }));
+      }
+      return false;
+    }
+
+    // Merger outcome: keep spiralling in; the contact check coalesces at contact.
+    mt.mdot = 0.02;                    // nominal flux so the stream/glow stays lit
+    applySeparationScale(bin, Math.max(0.9, Math.exp(-CE_DRAG * dt)));
     return false;
   }
 
