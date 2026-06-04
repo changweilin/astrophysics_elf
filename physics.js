@@ -477,17 +477,53 @@
     return dF / bindingThr;
   }
 
-  // Blackbody → oklch colour for a stellar surface.
-  // Approximate Planckian locus: cool → red, sun-like → yellow-white,
-  // hot (≥10⁴ K) → blue-white, very hot (≥10⁵ K) → deep blue/violet.
-  function tempToColor(T, alpha = 1) {
-    const t = Math.log10(Math.max(500, Math.min(2e7, T)));
-    // map log10(T) ∈ [3, 6.5]  →  u ∈ [0, 1]
-    const u = Math.max(0, Math.min(1, (t - 3.0) / 3.5));
-    const hue = 25 + u * 225;        // red → cyan-blue
-    const L   = 0.76 + 0.12 * u;     // hotter → brighter
-    const C   = 0.13;
-    return `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${hue.toFixed(0)} / ${alpha})`;
+  // Visual glow factor (0..1) for a luminosity L (L⊙), log-compressed across the
+  // enormous stellar range so a luminous O-star or giant blazes while a faint
+  // white/red dwarf barely glows — the brightness axis of the H-R diagram. The
+  // colour still comes from temperature (tempToColor); this only sets how bright
+  // the body and its halo render. Kept gentle (callers map it onto modest gains).
+  function stellarGlow(Lsun) {
+    const x = Math.log10(Math.max(1e-4, Lsun || 1e-4));
+    return Math.max(0, Math.min(1, (x + 2) / 6));   // L: 0.01→0, 1→0.33, 1e4→1
+  }
+
+  // Real blackbody colours along the Planckian locus, in sRGB (Mitchell Charity's
+  // blackbody table, normalised against black). Anchors are [T_K, r, g, b]. Real
+  // stars run red → orange → yellow → white → blue-white and famously NEVER pass
+  // through green, so the colour is interpolated from data rather than a synthetic
+  // rainbow ramp. Overlapping temperatures simply share their true colour — that
+  // is correct, not a bug, so no artificial hue separation is imposed.
+  const BB_TABLE = [
+    [1000, 255, 56, 0],    [1500, 255, 109, 0],   [2000, 255, 137, 18],
+    [2500, 255, 161, 72],  [3000, 255, 180, 107], [3500, 255, 196, 137],
+    [4000, 255, 209, 163], [4500, 255, 219, 186], [5000, 255, 228, 206],
+    [5500, 255, 236, 224], [6000, 255, 243, 239], [6500, 255, 249, 253],
+    [7000, 245, 243, 255], [7500, 235, 238, 255], [8000, 227, 233, 255],
+    [9000, 214, 225, 255], [10000, 204, 219, 255],[12000, 191, 211, 255],
+    [15000, 179, 204, 255],[20000, 168, 197, 255],[30000, 159, 191, 255],
+    [40000, 155, 188, 255],
+  ];
+
+  // Blackbody → CSS colour for a stellar surface. `alpha` sets opacity; `lum`
+  // (0..1, from stellarGlow) gently blends the disk toward white so a luminous
+  // star reads brighter, without shifting its true hue. Surfaces hotter than the
+  // table (e.g. a megakelvin neutron-star crust) saturate at the hot blue-white
+  // end — the eye sees blue-white, never violet.
+  function tempToColor(T, alpha = 1, lum = null) {
+    const Tk = Math.max(1000, Math.min(40000, T || 5800));
+    let i = 0;
+    while (i < BB_TABLE.length - 1 && BB_TABLE[i + 1][0] <= Tk) i++;
+    const a0 = BB_TABLE[i], a1 = BB_TABLE[Math.min(i + 1, BB_TABLE.length - 1)];
+    const span = (a1[0] - a0[0]) || 1;
+    const f = Math.max(0, Math.min(1, (Tk - a0[0]) / span));
+    let r = a0[1] + (a1[1] - a0[1]) * f;
+    let g = a0[2] + (a1[2] - a0[2]) * f;
+    let b = a0[3] + (a1[3] - a0[3]) * f;
+    if (lum != null) {
+      const w = 0.22 * Math.max(0, Math.min(1, lum));   // gentle brighten toward white
+      r += (255 - r) * w; g += (255 - g) * w; b += (255 - b) * w;
+    }
+    return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`;
   }
 
   // Circular-orbit speed for the single-BH effective potential (see acceleration).
@@ -510,5 +546,6 @@
     M_CHANDRASEKHAR, M_TOV,
     msLuminosity, msRadius, msLifetime, effTemp,
     mainSequenceState, giantState, whiteDwarfState, neutronStarState, deriveStellar,
+    stellarGlow,
   };
 })();

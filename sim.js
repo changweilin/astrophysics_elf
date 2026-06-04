@@ -602,13 +602,14 @@
     if (p) {
       const d = phys.deriveStellar(p.type, p.Msun,
         { age: p.age || 0, Z: p.Z != null ? p.Z : 0.5, B: p.B || 0, a: p.a || 0 });
-      if (d) { p.R_star = d.R_star; p.T_eff = d.T_eff; }
+      // _L (solar luminosity) is stashed for the renderer's brightness/glow.
+      if (d) { p.R_star = d.R_star; p.T_eff = d.T_eff; p._L = d.L; } else p._L = null;
     }
     const b = sim.binary;
     if (b) {
       const d2 = phys.deriveStellar(b.type, b.M2sun,
         { age: b.age2 || 0, Z: b.Z2 != null ? b.Z2 : 0.5, B: b.B2 || 0, a: b.a2 || 0 });
-      if (d2) { b.R_star2 = d2.R_star; b.T_eff2 = d2.T_eff; }
+      if (d2) { b.R_star2 = d2.R_star; b.T_eff2 = d2.T_eff; b._L2 = d2.L; } else b._L2 = null;
     }
   }
 

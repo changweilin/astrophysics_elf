@@ -385,7 +385,7 @@ function BodyEditor({ sim, force, role }) {
         {[
           { k: 'star',    label: tr('Main sequence', '主序星'), glyph: '✱' },
           { k: 'giant',   label: tr('Giant', '巨星'),           glyph: '✸' },
-          { k: 'remnant', label: tr('Remnant', '塌縮殘骸'),     glyph: '●' },
+          { k: 'remnant', label: tr('Compact object', '緻密天體'), glyph: '●' },
         ].map((t) => (
           <button key={t.k}
             className={`type-tab ${accessors.category === t.k ? 'on' : ''}`}
@@ -398,7 +398,7 @@ function BodyEditor({ sim, force, role }) {
 
       {accessors.category === 'remnant' && (
         <div className="remnant-stage" role="status">
-          <span className="rs-head">{tr('mass selects remnant', '質量決定殘骸')}</span>
+          <span className="rs-head">{tr('mass selects remnant', '質量決定緻密天體')}</span>
           {[
             { k: 'wd', g: '◐', label: tr('WD', '白矮星'),  band: '<1.4' },
             { k: 'ns', g: '◉', label: tr('NS', '中子星'),  band: '1.4–3' },
@@ -487,7 +487,7 @@ function BodyEditor({ sim, force, role }) {
               <span className="v">
                 <i style={{ display: 'inline-block', width: '0.7em', height: '0.7em', borderRadius: '50%',
                             marginRight: 5, verticalAlign: 'middle',
-                            background: phys.tempToColor(stellarState.T_eff, 1) }} />
+                            background: phys.tempToColor(stellarState.T_eff, 1, phys.stellarGlow(stellarState.L)) }} />
                 {fmtTemp(stellarState.T_eff)}<small>K</small>
               </span>
             </div>

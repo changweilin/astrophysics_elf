@@ -316,7 +316,7 @@ function MBodyEditor({ sim, force, role }) {
         {[
           { k: 'star',    label: tr('MS', '主序'),    glyph: '✱' },
           { k: 'giant',   label: tr('Giant', '巨星'), glyph: '✸' },
-          { k: 'remnant', label: tr('Rem.', '殘骸'),  glyph: '●' },
+          { k: 'remnant', label: tr('Compact', '緻密'),  glyph: '●' },
         ].map((t) => (
           <button key={t.k}
             className={`type-tab ${A.category === t.k ? 'on' : ''}`}
@@ -413,7 +413,7 @@ function MBodyEditor({ sim, force, role }) {
               <span className="v">
                 <i style={{ display: 'inline-block', width: '0.7em', height: '0.7em', borderRadius: '50%',
                             marginRight: 5, verticalAlign: 'middle',
-                            background: phys.tempToColor(stellarState.T_eff, 1) }} />
+                            background: phys.tempToColor(stellarState.T_eff, 1, phys.stellarGlow(stellarState.L)) }} />
                 {fmtTemp(stellarState.T_eff)}<small>K</small>
               </span>
             </div>

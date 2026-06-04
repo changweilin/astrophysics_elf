@@ -200,9 +200,10 @@
       if (cType !== 'bh') {
         const Rs1 = sim.params.R_star || 3;
         const T1 = sim.params.T_eff || 1e6;
-        const col1 = phys.tempToColor(T1, 1);
-        const colHalo1 = phys.tempToColor(T1, 0.30);
-        const haloR1 = Math.max(Rs1 * s * 1.5, Rs1 * s + 10);
+        const g1 = phys.stellarGlow(sim.params._L);   // brightness ∝ luminosity
+        const col1 = phys.tempToColor(T1, 1, g1);
+        const colHalo1 = phys.tempToColor(T1, 0.14 + 0.28 * g1, g1);
+        const haloR1 = Math.max(Rs1 * s * (1.35 + 0.75 * g1), Rs1 * s + 10 + 20 * g1);
         const grdH1 = ctx.createRadialGradient(bx1, by1, Rs1 * s * 0.8, bx1, by1, haloR1);
         grdH1.addColorStop(0, colHalo1);
         grdH1.addColorStop(1, 'oklch(0.06 0 0 / 0)');
@@ -211,7 +212,7 @@
         const grdS1 = ctx.createRadialGradient(bx1, by1, 0, bx1, by1, Rs1 * s);
         grdS1.addColorStop(0, col1);
         grdS1.addColorStop(0.7, col1);
-        grdS1.addColorStop(1, phys.tempToColor(T1, 0.10));
+        grdS1.addColorStop(1, phys.tempToColor(T1, 0.05 + 0.10 * g1, g1));
         ctx.fillStyle = grdS1;
         ctx.beginPath(); ctx.arc(bx1, by1, Math.max(2, Rs1 * s), 0, Math.PI*2); ctx.fill();
         ctx.strokeStyle = phys.tempToColor(T1, 0.7);
@@ -277,9 +278,10 @@
         // Stellar companion — NS / WD / MS render
         const Rs2 = bin.R_star2 || 3;
         const T2 = bin.T_eff2 || 1e6;
-        const col = phys.tempToColor(T2, 1);
-        const colHalo = phys.tempToColor(T2, 0.30);
-        const haloR2 = Math.max(Rs2 * s * 1.5, Rs2 * s + 10);
+        const g2 = phys.stellarGlow(bin._L2);          // brightness ∝ luminosity
+        const col = phys.tempToColor(T2, 1, g2);
+        const colHalo = phys.tempToColor(T2, 0.14 + 0.28 * g2, g2);
+        const haloR2 = Math.max(Rs2 * s * (1.35 + 0.75 * g2), Rs2 * s + 10 + 20 * g2);
         const grdH2 = ctx.createRadialGradient(bx2, by2, Rs2 * s * 0.8, bx2, by2, haloR2);
         grdH2.addColorStop(0, colHalo);
         grdH2.addColorStop(1, 'oklch(0.06 0 0 / 0)');
@@ -288,7 +290,7 @@
         const grdS2 = ctx.createRadialGradient(bx2, by2, 0, bx2, by2, Rs2 * s);
         grdS2.addColorStop(0, col);
         grdS2.addColorStop(0.7, col);
-        grdS2.addColorStop(1, phys.tempToColor(T2, 0.10));
+        grdS2.addColorStop(1, phys.tempToColor(T2, 0.05 + 0.10 * g2, g2));
         ctx.fillStyle = grdS2;
         ctx.beginPath(); ctx.arc(bx2, by2, Math.max(2, Rs2 * s), 0, Math.PI*2); ctx.fill();
         ctx.strokeStyle = phys.tempToColor(T2, 0.7);
@@ -323,11 +325,15 @@
       // ── Stellar central (NS / WD / MS) ────────────────
       const Rs = sim.params.R_star || 3;
       const T = sim.params.T_eff || 1e6;
-      const col = phys.tempToColor(T, 1);
-      const colHalo = phys.tempToColor(T, 0.35);
-      const colCorona = phys.tempToColor(T, 0.10);
-      // outer corona / glow
-      const haloR = Math.max(Rs * s * 1.6, Rs * s + 14);
+      // Brightness follows luminosity (the H-R diagram's vertical axis): a
+      // luminous giant / O-star glows far more than a faint white or red dwarf.
+      // Colour still comes from temperature; `g` only modulates the glow. Gentle.
+      const g = phys.stellarGlow(sim.params._L);
+      const col = phys.tempToColor(T, 1, g);
+      const colHalo = phys.tempToColor(T, 0.14 + 0.30 * g, g);
+      const colCorona = phys.tempToColor(T, 0.05 + 0.12 * g, g);
+      // outer corona / glow — radius and opacity grow with luminosity
+      const haloR = Math.max(Rs * s * (1.4 + 0.8 * g), Rs * s + 12 + 24 * g);
       const grdH = ctx.createRadialGradient(cx, cy, Rs * s * 0.8, cx, cy, haloR);
       grdH.addColorStop(0, colHalo);
       grdH.addColorStop(1, 'oklch(0.06 0 0 / 0)');
@@ -340,6 +346,14 @@
       grdS.addColorStop(1, colCorona);
       ctx.fillStyle = grdS;
       ctx.beginPath(); ctx.arc(cx, cy, Rs * s, 0, Math.PI * 2); ctx.fill();
+      // luminous-core highlight — a soft brightening for high-L stars only
+      if (g > 0.45) {
+        const hi = ctx.createRadialGradient(cx, cy, 0, cx, cy, Rs * s * 0.55);
+        hi.addColorStop(0, phys.tempToColor(T, 0.22 * (g - 0.45), 1));
+        hi.addColorStop(1, phys.tempToColor(T, 0, 1));
+        ctx.fillStyle = hi;
+        ctx.beginPath(); ctx.arc(cx, cy, Rs * s * 0.55, 0, Math.PI * 2); ctx.fill();
+      }
       // limb darkening edge
       ctx.strokeStyle = phys.tempToColor(T, 0.7);
       ctx.lineWidth = 1.2;
