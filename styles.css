@@ -745,6 +745,22 @@ html, body {
 }
 .viewport .overlay-br .view-zoom button:hover { background: var(--bg-2); color: var(--amber); }
 .viewport .overlay-br .view-zoom button:active { background: var(--bg-1); }
+/* Floating windows (field / lensing / MHD / tidal) sit over the main canvas.
+   Their visualization frame is click-through so a press on a body/companion
+   *beneath* a window still reaches the canvas (drag-eject, aim, double-click);
+   only the header, resize grip, split divider and controls stay interactive so
+   the window can still be moved, resized and operated. */
+.viewport .kn-draggable { pointer-events: none; }
+.viewport .kn-draggable .microscope-head,
+.viewport .kn-draggable .kn-resize-grip,
+.viewport .kn-draggable .fs-divider,
+.viewport .kn-draggable button,
+.viewport .kn-draggable .mh-chev,
+.viewport .kn-draggable .mh-arrow,
+.viewport .kn-draggable .mh-switch,
+.viewport .kn-draggable .mh-tabs,
+.viewport .kn-draggable .fs-controls { pointer-events: auto; }
+
 .overlay-tl .frame-id {
   font-family: var(--mono);
   font-size: 10px;

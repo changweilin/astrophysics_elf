@@ -122,9 +122,33 @@
     if (!bin) return;
     const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
     bin.x1 = sim.primary.x; bin.y1 = sim.primary.y;
+    // Keep the companion clear of the contact radius. The photospheres of large
+    // stars (main sequence R ~ 18, giant R ~ 24) easily exceed the requested
+    // separation, so a freshly placed/enabled pair would merge or vanish on the
+    // very next step (worst for two same-category stars). Push the point radially
+    // outward to ~1.25x the summed surfaces. Compact bodies are unaffected.
+    const surfaceOf = (type, M, Q, a, Rs) => (type || 'bh') === 'bh'
+      ? (() => { const h = phys.horizons(M, Q || 0, a || 0); return (isFinite(h.rplus) && !h.naked) ? h.rplus : 2 * M; })()
+      : (Rs || 3);
+    const rMin = 1.25 * (
+      surfaceOf(sim.params.type, M1, sim.params.Q, sim.params.a, sim.params.R_star) +
+      surfaceOf(bin.type, M2, bin.Q2, bin.a2, bin.R_star2));
+    let dx0 = wx - bin.x1, dy0 = wy - bin.y1;
+    let r = Math.hypot(dx0, dy0);
+    if (r < 1e-6) { dx0 = 1; dy0 = 0; r = 1; }          // degenerate → +x axis
+    if (r < rMin) {
+      const f = rMin / r;
+      wx = bin.x1 + dx0 * f; wy = bin.y1 + dy0 * f;
+      dx0 *= f; dy0 *= f; r = rMin;
+      logEv(sim, 'amber', trp('separation raised to {r} M to clear stellar contact', { r: r.toFixed(1) }));
+    }
+    // Fit the camera so a widely separated (large-star) pair stays on screen.
+    // Only ever zoom out, so a deliberately close placement is left framed.
+    if (sim._vw && sim._vh) {
+      const fit = (Math.min(sim._vw, sim._vh) / 2) * 0.6 / Math.max(r, 1);
+      if (fit < sim.view.scale) sim.view.scale = Math.max(4, Math.min(80, fit));
+    }
     bin.x2 = wx; bin.y2 = wy;
-    const dx0 = wx - bin.x1, dy0 = wy - bin.y1;
-    const r = Math.hypot(dx0, dy0);
     bin.d = r; bin.d0 = r;
     bin.theta = Math.atan2(dy0, dx0);
     // Barycentre from the two initial positions — conserved from here on.

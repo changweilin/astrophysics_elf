@@ -13,6 +13,7 @@
           applyFrameLock, predictTrajectory, predictBinaryTrajectory } = KN;
 
   function render(sim, ctx, w, h) {
+    sim._vw = w; sim._vh = h;   // last canvas size — used to fit the camera on placement
     ctx.clearRect(0, 0, w, h);
     applyFrameLock(sim); // re-centre camera before any worldToScreen calls
     const { M, Q, a } = sim.params;
@@ -189,9 +190,38 @@
       ctx.beginPath(); ctx.moveTo(bx1, by1); ctx.lineTo(bx2, by2); ctx.stroke();
       ctx.setLineDash([]);
 
-      // Primary BH (with normal horizon + ergosphere)
+      // Primary — stellar or black hole. A stellar primary is drawn at its
+      // photosphere R_star so the visible disk matches the collision surface the
+      // inspiral uses (surface1 = R_star); otherwise its tiny horizon would make
+      // the companion "merge" while still visually far away.
+      const cType = sim.params.type || 'bh';
       const { rplus: rp1, naked: n1 } = phys.horizons(M1, Q, a);
-      if (!n1 && rp1 > 0) {
+      if (cType !== 'bh') {
+        const Rs1 = sim.params.R_star || 3;
+        const T1 = sim.params.T_eff || 1e6;
+        const col1 = phys.tempToColor(T1, 1);
+        const colHalo1 = phys.tempToColor(T1, 0.30);
+        const haloR1 = Math.max(Rs1 * s * 1.5, Rs1 * s + 10);
+        const grdH1 = ctx.createRadialGradient(bx1, by1, Rs1 * s * 0.8, bx1, by1, haloR1);
+        grdH1.addColorStop(0, colHalo1);
+        grdH1.addColorStop(1, 'oklch(0.06 0 0 / 0)');
+        ctx.fillStyle = grdH1;
+        ctx.beginPath(); ctx.arc(bx1, by1, haloR1, 0, Math.PI*2); ctx.fill();
+        const grdS1 = ctx.createRadialGradient(bx1, by1, 0, bx1, by1, Rs1 * s);
+        grdS1.addColorStop(0, col1);
+        grdS1.addColorStop(0.7, col1);
+        grdS1.addColorStop(1, phys.tempToColor(T1, 0.10));
+        ctx.fillStyle = grdS1;
+        ctx.beginPath(); ctx.arc(bx1, by1, Math.max(2, Rs1 * s), 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = phys.tempToColor(T1, 0.7);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(bx1, by1, Math.max(2, Rs1 * s), 0, Math.PI*2); ctx.stroke();
+        if (sim.flags.showLabels) {
+          ctx.fillStyle = phys.tempToColor(T1, 0.85);
+          ctx.font = '9px JetBrains Mono, monospace';
+          ctx.fillText(`M₁ ${(sim.params.Msun || 0).toFixed(1)} M⊙ ${cType.toUpperCase()}`, bx1 + Math.max(2, Rs1*s) + 4, by1 - 4);
+        }
+      } else if (!n1 && rp1 > 0) {
         const grd1 = ctx.createRadialGradient(bx1, by1, rp1*s*0.3, bx1, by1, rp1*s*1.05);
         grd1.addColorStop(0, 'oklch(0.04 0 0)');
         grd1.addColorStop(0.9, 'oklch(0.06 0.005 255)');
