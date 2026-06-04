@@ -492,6 +492,73 @@
     return a * 0.49 * q23 / (0.6 * q23 + Math.log(1 + Math.pow(q, 1 / 3)));
   }
 
+  // ── Ballistic gas-stream trajectories in the rotating (Roche) frame ──────
+  // The gas that overflows the donor's Roche lobe leaves through the inner
+  // Lagrange point L1 and follows a ballistic path under BOTH stars' gravity plus
+  // the centrifugal and Coriolis forces of the co-rotating frame (the restricted
+  // three-body problem). A real stream has finite width and a spread of launch
+  // conditions, so a FAMILY of trajectories is integrated to show the full range
+  // the gas can take — the bundle deflects in the orbital direction (Coriolis) and,
+  // if it misses the accretor, wraps around it toward an accretion disc.
+  //
+  // Units: total mass = 1, separation = 1, angular velocity Ω = 1. The donor sits
+  // at x = −m_a and the accretor at x = +m_d (barycentre at the origin), where
+  // m_d, m_a are the mass fractions. Paths are returned in a DONOR-origin frame
+  // (donor at 0, accretor at +1 on the x-axis) for easy mapping to the screen.
+  // `orbitSign` (+1/−1) sets the orbital/Coriolis sense; `accRadiusFrac` is the
+  // accretor's capture radius in units of the separation.
+  function gasStreamPaths(Mdonor, Maccretor, accRadiusFrac = 0.05, orbitSign = 1, nPaths = 7) {
+    const Mt = Math.max(1e-6, Mdonor + Maccretor);
+    const md = Mdonor / Mt, ma = Maccretor / Mt;     // mass fractions (sum 1)
+    const xd = -ma, xa = md;                          // donor / accretor on x-axis
+    // Pseudo-potential gradient (rotating frame, Ω = 1): a = ∇U with
+    // U = ½(x²+y²) + m_d/r_d + m_a/r_a.
+    const grad = (x, y) => {
+      const ddx = x - xd, ddy = y, dax = x - xa, day = y;
+      const rd = Math.max(1e-4, Math.hypot(ddx, ddy)), ra = Math.max(1e-4, Math.hypot(dax, day));
+      const rd3 = rd * rd * rd, ra3 = ra * ra * ra;
+      return [x - md * ddx / rd3 - ma * dax / ra3, y - md * ddy / rd3 - ma * day / ra3];
+    };
+    // Locate L1 on the x-axis between the stars (root of ∂U/∂x = 0).
+    let lo = xd + 1e-3, hi = xa - 1e-3, xL1 = 0.5 * (lo + hi);
+    let flo = grad(lo, 0)[0];
+    for (let i = 0; i < 64; i++) {
+      const mid = 0.5 * (lo + hi), fm = grad(mid, 0)[0];
+      if (flo * fm <= 0) hi = mid; else { lo = mid; flo = fm; }
+      xL1 = mid;
+    }
+    const Om = orbitSign >= 0 ? 1 : -1;
+    const capR = Math.max(0.02, accRadiusFrac);
+    const deriv = (st) => {                            // ẍ = 2Ω ẏ + U_x, ÿ = −2Ω ẋ + U_y
+      const g = grad(st[0], st[1]);
+      return [st[2], st[3], 2 * Om * st[3] + g[0], -2 * Om * st[2] + g[1]];
+    };
+    const v0 = 0.05, dt = 0.012, fan = 80 * Math.PI / 180;  // launch speed, step, spread
+    const paths = [];
+    for (let k = 0; k < nPaths; k++) {
+      const frac = nPaths > 1 ? k / (nPaths - 1) : 0.5;
+      const ang = (frac - 0.5) * fan;                  // −40°..+40° about the L1→accretor line
+      let x = xL1, y = 0, vx = v0 * Math.cos(ang), vy = v0 * Math.sin(ang);
+      const path = [[x + ma, y]];                      // donor-origin frame
+      for (let step = 0; step < 420; step++) {
+        let s0 = [x, y, vx, vy];
+        const k1 = deriv(s0);
+        const k2 = deriv([s0[0] + 0.5 * dt * k1[0], s0[1] + 0.5 * dt * k1[1], s0[2] + 0.5 * dt * k1[2], s0[3] + 0.5 * dt * k1[3]]);
+        const k3 = deriv([s0[0] + 0.5 * dt * k2[0], s0[1] + 0.5 * dt * k2[1], s0[2] + 0.5 * dt * k2[2], s0[3] + 0.5 * dt * k2[3]]);
+        const k4 = deriv([s0[0] + dt * k3[0], s0[1] + dt * k3[1], s0[2] + dt * k3[2], s0[3] + dt * k3[3]]);
+        x += dt / 6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]);
+        y += dt / 6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]);
+        vx += dt / 6 * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]);
+        vy += dt / 6 * (k1[3] + 2 * k2[3] + 2 * k3[3] + k4[3]);
+        path.push([x + ma, y]);
+        if (Math.hypot(x - xa, y) < capR) break;       // captured by the accretor
+        if (Math.hypot(x, y) > 1.9 || Math.hypot(x - xd, y) < 0.02) break;  // off-range
+      }
+      paths.push(path);
+    }
+    return { xL1: xL1 + ma, paths };
+  }
+
   // Mass-transfer rate (M⊙ per unit time) for a donor of photosphere radius
   // R_star overflowing a Roche lobe R_L. Zero unless R_star > R_L; otherwise it
   // grows with the cube of the fractional overflow depth (an isothermal-atmosphere
@@ -629,7 +696,7 @@
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
     classify, acceleration, circularSpeed, tidalStress, r_s, peters, mergerRemnant,
     rocheLobeEggleton, massTransferRate, orbitalResponseRate, ceCriticalQ,
-    ceOutcome, novaIgnitionMass,
+    ceOutcome, novaIgnitionMass, gasStreamPaths,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
     M_CHANDRASEKHAR, M_TOV, CE_ALPHA, CE_LAMBDA, NOVA_RETAIN, MT_K,

@@ -148,17 +148,18 @@
     if (!bin) return;
     const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
     bin.x1 = sim.primary.x; bin.y1 = sim.primary.y;
-    // Keep the companion clear of the contact radius. The photospheres of large
-    // stars (main sequence R ~ 18, giant R ~ 24) easily exceed the requested
-    // separation, so a freshly placed/enabled pair would merge or vanish on the
-    // very next step (worst for two same-category stars). Push the point radially
-    // outward to ~1.25x the summed surfaces. Compact bodies are unaffected.
+    // Keep the companion just clear of surface CONTACT (1.25x the summed
+    // photospheres/horizons) so a freshly placed pair doesn't merge on touch — but
+    // do NOT push it out past its Roche lobe: a star placed near contact fills its
+    // lobe and transfers mass, which is exactly the Roche-lobe overflow we want to
+    // show. The transfer / common envelope it triggers evolves gradually (see
+    // stepCommonEnvelope), so the pair does not snap into a compact remnant.
     const surfaceOf = (type, M, Q, a, Rs) => (type || 'bh') === 'bh'
       ? (() => { const h = phys.horizons(M, Q || 0, a || 0); return (isFinite(h.rplus) && !h.naked) ? h.rplus : 2 * M; })()
       : (Rs || 3);
-    const rMin = 1.25 * (
-      surfaceOf(sim.params.type, M1, sim.params.Q, sim.params.a, sim.params.R_star) +
-      surfaceOf(bin.type, M2, bin.Q2, bin.a2, bin.R_star2));
+    const surf1 = surfaceOf(sim.params.type, M1, sim.params.Q, sim.params.a, sim.params.R_star);
+    const surf2 = surfaceOf(bin.type, M2, bin.Q2, bin.a2, bin.R_star2);
+    const rMin = 1.25 * (surf1 + surf2);
     let dx0 = wx - bin.x1, dy0 = wy - bin.y1;
     let r = Math.hypot(dx0, dy0);
     if (r < 1e-6) { dx0 = 1; dy0 = 0; r = 1; }          // degenerate → +x axis
@@ -309,7 +310,13 @@
     // as a⁻³ and the time to merger is (5/256) d⁴ / (M1 M2 (M1+M2)) / inspiralRate.
     // Loss is set by BOTH masses (the binary radiates as one quadrupole), and the
     // contraction is split back onto both stars about the conserved barycentre.
-    if (!bin.classical) {
+    // Skip GW radiation reaction while mass transfer / a common envelope is active:
+    // for an interacting binary the mass-transfer-driven orbital evolution (handled
+    // in stepMassTransfer, in role-independent solar masses) dominates over GW, and
+    // mixing in the primary-normalised geometric GW rate would make the same
+    // physical pair evolve differently depending on which star is the central body.
+    const mtActive = !!(bin.mt && bin.mt.active);
+    if (!bin.classical && !mtActive) {
       const rNow = Math.hypot(Dx, Dy);
       let scale = 1 + (pet.ddot * bin.inspiralRate * dt) / Math.max(0.05, rNow);
       if (scale < 0.5) scale = 0.5;   // per-step clamp — never plunge in one step
@@ -392,7 +399,11 @@
       return;
     }
 
-    if (bin.d > 80) {
+    // A bound pair's separation stays near its placement value; only a genuinely
+    // unbound companion runs away without limit. Scale the escape cutoff to the
+    // initial separation so a widely-placed (large-star) binary — which must start
+    // far apart just to clear its Roche lobe — is not mistaken for an escape.
+    if (bin.d > Math.max(200, 3 * (bin.d0 || 20))) {
       bin.enabled = false;
       logEv(sim, 'amber', tr('companion escaped binary system', '伴星逃離雙星系統'));
     }
@@ -409,10 +420,6 @@
   function coalesce(sim, bin, M1, M2, reason = 'gw') {
     const cType = sim.params.type || 'bh';
     const sType = bin.type || 'bh';
-    const { rplus: r1plus, naked: n1 } = phys.horizons(M1, sim.params.Q, sim.params.a);
-    const { rplus: r2plus, naked: n2 } = phys.horizons(M2, bin.Q2 || 0, bin.a2 || 0);
-    const surface1 = cType === 'bh' ? (isFinite(r1plus) && !n1 ? r1plus : M1) : (sim.params.R_star || 3);
-    const surface2 = sType === 'bh' ? (isFinite(r2plus) && !n2 ? r2plus : M2) : (bin.R_star2 || 3);
     const bothBH = cType === 'bh' && sType === 'bh';
 
     // Remnant mass, spin and radiated energy from the NR-fit (mass ratio +
@@ -423,12 +430,12 @@
     const orbitSign = Math.sign(sim.params.a || 1);
     const rem = phys.mergerRemnant(M1, M2, chi1, chi2, orbitSign);
 
-    // Compactness of each body = (Schwarzschild radius 2M) / (surface radius),
-    // clamped to [0,1]. The GW burst only reaches the full fit for two true
-    // black holes; the more diffuse the surfaces, the less escapes as GW.
-    const comp1 = Math.max(0, Math.min(1, (2 * M1) / Math.max(1e-3, surface1)));
-    const comp2 = Math.max(0, Math.min(1, (2 * M2) / Math.max(1e-3, surface2)));
-    const eMergerGW = rem.eRad * comp1 * comp2;   // geometric GW energy radiated
+    // Compactness factor per progenitor TYPE (not its inflated display radius), so
+    // the GW burst is role-independent: two black holes radiate the full NR-fit,
+    // while a diffuse star radiates almost nothing. Two BHs → 1·1 = 1 (preserves
+    // the GW150914-style result); anything extended → negligible loss.
+    const compOf = (t) => t === 'bh' ? 1 : t === 'ns' ? 0.7 : t === 'wd' ? 0.4 : t === 'giant' ? 0.04 : 0.1;
+    const eMergerGW = rem.eRad * compOf(cType) * compOf(sType);   // geometric GW energy radiated
 
     // Combined physical (solar) mass: the total mass MINUS the GW energy that
     // escaped. Mt and eMergerGW are geometric (units of the old primary M=1),
@@ -583,8 +590,8 @@
     bin.d = aTarget; bin.omega = vrel / aTarget;
   }
 
-  const CE_DRAG = 1.5;     // common-envelope orbital-decay rate (visible spiral-in)
-  const CE_STRIP = 1.6;    // rate the donor sheds its envelope toward the bare core
+  const CE_DRAG = 0.5;     // common-envelope orbital-decay rate (slow, watchable spiral-in)
+  const CE_STRIP = 0.6;    // rate the donor sheds its envelope toward the bare core
 
   // Begin a common envelope: decide the end state once (α-λ energy balance) and
   // arm the spiral-in. The cores then come together over several steps via
@@ -656,8 +663,18 @@
       return false;
     }
 
-    // Donor = the deeper overflower; the other star is the accretor.
-    const dPrim = over1 >= over2;
+    // BOTH stars fill their lobes → a contact binary sharing a common envelope.
+    // Resolve it as CE with the more extended star as the donor. This decision is
+    // role-independent (it uses only the display radii and the lobe geometry, not
+    // which star is the geometric primary), so the same physical pair behaves the
+    // same whichever one the user designated as the central body.
+    if (over1 > 0 && over2 > 0) {
+      beginCommonEnvelope(sim, bin, R1 >= R2 ? 1 : 2);
+      return stepCommonEnvelope(sim, bin, dt);
+    }
+
+    // Single overflower = the donor; the other star is the accretor.
+    const dPrim = over1 > 0;
     const donorIdx = dPrim ? 1 : 2;
     const accIdx   = dPrim ? 2 : 1;
     const Md = dPrim ? M1sun : M2sun;
@@ -693,6 +710,16 @@
     // ── Stable conservative transfer ──
     mt.mode = 'stable';
     if (dm <= 0) return false;
+
+    // If this step would drain the donor to a token mass (an extreme mass ratio
+    // keeps it overflowing until it is gone), the donor is tidally disrupted and
+    // wholly absorbed by the accretor; the binary ends with the accretor alone.
+    if (Md - dm <= 0.12) {
+      setStarMsun(sim, bin, accIdx, Ma + Md);     // accretor takes the entire donor
+      mt.transferred = (mt.transferred || 0) + Md;
+      consumeDonor(sim, bin, accIdx);
+      return true;
+    }
 
     // Donor loses dm.
     setStarMsun(sim, bin, donorIdx, Md - dm);
@@ -738,6 +765,14 @@
     if (scaleA > 1 && bin.d * scaleA > dCap) scaleA = Math.max(1, dCap / bin.d);
     applySeparationScale(bin, scaleA);
 
+    // Keep the mass-transferring orbit circular (tides circularise an interacting
+    // binary). This also makes the evolution depend only on role-independent
+    // quantities — separation, masses, overflow — so the same physical pair evolves
+    // the same regardless of which star the user designated as the central body
+    // (otherwise the orbital period, which is set by the primary-normalised
+    // geometric mass, would sample an eccentric orbit differently for each role).
+    setCircularOrbit(sim, bin, bin.d);
+
     // Re-derive both surfaces so the donor self-regulates and the accretor swells.
     deriveStarSurface(sim, bin, donorIdx);
     deriveStarSurface(sim, bin, accIdx);
@@ -769,7 +804,10 @@
         deriveStarSurface(sim, bin, donorIdx);
         mt.mdot = dEj / Math.max(1e-6, dt);     // drives the visible stream/glow
       }
-      if (bin.d > target) applySeparationScale(bin, Math.max(0.9, Math.exp(-CE_DRAG * dt)));
+      if (bin.d > target) {
+        applySeparationScale(bin, Math.max(0.9, Math.exp(-CE_DRAG * dt)));
+        setCircularOrbit(sim, bin, bin.d);   // keep the in-spiral clean & role-independent
+      }
       // Finalize once the envelope is gone: bare core on a clean circular orbit.
       if (starMsun(sim, bin, donorIdx) <= bin.ceCore * 1.02 && bin.d <= target * 1.06) {
         setStarMsun(sim, bin, donorIdx, bin.ceCore);
@@ -784,10 +822,38 @@
       return false;
     }
 
-    // Merger outcome: keep spiralling in; the contact check coalesces at contact.
+    // Merger outcome: keep spiralling in (clean circular, role-independent); the
+    // contact check coalesces at contact.
     mt.mdot = 0.02;                    // nominal flux so the stream/glow stays lit
     applySeparationScale(bin, Math.max(0.9, Math.exp(-CE_DRAG * dt)));
+    setCircularOrbit(sim, bin, bin.d);
     return false;
+  }
+
+  // Promote the companion to the central body (copy its full parameter set into
+  // sim.params) so the scene always has a primary after the original central body
+  // is removed. Used when the central body is destroyed (Type Ia) or consumed.
+  function promoteCompanionToCentral(sim, bin) {
+    sim.params.Msun = bin.M2sun;
+    sim.params.type = bin.type;
+    sim.params.Q = bin.Q2 || 0;
+    sim.params.a = bin.a2 || 0;
+    sim.params.Z = bin.Z2 != null ? bin.Z2 : 0.5;
+    sim.params.age = bin.age2 || 0;
+    sim.params.B = bin.B2 != null ? bin.B2 : (sim.params.B || 0);
+    deriveStarSurface(sim, bin, 1);
+    sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(sim.params.type)];
+  }
+
+  // The donor has been drained to a token mass — tidally disrupted and absorbed by
+  // the accretor (its remaining gas already added to the accretor by the caller).
+  // The binary ends with the accretor as the lone body; if the consumed donor was
+  // the central primary, the accretor (companion) is promoted to centre. This is
+  // role-symmetric: the same physical pair ends the same way whichever was central.
+  function consumeDonor(sim, bin, accIdx) {
+    if (accIdx === 2) promoteCompanionToCentral(sim, bin);   // primary donor consumed
+    bin.enabled = false;
+    logEv(sim, 'amber', tr('donor tidally disrupted · absorbed by accretor', '施體被潮汐瓦解 · 併入吸積天體'));
   }
 
   // Type Ia supernova: a white-dwarf accretor reaches Chandrasekhar and is fully
@@ -799,18 +865,7 @@
     bin.snFlash = 1.8;
     bin.enabled = false;
     bin.merged = false;
-    if (accIdx === 1) {
-      // Central WD destroyed → promote the surviving companion to centre.
-      sim.params.Msun = bin.M2sun;
-      sim.params.type = bin.type;
-      sim.params.Q = bin.Q2 || 0;
-      sim.params.a = bin.a2 || 0;
-      sim.params.Z = bin.Z2 != null ? bin.Z2 : 0.5;
-      sim.params.age = bin.age2 || 0;
-      sim.params.B = bin.B2 != null ? bin.B2 : (sim.params.B || 0);
-      deriveStarSurface(sim, bin, 1);
-      sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(sim.params.type)];
-    }
+    if (accIdx === 1) promoteCompanionToCentral(sim, bin);   // central WD destroyed
     logEv(sim, 'warn', trp('TYPE Ia SUPERNOVA · WD M={m} M⊙ detonates', { m: Mwd.toFixed(2) }));
     logEv(sim, 'amber', tr('white dwarf disrupted · donor unbound', '白矮星瓦解 · 伴星脫離束縛'));
   }

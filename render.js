@@ -205,41 +205,152 @@
         ctx.fillStyle = hg;
         ctx.beginPath(); ctx.arc(ecx, ecy, er, 0, Math.PI * 2); ctx.fill();
       }
-      // Roche-lobe indicator circles (R_L around each star), gated by a flag.
-      if (sim.flags.showRoche && mt && (mt.RL1 > 0 || mt.RL2 > 0)) {
-        ctx.strokeStyle = 'oklch(0.62 0.07 75 / 0.30)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 4]);
-        if (mt.RL1 > 0) { ctx.beginPath(); ctx.arc(bx1, by1, mt.RL1 * s, 0, Math.PI * 2); ctx.stroke(); }
-        if (mt.RL2 > 0) { ctx.beginPath(); ctx.arc(bx2, by2, mt.RL2 * s, 0, Math.PI * 2); ctx.stroke(); }
-        ctx.setLineDash([]);
+      // ── Roche lobes (teardrop equipotentials meeting at L1) ──
+      // Drawn as a tear-shaped curve around each star, cusp pointing at the inner
+      // Lagrange point between the pair. When a star fills/overflows its lobe the
+      // interior is tinted with its surface colour — that gas is what streams to
+      // the companion. Computed straight from the masses + separation so the lobes
+      // show whenever the indicator is enabled, not only during active transfer.
+      if (sim.flags.showRoche) {
+        const M1s = sim.params.Msun || 1;
+        const M2s = (bin.M2sun != null ? bin.M2sun : bin.M2 * M1s);
+        const RL1 = phys.rocheLobeEggleton(M1s, M2s, bin.d);
+        const RL2 = phys.rocheLobeEggleton(M2s, M1s, bin.d);
+        const cT = sim.params.type || 'bh', sT = bin.type || 'bh';
+        const R1 = cT === 'bh' ? 0 : (sim.params.R_star || 0);
+        const R2 = sT === 'bh' ? 0 : (bin.R_star2 || 0);
+        const ang = Math.atan2(by2 - by1, bx2 - bx1);   // primary → companion
+        // Trace one teardrop lobe of radius RL (geometric) around (sx,sy), cusp
+        // pointing along `dir` (toward the companion / L1). fillCol tints it if the
+        // star overflows (gas filling the lobe); strokeCol outlines it.
+        const drawLobe = (sx, sy, RL, dir, overflow, baseT) => {
+          if (!(RL > 0)) return;
+          const Rp = RL * s;
+          const dNose = Rp * 1.30, dBack = Rp * 0.74, W = Rp * 0.82;
+          const ca = Math.cos(dir), sa = Math.sin(dir);
+          ctx.beginPath();
+          for (let i = 0; i <= 64; i++) {
+            const t = (i / 64) * Math.PI * 2;
+            const nx = Math.cos(t), ny = Math.sin(t) * Math.sin(t / 2);
+            const lx = ((dNose + dBack) / 2) * nx + (dNose - dBack) / 2;  // along axis
+            const ly = W * ny;                                            // across axis
+            const px = sx + lx * ca - ly * sa, py = sy + lx * sa + ly * ca;
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          if (overflow) {                       // gas filling/overflowing the lobe
+            ctx.fillStyle = phys.tempToColor(baseT || 6000, 0.10);
+            ctx.fill();
+            ctx.strokeStyle = phys.tempToColor(baseT || 6000, 0.55);
+            ctx.lineWidth = 1.3;
+          } else {
+            ctx.strokeStyle = 'oklch(0.62 0.07 75 / 0.32)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 4]);
+          }
+          ctx.stroke();
+          ctx.setLineDash([]);
+        };
+        drawLobe(bx1, by1, RL1, ang, R1 > RL1, sim.params.T_eff);
+        drawLobe(bx2, by2, RL2, ang + Math.PI, R2 > RL2, bin.T_eff2);
       }
-      // Accretion stream from the donor toward the accretor (Coriolis-bowed),
-      // coloured by the donor's photosphere. Muted, never glaring.
+      // ── Roche-lobe overflow ANIMATION: ballistic gas streams through L1 ──
+      // The gas does NOT follow one line — a family of parcels leaves L1 and falls
+      // along ballistic trajectories in the rotating frame (both stars' gravity +
+      // centrifugal + Coriolis: the restricted three-body problem). We integrate a
+      // fan of them (KNphysics.gasStreamPaths) to show the full range the gas can
+      // take; it deflects in the orbital sense and, missing a compact accretor,
+      // wraps toward an accretion disc. Trajectories are steady in the co-rotating
+      // frame, so they are cached and only recomputed when the mass ratio changes.
       if (mt && mt.active && mt.donor) {
-        const dn = mt.donor === 1 ? [bx1, by1] : [bx2, by2];
-        const ac = mt.donor === 1 ? [bx2, by2] : [bx1, by1];
+        const dn0 = mt.donor === 1 ? [bx1, by1] : [bx2, by2];
+        const ac0 = mt.donor === 1 ? [bx2, by2] : [bx1, by1];
         const Tdn = mt.donor === 1 ? (sim.params.T_eff || 6000) : (bin.T_eff2 || 6000);
-        const dx = ac[0] - dn[0], dy = ac[1] - dn[1];
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = -dy / len, ny = dx / len;
-        const bow = 0.18 * len * Math.sign(sim.params.a || 1);
-        const cxp = (dn[0] + ac[0]) / 2 + nx * bow, cyp = (dn[1] + ac[1]) / 2 + ny * bow;
-        const grd = ctx.createLinearGradient(dn[0], dn[1], ac[0], ac[1]);
-        grd.addColorStop(0, phys.tempToColor(Tdn, 0.55));
-        grd.addColorStop(1, phys.tempToColor(Tdn, 0.05));
-        ctx.strokeStyle = grd;
-        ctx.lineWidth = Math.max(1.5, Math.min(5, 1.5 + (mt.mdot || 0) * 60));
-        ctx.beginPath();
-        ctx.moveTo(dn[0], dn[1]);
-        ctx.quadraticCurveTo(cxp, cyp, ac[0], ac[1]);
-        ctx.stroke();
-        // gentle hot spot where the stream meets the accretor
-        const hg = ctx.createRadialGradient(ac[0], ac[1], 0, ac[0], ac[1], 14);
-        hg.addColorStop(0, phys.tempToColor(Tdn, 0.30));
+        const Mdon = mt.donor === 1 ? (sim.params.Msun || 1) : (bin.M2sun || 1);
+        const Macc = mt.accretor === 1 ? (sim.params.Msun || 1) : (bin.M2sun || 1);
+        const accType = mt.accretor === 1 ? (sim.params.type || 'bh') : (bin.type || 'bh');
+        const accRgeo = accType === 'bh'
+          ? (mt.accretor === 1 ? M1 : M2) * 1.5
+          : ((mt.accretor === 1 ? sim.params.R_star : bin.R_star2) || 3);
+        const orbitSign = Math.sign(sim.params.a || 1) || 1;
+        const accFrac = Math.max(0.02, Math.min(0.4, accRgeo / Math.max(0.1, bin.d)));
+        // Cache the trajectory family; recompute only when q / accretor / sense move.
+        const key = `${(Mdon / Math.max(0.05, Macc)).toFixed(2)}|${accFrac.toFixed(2)}|${orbitSign}`;
+        if (bin._streamKey !== key || !bin._stream) {
+          bin._stream = phys.gasStreamPaths(Mdon, Macc, accFrac, orbitSign, 7);
+          bin._streamKey = key;
+        }
+        const stream = bin._stream;
+        const paths = stream.paths;
+        // Map a donor-origin path point (donor at 0, accretor at +1) to the screen.
+        const axx = ac0[0] - dn0[0], axy = ac0[1] - dn0[1];   // donor→accretor (= 1 unit)
+        const pxx = -axy, pxy = axx;                          // perpendicular (Coriolis plane)
+        const toScreen = (px, py) => [dn0[0] + px * axx + py * pxx, dn0[1] + px * axy + py * pxy];
+        const rand = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+
+        // ── Gas as a diffusing fluid, not lines ──
+        // Many soft parcels are advected along the streamline family. Each rides a
+        // streamline at a time-advancing phase, with a transverse spread that GROWS
+        // downstream (the stream broadens as a real gas does) and per-parcel speed
+        // jitter — overlapping translucent blobs build up a smooth, flowing gas
+        // density that fills the whole stream envelope and wraps onto the accretor.
+        // Cached soft, donor-coloured "gas puff" sprite (radial falloff) — drawn
+        // many times to build up a smooth fluid density cheaply. Rebuilt only when
+        // the donor temperature changes.
+        const tkey = Math.round(Tdn / 200);
+        if (!sim._gasSprite || sim._gasSpriteKey !== tkey) {
+          const c = (typeof document !== 'undefined') ? document.createElement('canvas') : null;
+          if (c) {
+            c.width = c.height = 32;
+            const gc = c.getContext('2d');
+            const gg = gc.createRadialGradient(16, 16, 0, 16, 16, 16);
+            gg.addColorStop(0, phys.tempToColor(Tdn, 1));
+            gg.addColorStop(0.5, phys.tempToColor(Tdn, 0.5));
+            gg.addColorStop(1, phys.tempToColor(Tdn, 0));
+            gc.fillStyle = gg; gc.fillRect(0, 0, 32, 32);
+            sim._gasSprite = c; sim._gasSpriteKey = tkey;
+          }
+        }
+        const sprite = sim._gasSprite;
+        const NP = 150;
+        const t = sim.t || 0;
+        for (let i = 0; i < NP; i++) {
+          const path = paths[i % paths.length];
+          const n = path.length; if (n < 3) continue;
+          const r1 = rand(i + 1), r2 = rand(i + 7.3), r3 = rand(i + 19.7);
+          const speed = 0.32 + 0.30 * r1;
+          const u = ((t * speed) + r2) % 1;                 // progress along this streamline
+          const idx = Math.min(n - 2, Math.max(0, Math.floor(u * (n - 1))));
+          const p0 = path[idx], p1 = path[idx + 1];
+          const fr = u * (n - 1) - idx;
+          let px = p0[0] + (p1[0] - p0[0]) * fr;            // interpolated point (donor frame)
+          let py = p0[1] + (p1[1] - p0[1]) * fr;
+          // transverse spread (diffusion), perpendicular to the local flow, ∝ √progress
+          const tx = p1[0] - p0[0], ty = p1[1] - p0[1];
+          const tl = Math.hypot(tx, ty) || 1;
+          const spread = (0.012 + 0.085 * Math.sqrt(u)) * (r3 - 0.5) * 2;
+          px += (-ty / tl) * spread;
+          py += (tx / tl) * spread;
+          const [sx, sy] = toScreen(px, py);
+          const fade = Math.sin(Math.PI * Math.min(1, u * 1.05));   // fade in at L1, out at impact
+          const rad = (2.0 + 6.0 * u);                      // parcels expand downstream
+          const al = 0.05 + 0.11 * fade;                    // low alpha; overlap → smooth gas
+          if (sprite) {
+            ctx.globalAlpha = al;
+            ctx.drawImage(sprite, sx - rad, sy - rad, rad * 2, rad * 2);
+          } else {
+            ctx.fillStyle = phys.tempToColor(Tdn, al);
+            ctx.beginPath(); ctx.arc(sx, sy, rad * 0.6, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+        // Gentle, softly pulsing hot spot where the gas piles onto the accretor.
+        const pulse = 0.20 + 0.09 * Math.sin(t * 4);
+        const hg = ctx.createRadialGradient(ac0[0], ac0[1], 0, ac0[0], ac0[1], 18);
+        hg.addColorStop(0, phys.tempToColor(Tdn, pulse));
         hg.addColorStop(1, 'oklch(0.1 0 0 / 0)');
         ctx.fillStyle = hg;
-        ctx.beginPath(); ctx.arc(ac[0], ac[1], 14, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ac0[0], ac0[1], 18, 0, Math.PI * 2); ctx.fill();
       }
       // Nova flash — a brief expanding shell on the accreting white dwarf.
       if (bin.novaFlash > 0 && mt && mt.accretor) {
