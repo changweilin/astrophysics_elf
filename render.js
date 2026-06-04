@@ -288,69 +288,128 @@
         const toScreen = (px, py) => [dn0[0] + px * axx + py * pxx, dn0[1] + px * axy + py * pxy];
         const rand = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
-        // ── Gas as a diffusing fluid, not lines ──
-        // Many soft parcels are advected along the streamline family. Each rides a
-        // streamline at a time-advancing phase, with a transverse spread that GROWS
-        // downstream (the stream broadens as a real gas does) and per-parcel speed
-        // jitter — overlapping translucent blobs build up a smooth, flowing gas
-        // density that fills the whole stream envelope and wraps onto the accretor.
-        // Cached soft, donor-coloured "gas puff" sprite (radial falloff) — drawn
-        // many times to build up a smooth fluid density cheaply. Rebuilt only when
-        // the donor temperature changes.
-        const tkey = Math.round(Tdn / 200);
-        if (!sim._gasSprite || sim._gasSpriteKey !== tkey) {
-          const c = (typeof document !== 'undefined') ? document.createElement('canvas') : null;
-          if (c) {
-            c.width = c.height = 32;
-            const gc = c.getContext('2d');
-            const gg = gc.createRadialGradient(16, 16, 0, 16, 16, 16);
-            gg.addColorStop(0, phys.tempToColor(Tdn, 1));
-            gg.addColorStop(0.5, phys.tempToColor(Tdn, 0.5));
-            gg.addColorStop(1, phys.tempToColor(Tdn, 0));
-            gc.fillStyle = gg; gc.fillRect(0, 0, 32, 32);
-            sim._gasSprite = c; sim._gasSpriteKey = tkey;
+        // ── Gas as a diffusing fluid (physical density + heating) ──
+        // Soft parcels are advected along the streamline family, but the DENSITY is
+        // highest at L1 and along the central trajectory (the gas is squeezed
+        // through the L1 nozzle and stays collimated), thinning downstream as it
+        // accelerates (mass-flux continuity). COLOUR follows blackbody temperature
+        // that climbs from the donor photosphere at L1 to a shock-heated peak at the
+        // accretor — deep potential wells (WD/NS/BH) glow blue-white at the impact.
+        const accT = mt.accretor === 1 ? (sim.params.T_eff || 6000) : (bin.T_eff2 || 6000);
+        const Tpeak = (accType === 'bh' || accType === 'ns') ? 40000
+          : accType === 'wd' ? 30000
+          : Math.max(accT || 6000, Tdn * 1.6, 9000);          // shock hot-spot temperature
+        // Cache a small ramp of soft sprites from the donor temp (L1) to Tpeak
+        // (impact); a parcel picks the sprite matching its heating along the stream.
+        const NSP = 5, rampKey = `${Math.round(Tdn / 300)}|${Math.round(Tpeak / 1000)}`;
+        if (sim._gasRampKey !== rampKey || !sim._gasRamp) {
+          sim._gasRamp = [];
+          for (let j = 0; j < NSP; j++) {
+            const Tj = Tdn + (Tpeak - Tdn) * (j / (NSP - 1));
+            const c = (typeof document !== 'undefined') ? document.createElement('canvas') : null;
+            if (c) {
+              c.width = c.height = 32;
+              const gc = c.getContext('2d');
+              const gg = gc.createRadialGradient(16, 16, 0, 16, 16, 16);
+              gg.addColorStop(0, phys.tempToColor(Tj, 1));
+              gg.addColorStop(0.5, phys.tempToColor(Tj, 0.5));
+              gg.addColorStop(1, phys.tempToColor(Tj, 0));
+              gc.fillStyle = gg; gc.fillRect(0, 0, 32, 32);
+              sim._gasRamp.push(c);
+            }
           }
+          sim._gasRampKey = rampKey;
         }
-        const sprite = sim._gasSprite;
-        const NP = 150;
+        const ramp = sim._gasRamp;
         const t = sim.t || 0;
+        const axisAngle = Math.atan2(axy, axx);            // donor → companion (toward L1)
+        const dnRgeo = (mt.donor === 1 ? sim.params.R_star : bin.R_star2) || 3;
+        const dnRpx = dnRgeo * s;
+        const L1s = toScreen(stream.xL1 != null ? stream.xL1 : 0.5, 0);
+        const coolSpr = ramp && ramp[0];                   // donor-temperature sprite
+
+        // (A) Donor → L1 feeder: the donor's envelope drains toward L1 (the low point
+        // of its Roche potential), so gas converges from its companion-facing surface
+        // onto the L1 throat — density builds as the parcels reach L1.
+        const NF = 56;
+        for (let i = 0; i < NF; i++) {
+          const r1 = rand(i + 101.1), r2 = rand(i + 203.7), r3 = rand(i + 307.3);
+          const phi = axisAngle + (r1 - 0.5) * 1.7;        // L1-facing hemisphere
+          const startx = dn0[0] + Math.cos(phi) * dnRpx, starty = dn0[1] + Math.sin(phi) * dnRpx;
+          const uf = ((t * (0.45 + 0.3 * r2)) + r3) % 1;   // 0 at surface → 1 at L1
+          const fx = startx + (L1s[0] - startx) * uf, fy = starty + (L1s[1] - starty) * uf;
+          const rad = 2.4 + 1.4 * uf;
+          const al = 0.06 + 0.16 * uf;                     // densest as it reaches L1
+          if (coolSpr) { ctx.globalAlpha = al; ctx.drawImage(coolSpr, fx - rad, fy - rad, rad * 2, rad * 2); }
+        }
+        ctx.globalAlpha = 1;
+
+        const center = (paths.length - 1) / 2;
+        const NP = 240;
         for (let i = 0; i < NP; i++) {
-          const path = paths[i % paths.length];
-          const n = path.length; if (n < 3) continue;
+          // Collimate: bias parcels toward the CENTRAL streamline (≈sum-of-3 → bell),
+          // so the density is highest along the L1 axis and only sparsely on the
+          // outer trajectories (which still mark the full range the gas can reach).
+          const gpick = (rand(i + 0.1) + rand(i + 2.3) + rand(i + 5.7)) / 3 - 0.5;
+          const si = Math.max(0, Math.min(paths.length - 1, Math.round(center + gpick * (paths.length - 1) * 1.6)));
+          const path = paths[si]; const n = path.length; if (n < 3) continue;
           const r1 = rand(i + 1), r2 = rand(i + 7.3), r3 = rand(i + 19.7);
           const speed = 0.32 + 0.30 * r1;
           const u = ((t * speed) + r2) % 1;                 // progress along this streamline
           const idx = Math.min(n - 2, Math.max(0, Math.floor(u * (n - 1))));
-          const p0 = path[idx], p1 = path[idx + 1];
-          const fr = u * (n - 1) - idx;
-          let px = p0[0] + (p1[0] - p0[0]) * fr;            // interpolated point (donor frame)
-          let py = p0[1] + (p1[1] - p0[1]) * fr;
-          // transverse spread (diffusion), perpendicular to the local flow, ∝ √progress
-          const tx = p1[0] - p0[0], ty = p1[1] - p0[1];
-          const tl = Math.hypot(tx, ty) || 1;
-          const spread = (0.012 + 0.085 * Math.sqrt(u)) * (r3 - 0.5) * 2;
-          px += (-ty / tl) * spread;
-          py += (tx / tl) * spread;
+          const p0 = path[idx], p1 = path[idx + 1], fr = u * (n - 1) - idx;
+          let px = p0[0] + (p1[0] - p0[0]) * fr, py = p0[1] + (p1[1] - p0[1]) * fr;
+          const tx = p1[0] - p0[0], ty = p1[1] - p0[1], tl = Math.hypot(tx, ty) || 1;
+          const spread = (0.010 + 0.06 * Math.sqrt(u)) * (r3 - 0.5) * 2;   // collimated, mild downstream
+          px += (-ty / tl) * spread; py += (tx / tl) * spread;
           const [sx, sy] = toScreen(px, py);
-          const fade = Math.sin(Math.PI * Math.min(1, u * 1.05));   // fade in at L1, out at impact
-          const rad = (2.0 + 6.0 * u);                      // parcels expand downstream
-          const al = 0.05 + 0.11 * fade;                    // low alpha; overlap → smooth gas
-          if (sprite) {
-            ctx.globalAlpha = al;
-            ctx.drawImage(sprite, sx - rad, sy - rad, rad * 2, rad * 2);
-          } else {
-            ctx.fillStyle = phys.tempToColor(Tdn, al);
-            ctx.beginPath(); ctx.arc(sx, sy, rad * 0.6, 0, Math.PI * 2); ctx.fill();
-          }
+          // Density highest at L1 (u→0) and on the axis; thins downstream / off-axis.
+          const offaxis = center > 0 ? Math.abs(si - center) / center : 0;
+          const dens = (1 - 0.5 * u) * (1 - 0.4 * offaxis);
+          const rad = 2.6 + 5.0 * u;                        // visible, broadens downstream
+          const al = 0.09 + 0.24 * Math.max(0, dens);
+          // Colour by heating along the stream (donor temp → Tpeak), steeper near impact.
+          const sj = (ramp && ramp.length) ? Math.min(ramp.length - 1, Math.floor(Math.pow(u, 1.6) * ramp.length)) : 0;
+          const spr = ramp && ramp[sj];
+          if (spr) { ctx.globalAlpha = al; ctx.drawImage(spr, sx - rad, sy - rad, rad * 2, rad * 2); }
+          else { ctx.fillStyle = phys.tempToColor(Tpeak, al); ctx.beginPath(); ctx.arc(sx, sy, rad * 0.6, 0, Math.PI * 2); ctx.fill(); }
         }
         ctx.globalAlpha = 1;
-        // Gentle, softly pulsing hot spot where the gas piles onto the accretor.
-        const pulse = 0.20 + 0.09 * Math.sin(t * 4);
-        const hg = ctx.createRadialGradient(ac0[0], ac0[1], 0, ac0[0], ac0[1], 18);
-        hg.addColorStop(0, phys.tempToColor(Tdn, pulse));
+
+        // (C) Gravitationally-captured gas around a COMPACT accretor: not all the
+        // stream falls straight in — a fraction is bound and circularises into an
+        // accretion disc orbiting the accretor (Keplerian: inner gas faster, hotter
+        // and denser). Stellar accretors instead just take the impact hot spot.
+        const accCompact = (accType === 'bh' || accType === 'ns' || accType === 'wd');
+        if (accCompact && ramp && ramp.length) {
+          const sepScreen = Math.hypot(axx, axy) || 1;
+          const accRpx = (accRgeo || 1) * s;
+          const rIn = Math.max(4, accRpx * 1.1);
+          const rOut = Math.max(rIn * 2.6, Math.min(0.22 * sepScreen, 72));
+          const ND = 110;
+          for (let i = 0; i < ND; i++) {
+            const r1 = rand(i + 501.1), r2 = rand(i + 613.3), r3 = rand(i + 727.7);
+            const rr = rIn + (rOut - rIn) * Math.sqrt(r1);        // area-weighted radius
+            const om = orbitSign * 1.3 * Math.pow(rIn / rr, 1.5); // Keplerian: inner faster
+            const th = r2 * Math.PI * 2 + om * t + (r3 - 0.5) * 0.25;
+            const sx = ac0[0] + Math.cos(th) * rr, sy = ac0[1] + Math.sin(th) * rr;
+            const rnorm = (rr - rIn) / Math.max(1e-3, rOut - rIn);  // 0 inner, 1 outer
+            const sj = Math.min(ramp.length - 1, Math.floor((1 - rnorm) * ramp.length));  // inner hotter
+            const spr = ramp[sj];
+            const rad = 2.2 + 1.6 * (1 - rnorm);
+            const al = 0.07 + 0.18 * (1 - rnorm);            // denser/brighter inner (accumulated)
+            if (spr) { ctx.globalAlpha = al; ctx.drawImage(spr, sx - rad, sy - rad, rad * 2, rad * 2); }
+          }
+          ctx.globalAlpha = 1;
+        }
+
+        // Shock-heated impact hot spot at the accretor — colour at the peak temperature.
+        const pulse = 0.30 + 0.12 * Math.sin(t * 4);
+        const hg = ctx.createRadialGradient(ac0[0], ac0[1], 0, ac0[0], ac0[1], 20);
+        hg.addColorStop(0, phys.tempToColor(Tpeak, pulse));
         hg.addColorStop(1, 'oklch(0.1 0 0 / 0)');
         ctx.fillStyle = hg;
-        ctx.beginPath(); ctx.arc(ac0[0], ac0[1], 18, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ac0[0], ac0[1], 20, 0, Math.PI * 2); ctx.fill();
       }
       // Nova flash — a brief expanding shell on the accreting white dwarf.
       if (bin.novaFlash > 0 && mt && mt.accretor) {
