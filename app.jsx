@@ -507,7 +507,7 @@ function App() {
         </div>
         <div className="overlay-tr">
           <div className="chip">{tr('CLASS', '類別')} · <b>{cls.name}</b></div>
-          <div className="chip">M=<b>{SIM.params.M.toFixed(2)}</b> · Q=<b>{SIM.params.Q.toFixed(2)}</b> · a=<b>{SIM.params.a.toFixed(2)}</b>
+          <div className="chip">M=<b>{(SIM.params.Msun || 0) < 10 ? (SIM.params.Msun || 0).toFixed(2) : Math.round(SIM.params.Msun || 0)}</b>M⊙ · Q=<b>{SIM.params.Q.toFixed(2)}</b> · a=<b>{SIM.params.a.toFixed(2)}</b>
             {SIM.params.type && SIM.params.type !== 'bh' && <> · R★=<b>{(SIM.params.R_star || 3).toFixed(2)}</b></>}
           </div>
         </div>

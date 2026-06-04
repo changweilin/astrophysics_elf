@@ -14,12 +14,12 @@
   // stress, accretion particles, GW readouts) is left out and recomputed.
   const CONFIG_KEY = 'kn-lab-config-v1';
   const isNum = (v) => typeof v === 'number' && isFinite(v);
-  const TYPES = { bh: 1, ns: 1, wd: 1, ms: 1 };
+  const TYPES = { bh: 1, ns: 1, wd: 1, ms: 1, giant: 1 };
 
   function configSnapshot(sim) {
     const p = sim.params || {}, d = sim.disc, b = sim.binary, f = sim.flags || {}, v = sim.view || {};
     const binSnap = b ? {
-      type: b.type, M2: b.M2, Q2: b.Q2, a2: b.a2,
+      type: b.type, M2: b.M2, M2sun: b.M2sun, Q2: b.Q2, a2: b.a2,
       R_star2: b.R_star2, T_eff2: b.T_eff2, B2: b.B2, d: b.d,
       _stellarTouched: !!b._stellarTouched,
       enabled: !!b.enabled,
@@ -34,7 +34,7 @@
     }
     return {
       params: {
-        M: p.M, Q: p.Q, a: p.a, type: p.type,
+        Msun: p.Msun, Q: p.Q, a: p.a, type: p.type,
         R_star: p.R_star, T_eff: p.T_eff, B: p.B,
         _stellarTouched: !!p._stellarTouched,
       },
@@ -85,7 +85,15 @@
     if (!cfg) return false;
     const p = cfg.params;
     if (p && sim.params) {
-      if (isNum(p.M)) sim.params.M = p.M;
+      // Geometric mass is always 1 (geometry in units of M). The physical solar
+      // mass is the persisted label; old configs (pre-Msun) fall back to a
+      // sensible default for the restored type.
+      sim.params.M = 1;
+      if (isNum(p.Msun)) sim.params.Msun = p.Msun;
+      else if (TYPES[p.type]) {
+        const cat = window.KNphysics.uiCategory(p.type);
+        sim.params.Msun = window.KNphysics.MASS_RANGES[cat].def;
+      }
       if (isNum(p.Q)) sim.params.Q = p.Q;
       if (isNum(p.a)) sim.params.a = p.a;
       if (TYPES[p.type]) sim.params.type = p.type;
@@ -107,7 +115,10 @@
     if (cfg.binary && sim.binary) {
       const b = cfg.binary, B = sim.binary;
       if (TYPES[b.type]) B.type = b.type;
-      if (isNum(b.M2)) B.M2 = b.M2;
+      if (isNum(b.M2sun)) B.M2sun = b.M2sun;
+      else if (isNum(b.M2)) B.M2sun = b.M2 * (sim.params.Msun || 1);  // legacy: M2 was geometric
+      // Geometric companion mass = solar-mass ratio to the primary (relative size + dynamics).
+      B.M2 = Math.max(0.01, (B.M2sun || 1) / (sim.params.Msun || 1));
       if (isNum(b.Q2)) B.Q2 = b.Q2;
       if (isNum(b.a2)) B.a2 = b.a2;
       if (isNum(b.R_star2)) B.R_star2 = b.R_star2;

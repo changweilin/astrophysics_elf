@@ -121,60 +121,115 @@ function MBodyEditor({ sim, force, role }) {
   const bin = sim.binary;
   const isCentral = role === 'central';
 
+  // Mass slider shows a physical solar mass (Msun); geometry uses the frozen
+  // geometric mass (1 / mass ratio). Spin/charge are the dimensionless a/M, Q/M.
+  const type = isCentral ? (sim.params.type || 'bh') : ((bin && bin.type) || 'bh');
+  const category = phys.uiCategory(type);
+  const range = phys.MASS_RANGES[category];
   const A = isCentral ? {
-    type: sim.params.type || 'bh',
-    M: sim.params.M, Q: sim.params.Q, a: sim.params.a,
+    type, category,
+    Mgeo: sim.params.M,
+    Msun: sim.params.Msun != null ? sim.params.Msun : range.def,
+    Q: sim.params.Q, a: sim.params.a,
     R_star: sim.params.R_star || 3.0, T_eff: sim.params.T_eff || 1e6,
-    massUnit: 'M⊙×10⁶', mMin: 0.1, mMax: 3.5,
+    massUnit: 'M⊙', mMin: range.min, mMax: range.max,
   } : {
-    type: (bin && bin.type) || 'bh',
-    M: (bin && bin.M2) || 0.8, Q: (bin && bin.Q2) || 0, a: (bin && bin.a2) || 0,
+    type, category,
+    Mgeo: (bin && bin.M2) || 0.8,
+    Msun: (bin && bin.M2sun) || 8,
+    Q: (bin && bin.Q2) || 0, a: (bin && bin.a2) || 0,
     R_star: (bin && bin.R_star2) || 3.0, T_eff: (bin && bin.T_eff2) || 1e6,
     B: (bin && bin.B2) || 0,
-    // Same geometric unit as the primary (M and M2 enter the physics identically,
-    // no 10^6 factor); match the label so the scale gap is not misread.
-    massUnit: 'M⊙×10⁶', mMin: 0.01, mMax: 3.5,
+    massUnit: 'M⊙', mMin: range.min, mMax: range.max,
   };
   const isBH = A.type === 'bh';
-  const collapseHint = !isBH && phys.wouldCollapse(A.M, A.Q, A.a, A.R_star);
+  const collapseHint = !isBH && phys.wouldCollapse(A.Mgeo, A.Q, A.a, A.R_star);
   const bhLockReason = isCentral
     ? tr('Central body is a black hole — no stellar surface parameters inside the horizon', '主天體為黑洞 — 視界內無星體表面參數')
     : tr('Companion is a black hole — no stellar surface parameters inside the horizon', '伴星為黑洞 — 視界內無星體表面參數');
 
   function setField(k, v) {
     if (isCentral) {
-      if (k === 'M' || k === 'Q' || k === 'a') sim.params[k] = v;
+      if (k === 'Q' || k === 'a') sim.params[k] = v;
       else if (k === 'R_star') { sim.params.R_star = v; sim.params._stellarTouched = true; }
       else if (k === 'T_eff') { sim.params.T_eff = v; sim.params._stellarTouched = true; }
     } else if (bin) {
-      const m = { M: 'M2', Q: 'Q2', a: 'a2', R_star: 'R_star2', T_eff: 'T_eff2', B: 'B2' };
+      const m = { Q: 'Q2', a: 'a2', R_star: 'R_star2', T_eff: 'T_eff2', B: 'B2' };
       bin[m[k]] = v;
       if (k === 'R_star' || k === 'T_eff') bin._stellarTouched = true;
     }
     force();
   }
 
-  function switchType(newType) {
+  function setMass(v) {
     if (isCentral) {
-      const oldType = sim.params.type || 'bh';
+      sim.params.Msun = v;
+      if (A.category === 'remnant') {
+        const nt = phys.remnantType(v);
+        if (nt !== sim.params.type) {
+          const wasBH = sim.params.type === 'bh';
+          sim.params.type = nt;
+          if (nt !== 'bh') {
+            const d = phys.STELLAR_DEFAULTS[nt];
+            if (d && (!sim.params._stellarTouched || wasBH)) { sim.params.R_star = d.R; sim.params.T_eff = d.T; }
+            if (Math.abs(sim.params.a) > sim.params.M) sim.params.a = Math.sign(sim.params.a || 1) * sim.params.M * 0.9;
+            if (Math.abs(sim.params.Q) > sim.params.M) sim.params.Q = Math.sign(sim.params.Q || 1) * sim.params.M * 0.9;
+          }
+        }
+      }
+      if (bin) bin.M2 = Math.max(0.01, (bin.M2sun || 8) / Math.max(0.01, v));
+    } else if (bin) {
+      bin.M2sun = v;
+      if (phys.uiCategory(bin.type) === 'remnant') {
+        const nt = phys.remnantType(v);
+        if (nt !== bin.type) {
+          const wasBH = bin.type === 'bh';
+          bin.type = nt;
+          if (nt !== 'bh') {
+            const d = phys.STELLAR_DEFAULTS[nt];
+            if (d && (!bin._stellarTouched || wasBH)) { bin.R_star2 = d.R; bin.T_eff2 = d.T; }
+          }
+        }
+      }
+      bin.M2 = Math.max(0.01, v / Math.max(0.01, sim.params.Msun || 1));
+      if (bin.type !== 'bh') {
+        if (Math.abs(bin.a2) > bin.M2) bin.a2 = Math.sign(bin.a2 || 1) * bin.M2 * 0.9;
+        if (Math.abs(bin.Q2) > bin.M2) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * 0.9;
+      }
+    }
+    force();
+  }
+
+  function switchCategory(cat) {
+    if (cat === A.category) return;
+    const r = phys.MASS_RANGES[cat];
+    let Msun = A.Msun;
+    if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
+    const newType = phys.typeForStage(cat, Msun);
+    if (isCentral) {
+      sim.params.Msun = Msun;
       sim.params.type = newType;
       if (newType !== 'bh') {
         const d = phys.STELLAR_DEFAULTS[newType];
-        if (!sim.params._stellarTouched || oldType !== newType) {
-          sim.params.R_star = d.R; sim.params.T_eff = d.T;
-        }
+        if (d) { sim.params.R_star = d.R; sim.params.T_eff = d.T; }
+        sim.params._stellarTouched = false;
+        if (Math.abs(sim.params.a) > sim.params.M) sim.params.a = Math.sign(sim.params.a || 1) * sim.params.M * 0.9;
+        if (Math.abs(sim.params.Q) > sim.params.M) sim.params.Q = Math.sign(sim.params.Q || 1) * sim.params.M * 0.9;
         window.KNSim.logEv(sim, 'good', trp('central → {type}', { type: phys.STELLAR_INFO[newType].name }));
       } else {
         window.KNSim.logEv(sim, 'warn', tr('central → BLACK HOLE', '主天體 → 黑洞'));
       }
+      if (bin) bin.M2 = Math.max(0.01, (bin.M2sun || 8) / Math.max(0.01, Msun));
     } else if (bin) {
-      const oldType = bin.type || 'bh';
+      bin.M2sun = Msun;
       bin.type = newType;
+      bin.M2 = Math.max(0.01, Msun / Math.max(0.01, sim.params.Msun || 1));
       if (newType !== 'bh') {
         const d = phys.STELLAR_DEFAULTS[newType];
-        if (!bin._stellarTouched || oldType !== newType) {
-          bin.R_star2 = d.R; bin.T_eff2 = d.T;
-        }
+        if (d) { bin.R_star2 = d.R; bin.T_eff2 = d.T; }
+        bin._stellarTouched = false;
+        if (Math.abs(bin.a2) > bin.M2) bin.a2 = Math.sign(bin.a2 || 1) * bin.M2 * 0.9;
+        if (Math.abs(bin.Q2) > bin.M2) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * 0.9;
         window.KNSim.logEv(sim, 'good', trp('companion → {type}', { type: phys.STELLAR_INFO[newType].name }));
       } else {
         window.KNSim.logEv(sim, 'warn', tr('companion → BLACK HOLE', '伴星 → 黑洞'));
@@ -187,23 +242,35 @@ function MBodyEditor({ sim, force, role }) {
     <>
       <div className="type-pick">
         {[
-          { k: 'bh', label: 'BH',  glyph: '●' },
-          { k: 'ns', label: 'NS',  glyph: '◉' },
-          { k: 'wd', label: 'WD',  glyph: '◐' },
-          { k: 'ms', label: '★',   glyph: '✱' },
+          { k: 'star',    label: tr('MS', '主序'),    glyph: '✱' },
+          { k: 'giant',   label: tr('Giant', '巨星'), glyph: '✸' },
+          { k: 'remnant', label: tr('Rem.', '殘骸'),  glyph: '●' },
         ].map((t) => (
           <button key={t.k}
-            className={`type-tab ${A.type === t.k ? 'on' : ''}`}
-            onClick={() => switchType(t.k)}>
+            className={`type-tab ${A.category === t.k ? 'on' : ''}`}
+            onClick={() => switchCategory(t.k)}>
             <span className="g">{t.glyph}</span>
             <span className="l">{t.label}</span>
           </button>
         ))}
       </div>
-      <MParam sym={isCentral ? 'M' : 'M₂'} name={tr('Mass', '質量')} val={A.M} unit={A.massUnit}
+      {A.category === 'remnant' && (
+        <div className="remnant-stage" role="status">
+          {[
+            { k: 'wd', g: '◐', label: tr('WD', '白矮') },
+            { k: 'ns', g: '◉', label: tr('NS', '中子') },
+            { k: 'bh', g: '●', label: tr('BH', '黑洞') },
+          ].map((s) => (
+            <span key={s.k} className={`rs-chip ${A.type === s.k ? 'on' : ''}`}>
+              <span className="g">{s.g}</span>{s.label}
+            </span>
+          ))}
+        </div>
+      )}
+      <MParam sym={isCentral ? 'M' : 'M₂'} name={tr('Mass', '質量')} val={A.Msun} unit={A.massUnit}
               min={A.mMin} max={A.mMax} step={0.01} scale="log"
-              fmt={(v) => v < 1 ? v.toFixed(3) : v.toFixed(2)} onChange={(v) => setField('M', v)}
-              scaleLabels={[A.mMin.toString(), 'log', A.mMax.toString()]} />
+              fmt={(v) => v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v).toString()} onChange={setMass}
+              scaleLabels={[String(A.mMin), 'log', String(A.mMax)]} />
       <MParam sym={isCentral ? 'Q' : 'Q₂'} name={tr('Charge', '電荷')} val={A.Q} unit="√(M)"
               min={-1.5} max={1.5} step={0.01}
               color="magenta" fmt={(v) => (v >= 0 ? '+' : '') + v.toFixed(2)}
@@ -310,7 +377,7 @@ function TabBlackHole({ sim, force }) {
           <button className={`body-tab companion ${activeBody === 'companion' ? 'on' : ''} ${companionArmed ? 'armed' : ''}`}
             onClick={activateCompanionTab}>
             <span className="g">{bin && bin.enabled ? '◐' : '+'}</span>
-            <span className="l">{bin && bin.enabled ? `M₂=${bin.M2.toFixed(2)}` : (companionPlacing ? tr('Placing…', '放置中…') : tr('Companion', '伴星'))}</span>
+            <span className="l">{bin && bin.enabled ? `M₂=${(bin.M2sun || 0).toFixed(1)}M⊙` : (companionPlacing ? tr('Placing…', '放置中…') : tr('Companion', '伴星'))}</span>
             {bin && bin.enabled && activeBody === 'companion' && (
               <span className="companion-x" onClick={removeCompanion} title={tr('remove', '移除')}>×</span>
             )}
@@ -404,15 +471,19 @@ function TabBlackHole({ sim, force }) {
           {M_PRESETS.map((pr, i) => (
             <button key={i}
               onClick={() => {
-                sim.params.M = pr.M; sim.params.Q = pr.Q; sim.params.a = pr.a;
+                sim.params.M = 1;                  // geometry in units of M
+                sim.params.Msun = pr.Msun;         // physical mass (solar) — drives class
+                sim.params.Q = pr.Q; sim.params.a = pr.a;
                 sim.params.type = pr.type || 'bh';
+                sim.params._stellarTouched = (pr.R_star != null || pr.T_eff != null);
                 if (pr.R_star != null) sim.params.R_star = pr.R_star;
                 if (pr.T_eff != null) sim.params.T_eff = pr.T_eff;
                 if (pr.B != null) sim.params.B = pr.B;
                 if (pr.disc != null) sim.disc.enabled = pr.disc;
                 if (pr.binary && sim.binary) {
                   sim.binary.enabled = pr.binary.enabled;
-                  sim.binary.M2 = pr.binary.M2;
+                  sim.binary.M2sun = pr.binary.M2sun;
+                  sim.binary.M2 = Math.max(0.01, pr.binary.M2sun / Math.max(0.01, pr.Msun));
                   sim.binary.d  = pr.binary.d;
                   sim.binary.d0 = pr.binary.d;
                   sim.binary.theta = 0;
@@ -482,7 +553,7 @@ function TabBinary({ sim, force }) {
             bin.d0 = bin.d;
             bin.trail1 = []; bin.trail2 = [];
             window.KNSim.logEv(sim, 'amber', trp(
-              'binary enabled · M₂={m} M  d={d} M', { m: bin.M2.toFixed(2), d: bin.d.toFixed(1) }));
+              'binary enabled · M₂={m} M⊙  d={d} M', { m: (bin.M2sun || 0).toFixed(1), d: bin.d.toFixed(1) }));
           } else {
             bin.enabled = false;
             window.KNSim.logEv(sim, 'amber', tr('binary disabled', '雙星已停用'));
@@ -493,11 +564,16 @@ function TabBinary({ sim, force }) {
         {bin.enabled ? tr('Binary · INSPIRAL ACTIVE', '雙星 · 旋近進行中') : tr('Activate binary companion', '啟用雙星伴星')}
       </button>
 
-      <MParam sym="M₂" name={tr('Companion mass', '伴星質量')} val={bin.M2} unit="M⊙×10⁶"
-              min={0.01} max={3.5} step={0.01} scale="log"
-              fmt={(v) => v < 1 ? v.toFixed(3) : v.toFixed(2)}
-              onChange={(v) => { bin.M2 = v; force(); }}
-              scaleLabels={['0.01', 'log', '3.5']} />
+      <MParam sym="M₂" name={tr('Companion mass', '伴星質量')} val={bin.M2sun || 8} unit="M⊙"
+              min={0.1} max={150} step={0.01} scale="log"
+              fmt={(v) => v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v).toString()}
+              onChange={(v) => {
+                bin.M2sun = v;
+                bin.M2 = Math.max(0.01, v / Math.max(0.01, sim.params.Msun || 1));
+                if (window.KNphysics.uiCategory(bin.type) === 'remnant') bin.type = window.KNphysics.remnantType(v);
+                force();
+              }}
+              scaleLabels={['0.1', 'log', '150']} />
 
       <MParam sym="d₀" name={tr('Separation', '間距')} val={bin.d} unit="M"
               min={3} max={30} step={0.5}
@@ -514,11 +590,11 @@ function TabBinary({ sim, force }) {
       <div className="m-derived" style={{marginTop: '8px'}}>
         <div className="cell">
           <span className="k">M₁ + M₂</span>
-          <span className="v">{(sim.params.M + bin.M2).toFixed(2)}<small>M</small></span>
+          <span className="v">{((sim.params.Msun || 0) + (bin.M2sun || 0)).toFixed(1)}<small>M⊙</small></span>
         </div>
         <div className="cell">
           <span className="k">{tr('Chirp Mc', '啁啾質量 Mc')}</span>
-          <span className="v">{bin.enabled ? (pet.Mc || 0).toFixed(3) : '—'}<small>M</small></span>
+          <span className="v">{bin.enabled ? ((pet.Mc || 0) * (sim.params.Msun || 1)).toFixed(2) : '—'}<small>M⊙</small></span>
         </div>
         <div className="cell">
           <span className="k">f_GW</span>
@@ -564,27 +640,28 @@ function TabBinary({ sim, force }) {
 
       {bin.merged && !bin.enabled && (
         <div className="m-diag">
-          <div className="line good">{tr('Merger complete', '合併完成')} · M_f = {sim.params.M.toFixed(2)} M · a_f/M = {(sim.params.a / sim.params.M).toFixed(2)} · E_GW = {(bin.eMergerGW || 0).toFixed(3)} Mc²</div>
+          <div className="line good">{tr('Merger complete', '合併完成')} · M_f = {(sim.params.Msun || 0).toFixed(1)} M⊙ · a_f/M = {(sim.params.a / sim.params.M).toFixed(2)} · E_GW = {(bin.eMergerGW || 0).toFixed(3)} Mc²</div>
         </div>
       )}
     </>
   );
 }
 
+// Msun = physical (solar) mass; a/Q are dimensionless a/M, Q/M (geometric M = 1).
 const M_PRESETS = [
-  { name: 'Schwarzschild',         name_zh: 'Schwarzschild',     M: 1.5, Q: 0,    a: 0,    B: 0,    disc: false, glyph: '○', tag: 'baseline',      tag_zh: '基準' },
-  { name: 'Kerr (near-ext)',       name_zh: 'Kerr（近極端）',     M: 1.5, Q: 0,    a: 1.35, B: 0.2,  glyph: '◐', tag: 'a/M≈0.9',       tag_zh: 'a/M≈0.9' },
-  { name: 'Reissner-Nordström',    name_zh: 'Reissner-Nordström', M: 1.5, Q: 1.2,  a: 0,    B: 0.1,  glyph: '◉', tag: 'charged',        tag_zh: '帶電' },
-  { name: 'Kerr-Newman',           name_zh: 'Kerr-Newman',        M: 1.5, Q: 0.7,  a: 0.9,  B: 0.4,  glyph: '◑', tag: 'full',           tag_zh: '完整' },
-  { name: 'AGN · disc + jet',      name_zh: 'AGN · 盤 + 噴流',    M: 2.5, Q: 0,    a: 2.0,  B: 0.75, disc: true,  glyph: '★', tag: 'MHD',           tag_zh: 'MHD' },
-  { name: 'Magnetar regime',       name_zh: '磁星態',             M: 1.5, Q: 0,    a: 1.2,  B: 0.95, disc: true,  glyph: '⚡', tag: 'extreme B',     tag_zh: '極端 B' },
-  { name: 'Naked singularity',     name_zh: '裸奇異點',           M: 1.0, Q: 1.0,  a: 0.8,  B: 0,    glyph: '✕', tag: 'unshielded',     tag_zh: '無遮蔽' },
-  { name: 'GW150914-like',         name_zh: '類 GW150914',        M: 1.8, Q: 0,    a: 0.3,  B: 0,    disc: false,
-    binary: { enabled: true, M2: 1.5, d: 14, inspiralRate: 1 },
+  { name: 'Schwarzschild',         name_zh: 'Schwarzschild',     Msun: 10,  Q: 0,    a: 0,    B: 0,    disc: false, glyph: '○', tag: 'baseline',      tag_zh: '基準' },
+  { name: 'Kerr (near-ext)',       name_zh: 'Kerr（近極端）',     Msun: 10,  Q: 0,    a: 0.9,  B: 0.2,  glyph: '◐', tag: 'a/M≈0.9',       tag_zh: 'a/M≈0.9' },
+  { name: 'Reissner-Nordström',    name_zh: 'Reissner-Nordström', Msun: 10,  Q: 0.8,  a: 0,    B: 0.1,  glyph: '◉', tag: 'charged',        tag_zh: '帶電' },
+  { name: 'Kerr-Newman',           name_zh: 'Kerr-Newman',        Msun: 10,  Q: 0.47, a: 0.6,  B: 0.4,  glyph: '◑', tag: 'full',           tag_zh: '完整' },
+  { name: 'AGN · disc + jet',      name_zh: 'AGN · 盤 + 噴流',    Msun: 150, Q: 0,    a: 0.8,  B: 0.75, disc: true,  glyph: '★', tag: 'MHD',           tag_zh: 'MHD' },
+  { name: 'Magnetar regime',       name_zh: '磁星態',             Msun: 1.5, Q: 0,    a: 0.8,  B: 0.95, disc: true,  type: 'ns', R_star: 2.8, T_eff: 1.2e6, glyph: '⚡', tag: 'extreme B',     tag_zh: '極端 B' },
+  { name: 'Naked singularity',     name_zh: '裸奇異點',           Msun: 5,   Q: 1.0,  a: 0.8,  B: 0,    glyph: '✕', tag: 'unshielded',     tag_zh: '無遮蔽' },
+  { name: 'GW150914-like',         name_zh: '類 GW150914',        Msun: 36,  Q: 0,    a: 0.3,  B: 0,    disc: false,
+    binary: { enabled: true, M2sun: 29, d: 14, inspiralRate: 1 },
     glyph: '◎', tag: 'BBH inspiral',   tag_zh: '雙黑洞旋近' },
-  { name: 'Pulsar (NS)',           name_zh: '波霎（中子星）',     M: 1.4, Q: 0,    a: 0.5,  B: 0.4,  type: 'ns', R_star: 3.2, T_eff: 8e5, glyph: '◉', tag: 'neutron',  tag_zh: '中子星' },
-  { name: 'White dwarf',           name_zh: '白矮星',             M: 1.0, Q: 0,    a: 0.1,  B: 0.05, type: 'wd', R_star: 7.0, T_eff: 2.5e4, glyph: '○', tag: 'compact',  tag_zh: '緻密' },
-  { name: 'Sun-like star',         name_zh: '類太陽恆星',         M: 1.0, Q: 0,    a: 0.05, B: 0.02, type: 'ms', R_star: 20,  T_eff: 5800,  glyph: '✱', tag: 'main-seq', tag_zh: '主序' },
+  { name: 'Pulsar (NS)',           name_zh: '波霎（中子星）',     Msun: 1.4, Q: 0,    a: 0.36, B: 0.4,  type: 'ns', R_star: 3.2, T_eff: 8e5, glyph: '◉', tag: 'neutron',  tag_zh: '中子星' },
+  { name: 'White dwarf',           name_zh: '白矮星',             Msun: 1.0, Q: 0,    a: 0.1,  B: 0.05, type: 'wd', R_star: 7.0, T_eff: 2.5e4, glyph: '○', tag: 'compact',  tag_zh: '緻密' },
+  { name: 'Sun-like star',         name_zh: '類太陽恆星',         Msun: 1.0, Q: 0,    a: 0.05, B: 0.02, type: 'ms', R_star: 20,  T_eff: 5800,  glyph: '✱', tag: 'main-seq', tag_zh: '主序' },
 ];
 
 // ─── OBJECTS tab ───────────────────────────────────────────

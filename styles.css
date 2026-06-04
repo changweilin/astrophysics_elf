@@ -408,10 +408,33 @@ html, body {
 /* ---------- Central type selector ---------- */
 .type-pick {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   margin-bottom: 16px;
 }
+/* Collapsed-remnant stage: shows which flavour the current mass selects. */
+.remnant-stage {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: -8px 0 14px;
+  font-family: var(--mono);
+}
+.remnant-stage .rs-head {
+  font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--fg-3); margin-right: 2px;
+}
+.remnant-stage .rs-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 2px 6px; font-size: 9px; color: var(--fg-2);
+}
+.remnant-stage .rs-chip .g { font-family: var(--sans); color: var(--fg-3); }
+.remnant-stage .rs-chip small { color: var(--fg-3); font-size: 8px; }
+.remnant-stage .rs-chip.on {
+  border-color: var(--amber);
+  background: color-mix(in oklch, var(--amber) 10%, var(--bg-0));
+  color: var(--amber);
+}
+.remnant-stage .rs-chip.on .g, .remnant-stage .rs-chip.on small { color: var(--amber); }
 .type-pick .type-tab {
   background: var(--bg-0);
   border: 1px solid var(--line);

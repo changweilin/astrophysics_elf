@@ -204,7 +204,7 @@
         if (sim.flags.showLabels) {
           ctx.fillStyle = 'oklch(0.78 0.16 75 / 0.8)';
           ctx.font = '9px JetBrains Mono, monospace';
-          ctx.fillText(`M₁ ${M1.toFixed(2)}`, bx1 + rp1*s + 4, by1 - 4);
+          ctx.fillText(`M₁ ${(sim.params.Msun || 0).toFixed(1)} M⊙`, bx1 + rp1*s + 4, by1 - 4);
         }
         // ergosphere around primary
         if (sim.flags.showErgo) {
@@ -273,7 +273,7 @@
         ctx.font = '9px JetBrains Mono, monospace';
         const typeTag = sType === 'bh' ? '' : ' ' + sType.toUpperCase();
         const visualR = sType === 'bh' ? (isFinite(rp2bh) ? rp2bh : M2) : (bin.R_star2 || 3);
-        ctx.fillText(`M₂ ${M2.toFixed(2)}${typeTag}`, bx2 + Math.max(2, visualR * s) + 4, by2 - 4);
+        ctx.fillText(`M₂ ${(bin.M2sun || 0).toFixed(1)} M⊙${typeTag}`, bx2 + Math.max(2, visualR * s) + 4, by2 - 4);
       }
 
       // Separation label
@@ -286,7 +286,7 @@
       const pet = bin.lastPeters;
       ctx.fillStyle = 'oklch(0.62 0.10 295 / 0.75)';
       ctx.fillText(`f_GW ${(pet.omega / Math.PI).toFixed(3)} c/M`, midX + 4, midY + 7);
-      ctx.fillText(`Mc ${pet.Mc.toFixed(2)} M`, midX + 4, midY + 18);
+      ctx.fillText(`Mc ${(pet.Mc * (sim.params.Msun || 1)).toFixed(2)} M⊙`, midX + 4, midY + 18);
 
     } else if (!isBH) {
       // ── Stellar central (NS / WD / MS) ────────────────
@@ -428,7 +428,7 @@
         ctx.fillText(tr('GW MERGER · RINGDOWN', '重力波合併 · 衰盪'), cx, cy - 14);
         ctx.font = '9px JetBrains Mono, monospace';
         ctx.fillStyle = `oklch(0.75 0.10 295 / ${(t - 0.6) * 2.5 * alpha})`;
-        ctx.fillText(`M_f = ${sim.params.M.toFixed(2)} M`, cx, cy);
+        ctx.fillText(`M_f = ${(sim.params.Msun || 0).toFixed(1)} M⊙`, cx, cy);
         ctx.fillText(`a/M → ${(sim.params.a / sim.params.M).toFixed(2)}`, cx, cy + 12);
         ctx.textAlign = 'left';
       }
@@ -952,7 +952,7 @@
       ctx.fillStyle = 'oklch(0.82 0.12 295 / 0.88)';
       ctx.font = '9px JetBrains Mono, monospace';
       ctx.fillText(`f_GW ${(omegaGW / (2 * Math.PI)).toFixed(3)} c/M  h ${h0.toFixed(2)}`, midX + 10, midY + 28);
-      ctx.fillText(`Mc = ${pet.Mc.toFixed(2)} M  t_c = ${pet.t_merge < 1e5 ? pet.t_merge.toFixed(1) : '∞'} M`, midX + 10, midY + 40);
+      ctx.fillText(`Mc = ${(pet.Mc * (sim.params.Msun || 1)).toFixed(2)} M⊙  t_c = ${pet.t_merge < 1e5 ? pet.t_merge.toFixed(1) : '∞'} M`, midX + 10, midY + 40);
       ctx.restore();
       return; // skip single-body GW below
     }

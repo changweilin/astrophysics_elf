@@ -133,9 +133,13 @@
           get desc() { return tr('Held up by electron degeneracy pressure. Radius ≈ 7 M (compressed for display); no event horizon, but still perturbed by tidal forces.',
                                  '電子簡併壓支撐。半徑 ≈ 7 M（壓縮可視化）；無事件視界但仍可被潮汐力擾動。'); } },
     ms: { get name() { return tr('Main-Sequence Star', '主序星'); },
-          get pill() { return tr('FUSING', '核融合'); },
-          get desc() { return tr('Proton-proton chain or CNO cycle active. Large radius, r_s buried deep inside; spacetime is nearly Newtonian.',
-                                 '質子-質子鏈或 CNO 循環活躍。半徑大，r_s 遠遠埋在內部，時空近於牛頓。'); } },
+          get pill() { return tr('H FUSION', '氫融合'); },
+          get desc() { return tr('Core hydrogen fusion (proton-proton chain or CNO cycle). Large radius, r_s buried deep inside; spacetime is nearly Newtonian. Exhausting its core hydrogen turns it into a giant.',
+                                 '核心氫融合（質子-質子鏈或 CNO 循環）。半徑大，r_s 遠遠埋在內部，時空近於牛頓。核心氫耗盡後將膨脹為巨星。'); } },
+    giant: { get name() { return tr('Giant', '巨星'); },
+          get pill() { return tr('HEAVY FUSION', '重元素融合'); },
+          get desc() { return tr('Post-main-sequence star fusing helium and heavier elements in shells around a contracting core. Hugely swollen, low-density envelope; sheds mass before collapsing into a remnant.',
+                                 '主序後的恆星，在收縮核心外的殼層融合氦與更重的元素。外殼極度膨脹、密度低；在塌縮為殘骸前會拋失質量。'); } },
   };
 
   // Default stellar radii (geometric units, M) and surface temperatures (K).
@@ -143,7 +147,46 @@
     ns: { R: 3.0,  T: 1.0e6 },   // very hot, X-ray
     wd: { R: 7.0,  T: 1.2e4 },   // hot but optical
     ms: { R: 18.0, T: 5800 },    // sun-like
+    giant:{R: 24.0, T: 3400 },   // swollen, cool red giant
   };
+
+  // ── Stellar-evolution classification (solar masses) ──────────────────
+  // The displayed mass M⊙ is a *physical label*, decoupled from the geometric
+  // length scale (which is always 1 — geometry is drawn in units of M). It sorts
+  // a central body into one of three evolutionary stages and, for a collapsed
+  // remnant, picks the remnant flavour purely from its mass.
+  const M_CHANDRASEKHAR = 1.4;   // M⊙ — electron-degeneracy (white dwarf) ceiling
+  const M_TOV           = 3.0;   // M⊙ — neutron-degeneracy (TOV) ceiling → black hole
+
+  // Per-stage solar-mass slider ranges (min, max) and a sensible default.
+  const MASS_RANGES = {
+    star:    { min: 0.08, max: 150, def: 1.0  },  // hydrogen-fusing main sequence
+    giant:   { min: 0.5,  max: 50,  def: 5.0  },  // heavy-element fusion
+    remnant: { min: 0.1,  max: 150, def: 1.0  },  // collapsed: WD / NS / BH by mass
+  };
+
+  // Which evolutionary stage a concrete type belongs to.
+  function uiCategory(type) {
+    if (type === 'ms') return 'star';
+    if (type === 'giant') return 'giant';
+    return 'remnant';            // wd | ns | bh
+  }
+
+  // The collapsed-remnant flavour implied by a solar mass.
+  function remnantType(Msun) {
+    if (!(Msun > 0)) return 'wd';
+    if (Msun < M_CHANDRASEKHAR) return 'wd';
+    if (Msun < M_TOV)           return 'ns';
+    return 'bh';
+  }
+
+  // Resolve the concrete central-body type for a stage + solar mass. For the
+  // remnant stage the flavour follows the mass; the other stages map directly.
+  function typeForStage(category, Msun) {
+    if (category === 'star') return 'ms';
+    if (category === 'giant') return 'giant';
+    return remnantType(Msun);
+  }
 
   // Will the configuration **physically** collapse into a BH?
   // Returns true when user-set surface radius is at or below r₊ (or r_s if no horizon).
@@ -337,5 +380,7 @@
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
     classify, acceleration, circularSpeed, tidalStress, r_s, peters, mergerRemnant,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
+    uiCategory, remnantType, typeForStage, MASS_RANGES,
+    M_CHANDRASEKHAR, M_TOV,
   };
 })();

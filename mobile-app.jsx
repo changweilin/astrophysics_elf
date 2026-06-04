@@ -583,7 +583,7 @@ function MobileApp() {
         <div className={`m-chip class ${cls.warn ? 'warn' : ''}`}>
           {tr('CLASS', '類別')} · <b>{cls.name}</b>
         </div>
-        <div className="m-chip">M <b>{MSIM.params.M.toFixed(2)}</b></div>
+        <div className="m-chip">M <b>{(MSIM.params.Msun || 0) < 10 ? (MSIM.params.Msun || 0).toFixed(2) : Math.round(MSIM.params.Msun || 0)}</b><small> M⊙</small></div>
         <div className="m-chip">Q <b>{(MSIM.params.Q >= 0 ? '+' : '') + MSIM.params.Q.toFixed(2)}</b></div>
         <div className="m-chip">a <b>{(MSIM.params.a >= 0 ? '+' : '') + MSIM.params.a.toFixed(2)}</b></div>
         <div className="m-chip">B <b>{MSIM.params.B.toFixed(2)}</b></div>

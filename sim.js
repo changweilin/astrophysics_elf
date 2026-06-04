@@ -8,8 +8,17 @@
     return {
       t: 0,
       params: {
-        M: 1.5, Q: 0.0, a: 0.5,
-        // central-body type: 'bh' | 'ns' | 'wd' | 'ms'
+        // Geometric mass is FROZEN at 1: all geometry is drawn in units of M
+        // (gravitational radius), so the horizon is always ~1-2 units regardless
+        // of the body's physical mass. Spin a and charge Q are therefore the
+        // dimensionless ratios a/M and Q/M.
+        M: 1.0, Q: 0.0, a: 0.5,
+        // Physical mass in solar masses — a *label* that drives classification
+        // (collapsed remnant -> WD/NS/BH by mass) and physical read-outs. It does
+        // NOT change the rendered geometry. See KNphysics.MASS_RANGES / remnantType.
+        Msun: 10.0,
+        // central-body type: 'ms' | 'giant' | 'wd' | 'ns' | 'bh'
+        // (wd/ns/bh are the collapsed-remnant flavours, auto-picked from Msun)
         type: 'bh',
         // physical surface radius (geometric units, M). Only used when type !== 'bh'.
         R_star: 3.0,
@@ -61,6 +70,7 @@
       ns: { en: 'neutron crust', zh: '中子星地殼' },
       wd: { en: 'WD surface',    zh: '白矮星表面' },
       ms: { en: 'photosphere',   zh: '光球層' },
+      giant: { en: 'giant envelope', zh: '巨星外殼' },
     }[type] || { en: 'surface', zh: '表面' };
   }
 
@@ -69,8 +79,9 @@
     sim.binary = {
       enabled: false,
       // Companion has its own full parameter set — same shape as central body.
-      type: 'bh',        // 'bh' | 'ns' | 'wd' | 'ms'
-      M2: 0.8,           // companion mass (geometric units)
+      type: 'bh',        // 'ms' | 'giant' | 'wd' | 'ns' | 'bh' (remnant by M2sun)
+      M2sun: 8.0,        // companion physical mass (solar masses) — classification + label
+      M2: 0.8,           // companion geometric mass = M2sun / Msun (relative size + dynamics)
       Q2: 0,             // companion charge (|Q2| <= M2 for sub-extremal)
       a2: 0,             // companion spin (J2 / M2 c)
       R_star2: 3.0,      // companion surface radius (used when type !== 'bh')
@@ -290,13 +301,20 @@
         bin.mergerFlash = 1.6;
         bin.eMergerGW = rem.eRad;     // GW energy in the merger/ringdown burst
         bin.eGW = (bin.eGW || 0) + rem.eRad;
-        sim.params.M = rem.Mf;
+        // Combined physical mass (solar). rem.Mf is geometric (units of the old
+        // primary M=1), and Msun is the solar-mass-per-unit factor, so the final
+        // solar mass is rem.Mf · Msun. Geometry stays in units of M, so the
+        // geometric mass is reset to 1 and the spin becomes the dimensionless a/M.
+        const MsunFinal = rem.Mf * (sim.params.Msun || 1);
+        sim.params.M = 1;
+        sim.params.Msun = MsunFinal;
+        sim.params.type = 'bh';           // BH + BH coalescence -> black hole
         sim.params.Q = sim.params.Q + (bin.Q2 || 0);
-        sim.params.a = rem.af * rem.Mf;   // a = (a/M)·M_f
+        sim.params.a = rem.af;            // a/M (geometric M = 1)
         bin.enabled = false;
         logEv(sim, 'warn', trp(
-          'MERGER · η={eta} · M_f={mf}M · E_GW={egw} c² ({pct}%)',
-          { eta: rem.eta.toFixed(3), mf: rem.Mf.toFixed(2), egw: rem.eRad.toFixed(3), pct: (rem.eRad / Mt * 100).toFixed(1) }));
+          'MERGER · η={eta} · M_f={mf} M⊙ · E_GW={egw} c² ({pct}%)',
+          { eta: rem.eta.toFixed(3), mf: MsunFinal.toFixed(1), egw: rem.eRad.toFixed(3), pct: (rem.eRad / Mt * 100).toFixed(1) }));
         logEv(sim, 'amber', trp('ringdown · a_f/M_f → {af}', { af: rem.af.toFixed(3) }));
         return;
       }
