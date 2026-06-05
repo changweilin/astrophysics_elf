@@ -337,13 +337,13 @@ function MBodyEditor({ sim, force, role }) {
     force();   // R★/T★ re-derived for the new stage by KNSim.syncStellar
   }
 
-  // At the supermassive scale the body tabs offer galactic-nucleus structures.
-  // Both the central and the companion get the full set (quasar / nuclear cluster
-  // / bare SMBH) — all are an SMBH at heart.
+  // At the supermassive scale the body tabs offer galactic-scale structures.
+  // Both the central and the companion get the full set (galaxy / star cluster
+  // / bare SMBH).
   const smbhStructures = isCentral && regime === 'supermassive';
   const companionStructures = !isCentral && regime === 'supermassive';
   const companionStructure = (bin && bin.smbhStructure)
-    || ((sim.disc2 && sim.disc2.enabled) ? 'quasar' : 'smbh');
+    || ((sim.disc2 && sim.disc2.enabled) ? 'galaxy' : 'smbh');
 
   return (
     <>
@@ -986,6 +986,8 @@ function TabObjects({ sim, force }) {
   const { M, Q, a } = sim.params;
   const { rplus } = phys.horizons(M, Q, a);
   const fullReady = useMFullBridgeReady();
+  // Galaxy/cluster cloud particles are a population, not listable objects.
+  const rosterBodies = sim.bodies.filter((b) => !b._cloud);
 
   return (
     <>
@@ -995,13 +997,13 @@ function TabObjects({ sim, force }) {
       <div className="m-sec">
         <div className="m-sec-head">
           <h3>{tr('Object Roster', '天體清單')}</h3>
-          <span className="idx">§05 · {sim.bodies.length}</span>
+          <span className="idx">§05 · {rosterBodies.length}</span>
         </div>
         <div className="m-roster">
-          {sim.bodies.length === 0 && (
+          {rosterBodies.length === 0 && (
             <div className="empty-msg">{tr('Spawn bodies from the SPAWN tab to begin.', '從「生成」頁籤建立天體開始。')}</div>
           )}
-          {sim.bodies.map((b) => (
+          {rosterBodies.map((b) => (
             <button key={b.id} className={`opt ${b.state !== 'orbit' ? b.state : ''} ${sim.selectedId === b.id ? 'sel' : ''}`}
               onClick={() => { sim.selectedId = b.id; force(); }}>
               <span className="ico">{glyphFor(b.kind)}</span>

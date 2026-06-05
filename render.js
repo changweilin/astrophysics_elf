@@ -781,6 +781,17 @@
 
     // ---- Bodies & trails ----
     for (const b of sim.bodies) {
+      // Galaxy/cluster cloud particles: hundreds of test stars/gas — draw as light
+      // dots and skip the per-body trail / label / tidal-stretch overlays (perf).
+      if (b._cloud) {
+        if (b.state !== 'orbit') continue;
+        const [px, py] = worldToScreen(sim, w, h, b.x, b.y);
+        ctx.fillStyle = colorOf(b, b.kind === 'gas' ? 0.55 : 0.85);
+        ctx.beginPath();
+        ctx.arc(px, py, b.kind === 'gas' ? 1.1 : 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
       // trail
       if (sim.flags.showOrbits && b.trail.length > 4) {
         ctx.lineWidth = 1;
@@ -1350,7 +1361,7 @@
       const { rplus } = phys.horizons(sim.params.M, sim.params.Q, sim.params.a);
       let best = null, bestScore = 0;
       for (const b of sim.bodies) {
-        if (b.state !== 'orbit') continue;
+        if (b.state !== 'orbit' || b._cloud) continue;
         const r = Math.hypot(b.x, b.y);
         if (r < (rplus || 0.5) || r > 40) continue;
         const v = Math.hypot(b.vx, b.vy);
@@ -1527,7 +1538,7 @@
     // radiates no GW; the changing position of an orbiting body is the source.
     let primary = null, bestScore = 0;
     for (const b of sim.bodies) {
-      if (b.state !== 'orbit') continue;
+      if (b.state !== 'orbit' || b._cloud) continue;
       const r = Math.hypot(b.x, b.y);
       if (r < (rplus || 0.5) || r > 35) continue;
       const v = Math.hypot(b.vx, b.vy);

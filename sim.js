@@ -61,9 +61,14 @@
       // Sets the BH mass band and which scale of interactive bodies the Object
       // Library offers (see KNphysics.BH_REGIMES; toggled with the B key).
       bhRegime: 'stellar',
-      // Supermassive-scale central structure: 'quasar' | 'cluster' | 'smbh'
+      // Supermassive-scale structure: 'galaxy' | 'cluster' | 'smbh'
       // (only meaningful at the supermassive scale; see KNphysics.SMBH_STRUCTURES).
+      // A galaxy's active nucleus (AGN/quasar) is tracked by its disc being enabled.
       smbhStructure: 'smbh',
+      // Dark-matter halo descriptors {M,R} for a central / companion galaxy structure
+      // (null = no halo). Consumed by the integrator's smooth field. See seedStructureCloud.
+      _halo1: null,
+      _halo2: null,
       // Post-event transient animation (set by coalesce / a Type Ia detonation;
       // advanced by stepTransient, drawn by render.js). null when idle. Drives the
       // multi-phase merger choreography — tidal-tail ejecta, short-GRB jet,
@@ -351,8 +356,15 @@
     // in stepMassTransfer, in role-independent solar masses) dominates over GW, and
     // mixing in the primary-normalised geometric GW rate would make the same
     // physical pair evolve differently depending on which star is the central body.
+    // Extended galactic structures (galaxy / cluster) merge by DYNAMICAL FRICTION,
+    // not by point-mass GW radiation — so the GW reaction is skipped for them and
+    // replaced by the Chandrasekhar drag block below. (At the stellar scale, where
+    // smbhStructure is just 'smbh', dfMerger is false and GW behaves exactly as before.)
+    const isExtStruct = (s) => s === 'galaxy' || s === 'cluster';
+    const dfMerger = isExtStruct(sim.smbhStructure) || isExtStruct(bin.smbhStructure);
+
     const mtActive = !!(bin.mt && bin.mt.active);
-    if (!bin.classical && !mtActive) {
+    if (!bin.classical && !mtActive && !dfMerger) {
       const rNow = Math.hypot(Dx, Dy);
       let scale = 1 + (pet.ddot * bin.inspiralRate * dt) / Math.max(0.05, rNow);
       if (scale < 0.5) scale = 0.5;   // per-step clamp — never plunge in one step
@@ -361,6 +373,41 @@
         const vboost = 1 / Math.sqrt(scale);   // v_circ ∝ 1/√r → chirp
         Vx *= vboost; Vy *= vboost;
       }
+    }
+
+    // ── Dynamical-friction inspiral (galaxy / cluster mergers) ──
+    // A galaxy or cluster is an extended system; it spirals in because its core plows
+    // through the other system's dark-matter halo + star sea, raising a gravitational
+    // wake that drags it (Chandrasekhar). Like the GW reaction above this is applied
+    // ADIABATICALLY — the per-step Chandrasekhar deceleration sets a fractional orbital
+    // decay rate, the separation contracts at that rate, and the pair is kept quasi-
+    // circular (v_circ ∝ 1/√r). Applying the drag directly to the velocity instead
+    // would overdamp the orbit into a slow terminal-velocity creep, not an inspiral.
+    // The real timescale is 1e8-1e10 yr, so it is accelerated by a per-structure boost
+    // (DF_RATE) chosen to show the dynamics clearly — cluster pairs (smaller, shorter
+    // relaxation) sink a touch faster than galaxy pairs.
+    if (dfMerger && !bin.classical && !mtActive) {
+      const rNow = Math.max(1e-3, Math.hypot(Dx, Dy));
+      const sigma = Math.max(0.05, phys.circularSpeed(rNow, Mt) || Math.sqrt(Mt / rNow));
+      // Background density at the separation: uniform dark-matter halos (if any) plus
+      // a core stellar term (mass enclosed within rNow, rough).
+      let rho = 0;
+      const h1 = sim._halo1, h2 = sim._halo2;
+      const sphere = (R) => (4 / 3) * Math.PI * R * R * R;
+      if (h1 && rNow < h1.R) rho += h1.M / sphere(h1.R);
+      if (h2 && rNow < h2.R) rho += h2.M / sphere(h2.R);
+      rho += 0.12 * Mt / sphere(Math.max(2, rNow));
+      const Mdf = Math.max(M1, M2);                       // dominant perturber
+      const bothCluster = sim.smbhStructure === 'cluster' && bin.smbhStructure === 'cluster';
+      const DF_RATE = bothCluster ? 130 : 90;             // per-structure time boost
+      const aDF = phys.dynamicalFriction(Vx, Vy, Mdf, rho, sigma, 4);
+      const vrelNow = Math.max(1e-4, Math.hypot(Vx, Vy));
+      // Fractional decay rate = |a_DF| / v  (the drag-timescale inverse).
+      const decay = (Math.hypot(aDF.ax, aDF.ay) / vrelNow) * DF_RATE * dt;
+      let scale = 1 - decay;
+      if (scale < 0.5) scale = 0.5;                       // per-step clamp — no plunge
+      Dx *= scale; Dy *= scale;
+      Vx *= 1 / Math.sqrt(scale); Vy *= 1 / Math.sqrt(scale);   // stay quasi-circular
     }
 
     // Split back onto the two stars about the conserved barycentre.
@@ -1000,23 +1047,36 @@
     const binOn = !!(bin && bin.enabled);
     const sType = binOn ? (bin.type || 'bh') : 'bh';
     const compH = binOn ? phys.horizons(bin.M2, bin.Q2 || 0, bin.a2 || 0) : null;
+    // Smooth dark-matter halo field of any galaxy structure (collisionless mean-field;
+    // the cloud particles feel it on top of the point-mass cores). Centred on the host
+    // core: central at origin (or bin.x1) and companion at bin.x2.
+    const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
+    const halo1 = sim._halo1, halo2 = sim._halo2;
+    const addHalo = (acc, px, py) => {
+      if (halo1) { const h = phys.haloAccel(px - c1x, py - c1y, halo1.M, halo1.R); acc.ax += h.ax; acc.ay += h.ay; }
+      if (halo2 && binOn) { const h = phys.haloAccel(px - bin.x2, py - bin.y2, halo2.M, halo2.R); acc.ax += h.ax; acc.ay += h.ay; }
+    };
     for (const b of sim.bodies) {
       if (b.state !== 'orbit') continue;
       if (b.held) { b.trail.length = 0; continue; } // frozen while user repositions
       const a1 = phys.acceleration(b.x, b.y, b.vx, b.vy, M, Q, a, b.charge || 0, bin);
+      addHalo(a1, b.x, b.y);
       const mx = b.x + b.vx * dt * 0.5;
       const my = b.y + b.vy * dt * 0.5;
       const mvx = b.vx + a1.ax * dt * 0.5;
       const mvy = b.vy + a1.ay * dt * 0.5;
       const a2 = phys.acceleration(mx, my, mvx, mvy, M, Q, a, b.charge || 0, bin);
+      addHalo(a2, mx, my);
       b.vx += a2.ax * dt;
       b.vy += a2.ay * dt;
       b.x  += b.vx * dt;
       b.y  += b.vy * dt;
 
-      // trail
-      b.trail.push(b.x, b.y);
-      if (b.trail.length > 1200) b.trail.splice(0, b.trail.length - 1200);
+      // trail (skipped for cloud particles — there are hundreds; keeps memory bounded)
+      if (!b._cloud) {
+        b.trail.push(b.x, b.y);
+        if (b.trail.length > 1200) b.trail.splice(0, b.trail.length - 1200);
+      }
 
       const r = Math.hypot(b.x, b.y);
 
@@ -1066,9 +1126,9 @@
             continue;
           }
         }
-        if (r > 50) {
+        if (r > (b._cloud ? 240 : 50)) {
           b.state = 'escaped'; b.consumedAt = sim.t;
-          logEv(sim, 'amber', trp('{name} — ejected by binary', { name: b.name }));
+          if (!b._cloud) logEv(sim, 'amber', trp('{name} — ejected by binary', { name: b.name }));
         }
         continue;  // skip single-BH checks below
       }
@@ -1103,9 +1163,9 @@
           continue;
         }
       }
-      if (r > 50) {
+      if (r > (b._cloud ? 240 : 50)) {
         b.state = 'escaped'; b.consumedAt = sim.t;
-        logEv(sim, 'amber', trp('{name} — escaped beyond detector range', { name: b.name }));
+        if (!b._cloud) logEv(sim, 'amber', trp('{name} — escaped beyond detector range', { name: b.name }));
       }
     }
   }
@@ -1408,6 +1468,8 @@
       viewScale: sim.view.scale,
       stageStash: cloneState(sim._stageStash),
       smbhStructure: sim.smbhStructure,
+      halo1: cloneState(sim._halo1),
+      halo2: cloneState(sim._halo2),
       seq: sim.seq,
     };
   }
@@ -1422,6 +1484,8 @@
     if (s.viewScale) sim.view.scale = s.viewScale;
     sim._stageStash = cloneState(s.stageStash) || { central: {}, companion: {} };
     sim.smbhStructure = s.smbhStructure || 'smbh';
+    sim._halo1 = cloneState(s.halo1) || null;
+    sim._halo2 = cloneState(s.halo2) || null;
     // Never reuse an id the restored scene already holds (the seq counter is global).
     if (s.seq) sim.seq = Math.max(sim.seq || 1, s.seq);
   }
@@ -1439,7 +1503,8 @@
     sim.selectedId = null;
     sim._stageStash = { central: {}, companion: {} };
     sim.smbhStructure = 'smbh';     // a fresh supermassive scene starts as a bare hole
-    // A fresh scene is its own sandbox — start with discs off (a quasar/AGN turns
+    sim._halo1 = null; sim._halo2 = null;   // no galaxy halos in a fresh scene
+    // A fresh scene is its own sandbox — start with discs off (a galaxy's AGN turns
     // them back on); the previous scale's disc state is kept in its own snapshot.
     if (sim.disc)  { sim.disc.enabled = false;  sim.disc.particles.length = 0; }
     if (sim.disc2) { sim.disc2.enabled = false; sim.disc2.particles.length = 0; }
@@ -1529,70 +1594,132 @@
     return setBHRegime(sim, next);
   }
 
-  // Seed a nuclear star cluster: a swarm of stars on tight prograde orbits about the
-  // central SMBH — the S-star-like population that orbits and is tidally fed to a
-  // galactic-nucleus hole. Idempotent: a previous cluster (tagged _seed) is cleared
-  // first so re-selecting the structure re-seeds rather than piling up.
-  function seedNuclearCluster(sim, n = 10) {
-    sim.bodies = sim.bodies.filter((b) => b._seed !== 'cluster');
-    const dir = Math.sign(sim.params.a || 1) || 1;
-    for (let i = 0; i < n; i++) {
-      const r = 12 + Math.random() * 30;
+  // ── Galactic-structure tracer clouds ──────────────────────
+  // A galaxy or cluster is simulated as a swarm of TEST PARTICLES (stars + gas) in the
+  // smooth field of its core + dark-matter halo (the collisionless / mean-field method;
+  // see KNphysics dynamicalFriction/haloAccel). The particles are flagged `_cloud` so
+  // the integrator skips their trail (memory) and the renderer draws them as light
+  // points without labels. role 'central' orbits the primary (origin / bin.x1); role
+  // 'companion' orbits the secondary (bin.x2). Idempotent per role.
+  //
+  // The M slider sets N (more mass -> a richer swarm): see structureN().
+  function structureN(sim, role) {
+    const M = role === 'companion' ? ((sim.binary && sim.binary.M2) || 0.8) : sim.params.M;
+    // Log-ish scaling, clamped to a perf-friendly band.
+    return Math.max(18, Math.min(120, Math.round(46 + 34 * Math.log10(Math.max(0.1, M) * 10))));
+  }
+
+  function clearStructureCloud(sim, role) {
+    sim.bodies = sim.bodies.filter((b) => !(b._cloud && b._cloudRole === role));
+  }
+
+  function seedStructureCloud(sim, key, role = 'central') {
+    clearStructureCloud(sim, role);
+    if (key !== 'galaxy' && key !== 'cluster') return;
+    const bin = sim.binary;
+    const binOn = !!(bin && bin.enabled);
+    // Host core position / velocity / mass.
+    let hx = 0, hy = 0, hvx = 0, hvy = 0, Mcore, dir;
+    if (role === 'companion') {
+      if (!binOn) return;
+      hx = bin.x2; hy = bin.y2; hvx = bin.vx2; hvy = bin.vy2;
+      Mcore = bin.M2; dir = Math.sign(bin.a2 || sim.params.a || 1) || 1;
+    } else {
+      if (binOn) { hx = bin.x1; hy = bin.y1; hvx = bin.vx1; hvy = bin.vy1; }
+      Mcore = sim.params.M; dir = Math.sign(sim.params.a || 1) || 1;
+    }
+    const isGalaxy = key === 'galaxy';
+    const N = structureN(sim, role);
+    const nGas = isGalaxy ? Math.round(N * 0.35) : 0;       // clusters are gas-poor
+    const rIn = isGalaxy ? 4 : 3;
+    const rOut = isGalaxy ? 34 : 22;
+    // Galaxy halo (uniform-density dark matter); none for a cluster.
+    const halo = isGalaxy
+      ? { M: Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION)), R: rOut * 1.8 }
+      : null;
+    if (role === 'companion') sim._halo2 = halo; else sim._halo1 = halo;
+
+    for (let i = 0; i < N; i++) {
+      const gas = i < nGas;
+      // Centrally-concentrated sampling (more particles inward): r = rIn + (rOut-rIn)·u².
+      const u = Math.random();
+      const r = rIn + (rOut - rIn) * u * u;
       const th = Math.random() * Math.PI * 2;
-      const x = r * Math.cos(th), y = r * Math.sin(th);
-      const vc = phys.circularSpeed(r, sim.params.M) || Math.sqrt(sim.params.M / r);
+      const x = hx + r * Math.cos(th), y = hy + r * Math.sin(th);
+      // Circular speed about the core, plus the halo's contribution (flattens the
+      // rotation curve for a galaxy). v_halo^2 = a_halo·r.
+      let vc2 = (phys.circularSpeed(r, Mcore) || Math.sqrt(Mcore / r)) ** 2;
+      if (halo) {
+        const ha = phys.haloAccel(r, 0, halo.M, halo.R);
+        vc2 += Math.abs(ha.ax) * r;
+      }
+      const vc = Math.sqrt(Math.max(0, vc2));
+      // Small velocity dispersion (gas is dynamically colder than stars).
+      const disp = (gas ? 0.02 : 0.06) * vc;
+      const jx = (Math.random() - 0.5) * 2 * disp, jy = (Math.random() - 0.5) * 2 * disp;
       addBody(sim, {
-        name: 'S-' + String(i + 1).padStart(2, '0'),
-        kind: 'star', radius: 0.5, binding: 6, charge: 0,
-        x, y, vx: -Math.sin(th) * vc * dir, vy: Math.cos(th) * vc * dir,
-        _seed: 'cluster',
+        name: '', kind: gas ? 'gas' : 'star', radius: gas ? 0.32 : 0.42,
+        binding: 6, charge: 0,
+        x, y,
+        vx: hvx - Math.sin(th) * vc * dir + jx,
+        vy: hvy + Math.cos(th) * vc * dir + jy,
+        _cloud: key, _cloudRole: role,
       });
     }
   }
 
-  // Apply a supermassive-scale structure (see KNphysics.SMBH_STRUCTURES). All keep
-  // the body an SMBH; they differ in how the hole interacts with its surroundings —
-  // an accreting quasar (disc + jet), a tidally-fed nuclear star cluster, or a
-  // quiescent bare hole. role 'companion' targets the binary secondary (its own
-  // disc/jet on sim.disc2); a nuclear cluster is a scene-wide population, so the
-  // companion's cluster seeds the same swarm around the nucleus.
+  // Back-compat alias (older call sites). A nuclear star cluster is the cluster cloud.
+  function seedNuclearCluster(sim) { seedStructureCloud(sim, 'cluster', 'central'); }
+
+  // Apply a supermassive-scale structure (see KNphysics.SMBH_STRUCTURES). They differ
+  // in internal make-up (which drives how they merge):
+  //   · galaxy  — central SMBH + gas + dark-matter halo; its active nucleus (AGN /
+  //               quasar) lights the disc + BZ jet. Selecting a galaxy lights the AGN
+  //               by default (the disc being enabled IS the active-nucleus state).
+  //   · cluster — a self-bound star swarm with no central SMBH and no gas.
+  //   · smbh    — the quiescent bare hole.
+  // role 'companion' targets the binary secondary (its own disc/jet on sim.disc2).
   function applySMBHStructure(sim, key, role = 'central') {
     if (role === 'companion') {
       const bin = sim.binary;
       if (!bin) return key;
       bin.type = 'bh';
       bin.smbhStructure = key;
-      if (key === 'quasar') {
-        if (sim.disc2) sim.disc2.enabled = true;
+      if (key === 'galaxy') {
+        if (sim.disc2) sim.disc2.enabled = true;                    // active nucleus (AGN) on
         if (!(bin.B2 > 0.4)) bin.B2 = 0.6;                          // power a BZ jet
         if (Math.abs(bin.a2) < 0.5 * bin.M2) bin.a2 = 0.9 * bin.M2 * (Math.sign(bin.a2) || 1);
-        logEv(sim, 'warn', tr('Companion quasar (AGN) — accretion disc + jet active',
-                              '伴星類星體(活躍星系核)— 吸積盤 + 噴流啟動'));
+        seedStructureCloud(sim, 'galaxy', 'companion');
+        logEv(sim, 'warn', tr('Companion galaxy — active nucleus (AGN): accretion disc + jet',
+                              '伴星系 — 活躍星系核(AGN):吸積盤 + 噴流'));
       } else if (key === 'cluster') {
         if (sim.disc2) sim.disc2.enabled = false;
-        seedNuclearCluster(sim);
-        logEv(sim, 'good', tr('Nuclear star cluster seeded around the nucleus',
-                              '已在星系核周圍佈署核星團'));
+        seedStructureCloud(sim, 'cluster', 'companion');
+        logEv(sim, 'good', tr('Companion star cluster — self-bound star swarm (no central SMBH)',
+                              '伴星團 — 自身束縛的恆星群(無中央黑洞)'));
       } else {
         if (sim.disc2) sim.disc2.enabled = false;
+        clearStructureCloud(sim, 'companion'); sim._halo2 = null;
         logEv(sim, 'good', tr('Quiescent supermassive companion', '寧靜的超大質量伴星'));
       }
       return key;
     }
     sim.params.type = 'bh';
     sim.smbhStructure = key;
-    if (key === 'quasar') {
-      if (sim.disc) sim.disc.enabled = true;
+    if (key === 'galaxy') {
+      if (sim.disc) sim.disc.enabled = true;                        // active nucleus (AGN) on
       if (!(sim.params.B > 0.4)) sim.params.B = 0.6;                 // power a BZ jet
       if (Math.abs(sim.params.a) < 0.5) sim.params.a = 0.9 * (Math.sign(sim.params.a) || 1);
-      logEv(sim, 'warn', tr('Quasar (AGN) — accretion disc + jet active',
-                            '類星體(活躍星系核)— 吸積盤 + 噴流啟動'));
+      seedStructureCloud(sim, 'galaxy', 'central');
+      logEv(sim, 'warn', tr('Galaxy — active nucleus (AGN): accretion disc + jet',
+                            '星系 — 活躍星系核(AGN):吸積盤 + 噴流'));
     } else if (key === 'cluster') {
-      seedNuclearCluster(sim);
-      logEv(sim, 'good', tr('Nuclear star cluster seeded around the SMBH',
-                            '已在超大質量黑洞周圍佈署核星團'));
+      seedStructureCloud(sim, 'cluster', 'central');
+      logEv(sim, 'good', tr('Star cluster — self-bound star swarm (no central SMBH)',
+                            '星團 — 自身束縛的恆星群(無中央黑洞)'));
     } else {
       if (sim.disc) sim.disc.enabled = false;
+      clearStructureCloud(sim, 'central'); sim._halo1 = null;
       logEv(sim, 'good', tr('Quiescent supermassive black hole', '寧靜的超大質量黑洞'));
     }
     return key;
@@ -1670,10 +1797,14 @@
     bin.d = Math.hypot(bin.x2 - bin.x1, bin.y2 - bin.y1);
     bin.theta = Math.atan2(bin.y2 - bin.y1, bin.x2 - bin.x1);
 
-    // Each accretion disc follows its body, so a quasar that becomes the companion
-    // keeps its disc/jet (sim.disc is the primary's, sim.disc2 the companion's).
+    // Each accretion disc follows its body, so an active galaxy that becomes the
+    // companion keeps its disc/jet (sim.disc is the primary's, sim.disc2 the companion's).
     if (sim.disc && sim.disc2) { const d = sim.disc; sim.disc = sim.disc2; sim.disc2 = d; }
-    sim.smbhStructure = (sim.disc && sim.disc.enabled) ? 'quasar' : 'smbh';
+    // The new central's structure: an enabled disc means an active galactic nucleus;
+    // otherwise keep a non-AGN structure (cluster stays a cluster, else a bare hole).
+    sim.smbhStructure = (sim.disc && sim.disc.enabled)
+      ? 'galaxy'
+      : (sim.smbhStructure === 'cluster' ? 'cluster' : 'smbh');
 
     // The donor/accretor indices are now inverted — re-evaluate transfer cleanly.
     resetMassTransfer(bin);

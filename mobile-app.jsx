@@ -562,7 +562,9 @@ function MobileApp() {
   // ─── Derived state ──────────────────────────────────────
   const phys = window.KNphysics;
   const cls = phys.classify(MSIM.params.M, MSIM.params.Q, MSIM.params.a, MSIM.params.type);
-  const orbitCount = MSIM.bodies.filter(b => b.state === 'orbit').length;
+  // Galaxy/cluster cloud particles are a population, not counted as user objects.
+  const realBodies = MSIM.bodies.filter(b => !b._cloud);
+  const orbitCount = realBodies.filter(b => b.state === 'orbit').length;
 
   // ─── Render ─────────────────────────────────────────────
   return (
@@ -595,7 +597,7 @@ function MobileApp() {
             BBH <b>d={MSIM.binary.d.toFixed(1)}</b>
           </div>
         )}
-        <div className="m-chip">{tr('BODIES', '天體')} <b>{orbitCount}/{MSIM.bodies.length}</b></div>
+        <div className="m-chip">{tr('BODIES', '天體')} <b>{orbitCount}/{realBodies.length}</b></div>
       </div>
 
       {/* Viewport */}
@@ -684,7 +686,7 @@ function MobileApp() {
         <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
         <div className="meta">
           <span className="t">T+{MSIM.t.toFixed(1)}</span>
-          <span><b>{orbitCount}</b>/{MSIM.bodies.length} {tr('BOD', '天體')}</span>
+          <span><b>{orbitCount}</b>/{realBodies.length} {tr('BOD', '天體')}</span>
         </div>
       </div>
 
@@ -697,7 +699,7 @@ function MobileApp() {
         <button className={tab === 'objects' ? 'on' : ''}
           onClick={() => { setTab('objects'); openDrawer(); }}>
           <span className="ic">●</span>{tr('OBJECTS', '天體')}
-          {MSIM.bodies.length > 0 && <span className="badge">{MSIM.bodies.length}</span>}
+          {realBodies.length > 0 && <span className="badge">{realBodies.length}</span>}
         </button>
         <button className={tab === 'spawn' ? 'on' : ''}
           onClick={() => { setTab('spawn'); openDrawer(); }}>
@@ -772,6 +774,7 @@ function MViewControls({ sim, force }) {
   // ── Cross-section targets (rebuilt each render so the list tracks the scene) ──
   const targets = [];
   for (const b of sim.bodies) {
+    if (b._cloud) continue;   // cloud particles are a population, not individual targets
     targets.push({ key: 'body:' + b.id, kind: 'body', body: b, label: b.name });
   }
   targets.push({ key: 'mhd:primary', kind: 'mhd', which: 'primary',

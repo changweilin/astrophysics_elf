@@ -239,27 +239,32 @@
   // Cycle order for the keyboard / UI toggle.
   const BH_REGIME_ORDER = ['stellar', 'intermediate', 'supermassive'];
 
-  // ── Supermassive-scale central structures ─────────────────────────────
+  // ── Supermassive-scale structures ─────────────────────────────────────
   // At the supermassive scale there is no main-sequence or giant star (those stages
-  // are locked), so the central-body tabs offer the galactic-nucleus structures that
-  // actually couple to a supermassive black hole instead. All are an SMBH at heart —
-  // they differ in how the hole interacts with its surroundings:
-  //   · quasar  — the SMBH accreting (luminous disc + Blandford-Znajek jet, an AGN)
-  //   · cluster — a nuclear star cluster on tight orbits, tidally fed to the hole
-  //   · smbh    — the quiescent bare hole (e.g. Sgr A*)
-  // A galactic spiral arm is deliberately omitted: it lives at kiloparsec scales,
-  // far outside the SMBH's ~parsec sphere of influence, so it does not dynamically
-  // interact with the hole the way these do.
+  // are locked), so the body tabs offer the three galactic-scale structures that
+  // dominate at this scale. They differ in their internal make-up — which drives how
+  // they MERGE (see the structure-pair merger model):
+  //   · galaxy  — central SMBH + gas/molecular clouds + a dark-matter halo. A
+  //               quasar is just the galaxy's ACTIVE nucleus (AGN): when the central
+  //               hole is accreting it lights a luminous disc + Blandford-Znajek jet.
+  //   · cluster — a self-bound swarm of stars with essentially NO central SMBH and no
+  //               gas (a globular cluster); merges by dynamical friction.
+  //   · smbh    — the quiescent bare hole (e.g. Sgr A*).
+  // hasBH/hasGas/hasDM tag the make-up so the merger logic can branch on the pair of
+  // structures (galaxy×galaxy, cluster×SMBH, …) rather than on the body type alone.
   const SMBH_STRUCTURES = [
-    { key: 'quasar',  glyph: '✦', label_en: 'Quasar',       label_zh: '類星體',
-      desc_en: 'Actively accreting SMBH — luminous accretion disc + relativistic jet (an AGN).',
-      desc_zh: '活躍吸積的超大質量黑洞 — 明亮吸積盤 + 相對論性噴流(活躍星系核)。' },
+    { key: 'galaxy',  glyph: '✺', label_en: 'Galaxy',       label_zh: '星系',
+      hasBH: true, hasGas: true, hasDM: true,
+      desc_en: 'Galaxy — central SMBH + gas/molecular clouds + dark-matter halo. An active nucleus (AGN/quasar) lights an accretion disc + relativistic jet.',
+      desc_zh: '星系 — 中央超大質量黑洞 + 氣體/分子雲 + 暗物質暈。活躍星系核(AGN/類星體)點亮吸積盤 + 相對論性噴流。' },
     { key: 'cluster', glyph: '✸', label_en: 'Star cluster', label_zh: '星團',
-      desc_en: 'Nuclear star cluster — stars on tight orbits, tidally disrupted and fed to the SMBH.',
-      desc_zh: '核星團 — 恆星在緊密軌道上,被潮汐瓦解並餵入超大質量黑洞。' },
+      hasBH: false, hasGas: false, hasDM: false,
+      desc_en: 'Star cluster — a self-bound swarm of stars with no central SMBH and no gas; merges by dynamical friction.',
+      desc_zh: '星團 — 自身束縛的恆星群,無中央黑洞、無氣體;靠動力摩擦合併。' },
     { key: 'smbh',    glyph: '●', label_en: 'SMBH',         label_zh: '超大黑洞',
-      desc_en: 'Quiescent supermassive black hole (e.g. Sgr A*).',
-      desc_zh: '寧靜的超大質量黑洞(如人馬座 A*)。' },
+      hasBH: true, hasGas: false, hasDM: false,
+      desc_en: 'Quiescent bare supermassive black hole (e.g. Sgr A*).',
+      desc_zh: '寧靜的裸超大質量黑洞(如人馬座 A*)。' },
   ];
 
   // Real-universe mass limits per evolutionary stage (M⊙). Hydrogen-fusing and
@@ -1032,6 +1037,70 @@
     return Math.sqrt((G * M / r) / denom);
   }
 
+  // ── Galactic-structure smooth fields & dynamical friction ─────────────
+  // Supermassive-scale structures (galaxy / cluster) are simulated as TEST PARTICLES
+  // (stars + gas) moving in a smooth, analytic potential — the collisionless / mean-
+  // field method, which is physically correct for these systems (two-body relaxation
+  // time >> age). The heavy "cores" gravitate mutually; the cloud particles feel only
+  // the smooth field below. Sinking / merging is driven by analytic Chandrasekhar
+  // dynamical friction on the cores, NOT by per-particle drag (which would unphysically
+  // collapse the swarm and erase tidal tails). See merger-redesign-spec.
+
+  // Cosmological dark-to-baryonic mass ratio. Omega_dm / Omega_b ~ 0.27 / 0.05 ~ 5.4,
+  // so dark matter is ~85% of a galaxy's mass; baryons (stars + gas) the rest.
+  const DM_FRACTION = 0.85;
+
+  // erf via Abramowitz-Stegun 7.1.26 (max error ~1.5e-7) — JS Math lacks it; needed
+  // for the Chandrasekhar velocity term.
+  function erf(x) {
+    const s = x < 0 ? -1 : 1; const ax = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * ax);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+      - 0.284496736) * t + 0.254829592) * t * Math.exp(-ax * ax);
+    return s * y;
+  }
+
+  // Uniform-density spherical halo (the dark-matter assumption: density constant
+  // inside Rhalo). Force grows linearly inside (harmonic core, a~r) and falls as a
+  // point mass outside (a~1/r²) — both analytic and cheap. Returns acceleration on a
+  // particle at offset (dx,dy) from the halo centre.
+  function haloAccel(dx, dy, Mhalo, Rhalo) {
+    if (!(Mhalo > 0) || !(Rhalo > 0)) return { ax: 0, ay: 0 };
+    const r = Math.hypot(dx, dy);
+    if (r < 1e-6) return { ax: 0, ay: 0 };
+    // Inside: enclosed mass M(r) = Mhalo (r/Rhalo)^3  ->  a = G M(r)/r^2 = G Mhalo r / Rhalo^3.
+    // Outside: a = G Mhalo / r^2.
+    const g = (r < Rhalo)
+      ? (G * Mhalo * r) / (Rhalo * Rhalo * Rhalo)
+      : (G * Mhalo) / (r * r);
+    return { ax: -g * dx / r, ay: -g * dy / r };
+  }
+
+  // Softened (Plummer) acceleration toward a core of mass M at offset (dx,dy). Used
+  // for a star cluster's self-gravity, which has NO central singularity: the eps core
+  // keeps the centre finite (a Plummer sphere of scale eps). Newtonian 1/r^2 outside.
+  function plummerAccel(dx, dy, M, eps) {
+    if (!(M > 0)) return { ax: 0, ay: 0 };
+    const r2 = dx * dx + dy * dy;
+    const s = r2 + eps * eps;
+    const inv = (G * M) / (s * Math.sqrt(s));   // = G M / (r^2+eps^2)^(3/2)
+    return { ax: -inv * dx, ay: -inv * dy };
+  }
+
+  // Chandrasekhar dynamical friction on a body of mass Mbody moving at velocity
+  // (vx,vy) through a background of density rho and 1-D velocity dispersion sigma.
+  // a_DF = -4π G² Mbody ρ lnΛ [erf(X) - (2X/√π) e^(-X²)] v̂ / v² ,  X = v/(√2 σ).
+  // The bracket -> 1 at high v (drag ~ 1/v²) and ~v³ at low v (linear drag), so a core
+  // sinks faster where the background is denser — the merger engine for non-GW pairs.
+  function dynamicalFriction(vx, vy, Mbody, rho, sigma, lnLambda) {
+    const v = Math.hypot(vx, vy);
+    if (v < 1e-6 || !(rho > 0) || !(Mbody > 0)) return { ax: 0, ay: 0 };
+    const X = v / (Math.SQRT2 * Math.max(1e-6, sigma));
+    const bracket = erf(X) - (2 * X / Math.sqrt(Math.PI)) * Math.exp(-X * X);  // 0..1
+    const coeff = (4 * Math.PI * G * G * Mbody * rho * (lnLambda || 3) * bracket) / (v * v * v);
+    return { ax: -coeff * vx, ay: -coeff * vy };
+  }
+
   window.KNphysics = {
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
     classify, acceleration, circularSpeed, tidalStress, r_s, peters, mergerRemnant,
@@ -1040,6 +1109,7 @@
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES, VIEW_SCALE_MIN, VIEW_SCALE_MAX,
     BH_REGIMES, BH_REGIME_ORDER, SMBH_STRUCTURES, bhRegimeForMass, fmtSolarMass,
+    DM_FRACTION, erf, haloAccel, plummerAccel, dynamicalFriction,
     STAGE_MASS_LIMITS, stageRegimeRange, stageLockedAtRegime,
     bhObservables, EHT_RES_UAS,
     M_CHANDRASEKHAR, M_TOV, CE_ALPHA, CE_LAMBDA, NOVA_RETAIN, MT_K,

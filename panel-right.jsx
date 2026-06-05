@@ -68,6 +68,9 @@ function RightPanel({ sim, force }) {
   const { M, Q, a } = sim.params;
   const { rplus } = phys.horizons(M, Q, a);
   const fullReady = useFullBridgeReady();
+  // Galaxy/cluster cloud particles are a simulation population, not individually
+  // listable objects — the roster shows only user-placed bodies.
+  const rosterBodies = sim.bodies.filter((b) => !b._cloud);
 
   return (
     <div className="panel right">
@@ -87,15 +90,15 @@ function RightPanel({ sim, force }) {
       <div className="section">
         <div className="section-head">
           <h3>{tr('Object Roster', '天體清單')}</h3>
-          <span className="idx">§05 · {sim.bodies.length}</span>
+          <span className="idx">§05 · {rosterBodies.length}</span>
         </div>
         <div className="obj-pick">
-          {sim.bodies.length === 0 && (
+          {rosterBodies.length === 0 && (
             <div style={{padding:'14px 12px', fontSize:11, color:'var(--fg-3)', fontFamily:'var(--mono)', letterSpacing:'0.06em'}}>
               {tr('Drop bodies from the library below to begin.', '從下方天體庫拖入天體開始。')}
             </div>
           )}
-          {sim.bodies.map((b) => (
+          {rosterBodies.map((b) => (
             <button key={b.id} className={`opt ${b.state !== 'orbit' ? b.state : ''} ${sim.selectedId === b.id ? 'sel' : ''}`}
               onClick={() => { sim.selectedId = b.id; force(); }}>
               <span className="ico">{glyphFor(b.kind)}</span>

@@ -415,15 +415,14 @@ function BodyEditor({ sim, force, role }) {
   }
 
   // At the supermassive scale stars cannot exist, so the body tabs offer the
-  // galactic-nucleus structures that DO couple to an SMBH instead of the dead,
-  // locked stellar stages. Both the central and the companion offer the full set
-  // (quasar / nuclear cluster / bare hole) — all are an SMBH at heart.
+  // galactic-scale structures instead of the dead, locked stellar stages. Both the
+  // central and the companion offer the full set (galaxy / star cluster / bare hole).
   const smbhStructures = isCentral && regime === 'supermassive';
   const companionStructures = !isCentral && regime === 'supermassive';
   // The companion's active structure: its stored choice, else inferred from disc
-  // state (an accreting companion is a quasar; otherwise a quiescent hole).
+  // state (an accreting companion is an active galaxy; otherwise a quiescent hole).
   const companionStructure = (bin && bin.smbhStructure)
-    || ((sim.disc2 && sim.disc2.enabled) ? 'quasar' : 'smbh');
+    || ((sim.disc2 && sim.disc2.enabled) ? 'galaxy' : 'smbh');
 
   return (
     <>

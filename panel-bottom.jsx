@@ -1,6 +1,9 @@
 /* Bottom strip — Spawner library + time controls + event log */
 
 function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale }) {
+  // Galaxy/cluster cloud particles are a population, not user objects — exclude them
+  // from the body counter.
+  const realBodies = sim.bodies.filter((b) => !b._cloud);
   // Source the spawn catalog from the full-physics bridge once it has loaded
   // (window.KNFull.objectCatalog); fall back to the inline LIBRARY otherwise so
   // the picker works even if the module bridge is unavailable.
@@ -64,12 +67,12 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
                 {playing ? '❚❚' : '▶'}
               </button>
               <button onClick={() => { sim.bodies.forEach(b => b.trail.length = 0); force(); }}>{tr('CLR TRAILS', '清軌跡')}</button>
-              <button onClick={() => { sim.bodies = []; sim.selectedId = null; sim.events = []; sim.t = 0; sim.moving = null; if (sim.binary) sim.binary.held = false; force(); }}>{tr('RESET', '重置')}</button>
+              <button onClick={() => { sim.bodies = []; sim._halo1 = null; sim._halo2 = null; sim.selectedId = null; sim.events = []; sim.t = 0; sim.moving = null; if (sim.binary) sim.binary.held = false; force(); }}>{tr('RESET', '重置')}</button>
             </div>
             <div className="meta-row">
               <span>T <b>{sim.t.toFixed(1)} M</b></span>
               <span>×<b>{timescale.toFixed(2)}</b></span>
-              <span>{tr('BODIES', '天體')} <b>{sim.bodies.filter(b => b.state === 'orbit').length}/{sim.bodies.length}</b></span>
+              <span>{tr('BODIES', '天體')} <b>{realBodies.filter(b => b.state === 'orbit').length}/{realBodies.length}</b></span>
             </div>
             <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
           </div>

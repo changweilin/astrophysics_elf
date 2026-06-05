@@ -55,13 +55,15 @@ function TidalMicroscope({ sim, force }) {
   // seconds even after the user clicks elsewhere — TDE is the headline event.
   const sel = sim.bodies.find((b) => b.id === sim.selectedId);
   const realBody = sel || sim.bodies.find((b) => b.id === pinnedId);
+  // Galaxy/cluster cloud particles are a population — not individually inspectable.
+  const inspectable = sim.bodies.filter((b) => !b._cloud);
 
   // The smaller of a binary pair is also inspectable (stretched by the larger
   // star). It is picked via the same target cycler.
   const companion = companionTidalTarget(sim);
   const compActive = pickCompanion && !!companion;
   const body = compActive ? companion
-             : (realBody || (companion && sim.bodies.length === 0 ? companion : null));
+             : (realBody || (companion && inspectable.length === 0 ? companion : null));
 
   // Publish the resolved target (real body or companion pseudo-body) so the
   // sidebar readout (panel-right §04c) mirrors it; the window is just the close-up.
@@ -69,7 +71,7 @@ function TidalMicroscope({ sim, force }) {
   bodyRef.current = body;
 
   // Selectable targets: placed bodies plus the binary companion.
-  const targets = companion ? sim.bodies.concat([companion]) : sim.bodies;
+  const targets = companion ? inspectable.concat([companion]) : inspectable;
 
   // Step the inspected target to the previous/next entry (placed body ↔ companion).
   function cycleBody(dir) {
@@ -91,7 +93,7 @@ function TidalMicroscope({ sim, force }) {
   React.useEffect(() => {
     // Pin if a disruption just happened (and pull focus off the companion).
     const recent = sim.bodies
-      .filter((b) => b.state === 'spaghettified' && (sim.t - (b.consumedAt || 0)) < 5)
+      .filter((b) => !b._cloud && b.state === 'spaghettified' && (sim.t - (b.consumedAt || 0)) < 5)
       .sort((a, b) => (b.consumedAt || 0) - (a.consumedAt || 0))[0];
     if (recent) { setPinnedId(recent.id); setPickCompanion(false); }
   }, [sim.bodies.map((b) => b.state).join(',')]);

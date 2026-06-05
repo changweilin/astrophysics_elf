@@ -60,7 +60,7 @@ function knGwParams(sim) {
   // Lone primary: the fastest bound orbiter is the quadrupole source.
   let best = null, bestScore = 0;
   for (const b of sim.bodies) {
-    if (b.state !== 'orbit') continue;
+    if (b.state !== 'orbit' || b._cloud) continue;
     const r = Math.hypot(b.x, b.y);
     if (r < 0.5 || r > 40) continue;
     const v = Math.hypot(b.vx, b.vy);
