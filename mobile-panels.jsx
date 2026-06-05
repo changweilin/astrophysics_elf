@@ -337,13 +337,6 @@ function MBodyEditor({ sim, force, role }) {
     force();   // R★/T★ re-derived for the new stage by KNSim.syncStellar
   }
 
-  // Switch the central BH mass regime (mobile has no keyboard, so this is the
-  // primary control; the desktop B key drives the same KNSim path).
-  function switchRegime(rk) {
-    window.KNSim.setBHRegime(sim, rk);
-    force();
-  }
-
   // At the supermassive scale the body tabs offer galactic-nucleus structures.
   // Both the central and the companion get the full set (quasar / nuclear cluster
   // / bare SMBH) — all are an SMBH at heart.
@@ -412,24 +405,6 @@ function MBodyEditor({ sim, force, role }) {
               <span className="g">{s.g}</span>{s.label}
             </span>
           ))}
-        </div>
-      )}
-      {isCentral && A.category === 'remnant' && (
-        <div className="bh-regime" role="tablist">
-          <span className="rs-head">{tr('BH scale', '黑洞尺度')}</span>
-          <div className="bh-regime-row">
-            {phys.BH_REGIME_ORDER.map((rk) => {
-              const r = phys.BH_REGIMES[rk];
-              const on = (sim.bhRegime || 'stellar') === rk && A.type === 'bh';
-              return (
-                <button key={rk} className={`bh-regime-chip ${on ? 'on' : ''}`}
-                  onClick={() => switchRegime(rk)}>
-                  <span className="l">{tr(r.label_en, r.label_zh)}</span>
-                  <small>{phys.fmtSolarMass(r.bhMin)}–{phys.fmtSolarMass(r.max)}</small>
-                </button>
-              );
-            })}
-          </div>
         </div>
       )}
       <MParam sym={isCentral ? 'M' : 'M₂'} name={tr('Mass', '質量')} val={A.Msun} unit={A.massUnit}
@@ -636,6 +611,18 @@ function TabBlackHole({ sim, force }) {
         </div>
 
         <div className="body-tabs">
+          {(() => {
+            const reg = phys.BH_REGIMES[sim.bhRegime || 'stellar'];
+            return (
+              <button className="body-tab scale-cycle"
+                onClick={() => { window.KNSim.cycleBHRegime(sim, 1); force(); }}
+                title={tr('Mass scale — tap to cycle (stellar → intermediate → supermassive); rescales both bodies and the object library.',
+                          '質量尺度 — 點擊循環（恆星級 → 中等 → 超大）；同時調整主天體/伴星與天體庫。')}>
+                <span className="g">◍</span>
+                <span className="l">{tr('SCALE', '尺度')}<br/>{tr(reg.label_en, reg.label_zh)}</span>
+              </button>
+            );
+          })()}
           <button className={`body-tab ${activeBody === 'central' ? 'on' : ''}`}
             onClick={() => { cancelCompanionPlacement(); setActiveBody('central'); }}>
             <span className="g">⦿</span><span className="l">{tr('Central', '主天體')}</span>

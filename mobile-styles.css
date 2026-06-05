@@ -706,9 +706,21 @@ html, body {
 /* ─── Mobile body tabs (Central / Binary Companion) ───────── */
 .body-tabs {
   display: grid;
-  grid-template-columns: 1fr 1.2fr;
+  grid-template-columns: 0.9fr 1fr 1.1fr;
   gap: 5px;
   margin-bottom: 10px;
+}
+/* Mass-scale cycle button (leftmost) — mirrors the desktop scale-cycle tab. */
+.body-tabs .body-tab.scale-cycle {
+  flex-direction: column; gap: 2px; padding: 7px 4px;
+  border-color: color-mix(in oklch, var(--cyan) 35%, var(--line));
+  color: var(--cyan);
+  text-transform: none; letter-spacing: 0.02em; line-height: 1.15;
+}
+.body-tabs .body-tab.scale-cycle .g { color: var(--cyan); font-size: 13px; }
+.body-tabs .body-tab.scale-cycle .l { font-size: 8.5px; text-align: center; }
+.body-tabs .body-tab.scale-cycle:active {
+  background: color-mix(in oklch, var(--cyan) 12%, var(--bg-0));
 }
 .body-tabs .body-tab {
   position: relative;
@@ -757,9 +769,10 @@ html, body {
 /* ─── Mobile central-type selector ───────────────────────── */
 .type-pick {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 5px;
   margin-bottom: 14px;
+  justify-items: stretch;
 }
 .type-pick .type-tab {
   background: var(--bg-0);
@@ -799,27 +812,6 @@ html, body {
   padding: 9px 8px; cursor: pointer;
 }
 .swap-bodies:active { background: color-mix(in oklch, oklch(0.78 0.14 295) 14%, var(--bg-0)); }
-
-/* Black-hole mass-regime selector (mobile) — cyan accent, scale axis. */
-.bh-regime { margin-bottom: 14px; font-family: var(--mono); }
-.bh-regime .rs-head {
-  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--fg-3); display: block; margin-bottom: 5px;
-}
-.bh-regime-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
-.bh-regime-chip {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  background: var(--bg-0); border: 1px solid var(--line); border-radius: 4px;
-  padding: 8px 3px; color: var(--fg-2); cursor: pointer;
-}
-.bh-regime-chip .l { font-size: 10px; letter-spacing: 0.03em; }
-.bh-regime-chip small { color: var(--fg-3); font-size: 8px; }
-.bh-regime-chip.on {
-  border-color: var(--cyan);
-  background: color-mix(in oklch, var(--cyan) 12%, var(--bg-0));
-  color: var(--cyan);
-}
-.bh-regime-chip.on small { color: var(--cyan); }
 
 .stellar-sub {
   margin-top: 12px;

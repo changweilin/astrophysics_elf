@@ -306,7 +306,7 @@ function MobileApp() {
         const pts = [...pointers.values()];
         const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         const ratio = d / pinch.startDist;
-        MSIM.view.scale = Math.min(80, Math.max(4, pinch.startScale * ratio));
+        MSIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, Math.max(window.KNphysics.VIEW_SCALE_MIN, pinch.startScale * ratio));
         movedSinceDown = true;
         return;
       }
@@ -661,8 +661,9 @@ function MobileApp() {
 
         {/* Zoom buttons */}
         <div className="m-zoom">
-          <button onClick={() => { MSIM.view.scale = Math.min(80, MSIM.view.scale * 1.25); force(); }}>+</button>
-          <button onClick={() => { MSIM.view.scale = Math.max(4, MSIM.view.scale * 0.8); force(); }}>−</button>
+          <button onClick={() => { MSIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, MSIM.view.scale * 1.25); force(); }}>+</button>
+          <button onClick={() => { window.KNSim.fitView(MSIM); force(); }}>⤢</button>
+          <button onClick={() => { MSIM.view.scale = Math.max(window.KNphysics.VIEW_SCALE_MIN, MSIM.view.scale * 0.8); force(); }}>−</button>
         </div>
       </div>
 

@@ -188,7 +188,7 @@
     // Only ever zoom out, so a deliberately close placement is left framed.
     if (sim._vw && sim._vh) {
       const fit = (Math.min(sim._vw, sim._vh) / 2) * 0.6 / Math.max(r, 1);
-      if (fit < sim.view.scale) sim.view.scale = Math.max(4, Math.min(80, fit));
+      if (fit < sim.view.scale) sim.view.scale = Math.max(phys.VIEW_SCALE_MIN, Math.min(phys.VIEW_SCALE_MAX, fit));
     }
     bin.x2 = wx; bin.y2 = wy;
     bin.d = r; bin.d0 = r;
@@ -1579,6 +1579,40 @@
     return true;
   }
 
+  // Frame the central body (and the companion, if placed) so the whole system
+  // fits the viewport. A stellar photosphere draws at R_star·scale and carries a
+  // ~2× corona, so a swollen giant needs the camera pulled back well past its
+  // per-stage default; this picks the largest scale that still keeps both
+  // surfaces on screen, but never zooms IN past the default. Centres on the
+  // single body, or on a binary's midpoint.
+  function fitView(sim) {
+    const p = sim.params, bin = sim.binary;
+    const fitScale = phys.VIEW_SCALES[phys.uiCategory(p.type || 'bh')];
+    // Visible half-extent of a body about its own centre (world units of M).
+    const surf = (type, M, Q, a, R) => {
+      if ((type || 'bh') === 'bh') {
+        const h = phys.horizons(M, Q || 0, a || 0);
+        return (isFinite(h.rplus) && !h.naked) ? h.rplus : 2 * M;
+      }
+      return (R || 3) * 1.4;            // photosphere + a margin for the corona
+    };
+    const binOn = bin && bin.enabled && isFinite(bin.x2) && isFinite(bin.y2);
+    let cx = 0, cy = 0;
+    if (binOn) { cx = (bin.x1 + bin.x2) / 2; cy = (bin.y1 + bin.y2) / 2; }
+    const x1 = binOn ? bin.x1 : 0, y1 = binOn ? bin.y1 : 0;
+    let half = Math.hypot(x1 - cx, y1 - cy) + surf(p.type, p.M, p.Q, p.a, p.R_star);
+    if (binOn) {
+      half = Math.max(half, Math.hypot(bin.x2 - cx, bin.y2 - cy)
+        + surf(bin.type, bin.M2, bin.Q2, bin.a2, bin.R_star2));
+    }
+    half = Math.max(half, 1);
+    let s = fitScale;
+    if (sim._vw && sim._vh) s = Math.min(fitScale, (Math.min(sim._vw, sim._vh) / 2) * 0.85 / half);
+    sim.view.scale = Math.max(phys.VIEW_SCALE_MIN, Math.min(phys.VIEW_SCALE_MAX, s));
+    sim.view.ox = -cx; sim.view.oy = -cy;
+    return sim.view.scale;
+  }
+
   // --- renderer ---
   function worldToScreen(sim, w, h, x, y) {
     return [w / 2 + (x + sim.view.ox) * sim.view.scale,
@@ -1605,6 +1639,6 @@
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
                    setBHRegime, cycleBHRegime, applySMBHStructure, swapCentralCompanion,
-                   worldToScreen, worldToScreenInto, screenToWorld,
+                   fitView, worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

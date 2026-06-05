@@ -186,7 +186,8 @@
     }
     if (typeof cfg.smbhStructure === 'string') sim.smbhStructure = cfg.smbhStructure;
     if (cfg.view && isNum(cfg.view.scale)) {
-      sim.view.scale = Math.min(80, Math.max(4, cfg.view.scale));
+      const phys = window.KNphysics;
+      sim.view.scale = Math.min(phys.VIEW_SCALE_MAX, Math.max(phys.VIEW_SCALE_MIN, cfg.view.scale));
     }
     if (isNum(cfg.timescale)) sim.timescale = cfg.timescale;
     if (isNum(cfg.t)) sim.t = cfg.t;

@@ -171,6 +171,12 @@
   // (view.scale, px per unit M) so the body is framed instead of overflowing or
   // shrinking to a dot. The UI remembers the user's per-stage zoom on top of this.
   const VIEW_SCALES = { star: 9, giant: 6, remnant: 18 };
+  // Manual-zoom clamp (px per unit M). The minimum is low enough to pull back far
+  // enough to frame a swollen giant photosphere plus its corona (R ~ 40, drawn at
+  // R·scale with a ~2× halo); the maximum keeps a compact horizon from filling the
+  // whole viewport.
+  const VIEW_SCALE_MIN = 1.5;
+  const VIEW_SCALE_MAX = 80;
 
   // ── Black-hole mass regimes (real-universe distribution) ─────────────
   // Geometry is frozen in units of M, so a stellar BH and a supermassive BH draw
@@ -955,7 +961,7 @@
     rocheLobeEggleton, massTransferRate, orbitalResponseRate, ceCriticalQ,
     ceOutcome, novaIgnitionMass, gasStreamPaths,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
-    uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
+    uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES, VIEW_SCALE_MIN, VIEW_SCALE_MAX,
     BH_REGIMES, BH_REGIME_ORDER, SMBH_STRUCTURES, bhRegimeForMass, fmtSolarMass,
     STAGE_MASS_LIMITS, stageRegimeRange, stageLockedAtRegime,
     bhObservables, EHT_RES_UAS,
