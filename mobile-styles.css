@@ -789,6 +789,17 @@ html, body {
 .type-pick .type-tab.locked { opacity: 0.4; cursor: not-allowed; border-style: dashed; }
 .type-pick .type-tab.locked .g { color: var(--fg-3); }
 
+/* Swap central ⇄ companion (mobile). */
+.swap-bodies {
+  width: 100%; margin-bottom: 12px;
+  background: var(--bg-0);
+  border: 1px solid color-mix(in oklch, oklch(0.78 0.14 295) 40%, var(--line));
+  color: oklch(0.82 0.12 295);
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 9px 8px; cursor: pointer;
+}
+.swap-bodies:active { background: color-mix(in oklch, oklch(0.78 0.14 295) 14%, var(--bg-0)); }
+
 /* Black-hole mass-regime selector (mobile) — cyan accent, scale axis. */
 .bh-regime { margin-bottom: 14px; font-family: var(--mono); }
 .bh-regime .rs-head {

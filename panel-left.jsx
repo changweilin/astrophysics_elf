@@ -416,8 +416,10 @@ function BodyEditor({ sim, force, role }) {
 
   // At the supermassive scale stars cannot exist, so the central tabs offer the
   // galactic-nucleus structures that DO couple to an SMBH (quasar / nuclear cluster
-  // / bare hole) instead of the dead, locked stellar stages.
+  // / bare hole) instead of the dead, locked stellar stages. A companion at this
+  // scale can only be a black hole — there is nothing else that massive.
   const smbhStructures = isCentral && regime === 'supermassive';
+  const companionBHOnly = !isCentral && regime === 'supermassive';
 
   return (
     <>
@@ -432,6 +434,15 @@ function BodyEditor({ sim, force, role }) {
               <span className="l">{tr(s.label_en, s.label_zh)}</span>
             </button>
           ))}
+        </div>
+      ) : companionBHOnly ? (
+        <div className="type-pick" role="tablist">
+          <button className="type-tab on" disabled
+            title={tr('At the supermassive scale a companion can only be a black hole.',
+                      '超大尺度下,伴星只能是黑洞。')}>
+            <span className="g">●</span>
+            <span className="l">{tr('Black hole', '黑洞')}</span>
+          </button>
         </div>
       ) : (
       <div className="type-pick" role="tablist">
@@ -455,7 +466,7 @@ function BodyEditor({ sim, force, role }) {
       </div>
       )}
 
-      {accessors.category === 'remnant' && !smbhStructures && (
+      {accessors.category === 'remnant' && !smbhStructures && !companionBHOnly && (
         <div className="remnant-stage" role="status">
           <span className="rs-head">{tr('mass selects remnant', '質量決定緻密天體')}</span>
           {[
@@ -705,6 +716,15 @@ function LeftPanel({ sim, force }) {
             )}
           </button>
         </div>
+
+        {bin && bin.enabled && (
+          <button className="swap-bodies"
+            onClick={() => { window.KNSim.swapCentralCompanion(sim); force(); }}
+            title={tr('Exchange the central body and companion (roles + motion); doing it twice restores the original.',
+                      '互換主天體與伴星(角色＋運動);再按一次即還原。')}>
+            ⇄ {tr('Swap central ⇄ companion', '主天體 ⇄ 伴星 互換')}
+          </button>
+        )}
 
         <BodyEditor sim={sim} force={force} role={activeBody} />
 

@@ -488,6 +488,24 @@ html, body {
 .type-pick .type-tab.locked:hover { border-color: var(--line); color: var(--fg-2); }
 .type-pick .type-tab.locked .g { color: var(--fg-3); }
 
+/* Swap central ⇄ companion — exchanges both bodies' content + motion (involution). */
+.swap-bodies {
+  width: 100%;
+  margin: -4px 0 12px;
+  background: var(--bg-0);
+  border: 1px solid color-mix(in oklch, oklch(0.78 0.14 295) 40%, var(--line));
+  color: oklch(0.80 0.12 295);
+  font-family: var(--mono);
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 6px 8px; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.swap-bodies:hover {
+  border-color: oklch(0.78 0.14 295);
+  background: color-mix(in oklch, oklch(0.78 0.14 295) 12%, var(--bg-0));
+  color: oklch(0.88 0.12 295);
+}
+
 /* Companion tab — distinct purple/magenta theme to set it apart from the 4 central types */
 .type-pick .companion-tab {
   border-left: 1px solid var(--line);

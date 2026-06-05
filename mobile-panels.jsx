@@ -345,8 +345,9 @@ function MBodyEditor({ sim, force, role }) {
   }
 
   // At the supermassive scale the central tabs offer galactic-nucleus structures
-  // (quasar / nuclear cluster / bare SMBH) instead of the locked stellar stages.
+  // (quasar / nuclear cluster / bare SMBH); a companion can only be a black hole.
   const smbhStructures = isCentral && regime === 'supermassive';
+  const companionBHOnly = !isCentral && regime === 'supermassive';
 
   return (
     <>
@@ -360,6 +361,13 @@ function MBodyEditor({ sim, force, role }) {
               <span className="l">{tr(s.label_en, s.label_zh)}</span>
             </button>
           ))}
+        </div>
+      ) : companionBHOnly ? (
+        <div className="type-pick">
+          <button className="type-tab on" disabled>
+            <span className="g">●</span>
+            <span className="l">{tr('Black hole', '黑洞')}</span>
+          </button>
         </div>
       ) : (
       <div className="type-pick">
@@ -380,7 +388,13 @@ function MBodyEditor({ sim, force, role }) {
         })}
       </div>
       )}
-      {A.category === 'remnant' && !smbhStructures && (
+      {bin && bin.enabled && (
+        <button className="swap-bodies"
+          onClick={() => { window.KNSim.swapCentralCompanion(sim); force(); }}>
+          ⇄ {tr('Swap central ⇄ companion', '主天體 ⇄ 伴星 互換')}
+        </button>
+      )}
+      {A.category === 'remnant' && !smbhStructures && !companionBHOnly && (
         <div className="remnant-stage" role="status">
           {[
             { k: 'wd', g: '◐', label: tr('WD', '白矮') },

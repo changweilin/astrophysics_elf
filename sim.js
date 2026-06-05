@@ -1470,6 +1470,91 @@
     return key;
   }
 
+  // ── Swap central ⇄ companion ──────────────────────────────
+  // Exchange the two stars' identities AND their motion so the system is the same
+  // physical binary with the labels swapped. Each body keeps its intrinsic physical
+  // mass and DIMENSIONLESS spin/charge (a/M, Q/M) — only the geometric normalization
+  // (primary frozen at M = 1) is re-applied — so swapping is a clean involution:
+  // doing it twice restores the original state exactly. Positions, velocities and
+  // trails are exchanged in place, so the conserved barycentre and its velocity are
+  // preserved and the orbit continues without a jump; the accretion discs follow
+  // their bodies. (For unequal masses the geometric Mt — hence the orbital rate in
+  // units of the new primary's M — changes, which is inherent to the mass-decoupled
+  // unit convention, not a discontinuity in the state.)
+  function swapCentralCompanion(sim) {
+    const bin = sim.binary;
+    if (!bin || !bin.enabled) {
+      logEv(sim, 'warn', tr('place a companion first to swap roles', '請先放置伴星才能互換角色'));
+      return false;
+    }
+    const p = sim.params;
+    // Each body's intrinsic dimensionless spin/charge (a/M, Q/M), preserved on swap.
+    const chi1 = p.a / p.M, q1 = p.Q / p.M;
+    const chi2 = bin.M2 > 0 ? bin.a2 / bin.M2 : 0;
+    const qq2  = bin.M2 > 0 ? bin.Q2 / bin.M2 : 0;
+    const MtOld = p.M + bin.M2;                  // geometric total before the swap
+
+    // Exchange physical mass + evolutionary stage + surface/driver fields.
+    const t = {
+      Msun: p.Msun, type: p.type, R_star: p.R_star, T_eff: p.T_eff,
+      age: p.age, Z: p.Z, cepheid: p.cepheid, cepheidAmp: p.cepheidAmp,
+      B: p.B, _stellarTouched: p._stellarTouched,
+    };
+    p.Msun = bin.M2sun; p.type = bin.type; p.R_star = bin.R_star2; p.T_eff = bin.T_eff2;
+    p.age = bin.age2; p.Z = bin.Z2; p.cepheid = bin.cepheid; p.cepheidAmp = bin.cepheidAmp;
+    p.B = bin.B2; p._stellarTouched = bin._stellarTouched;
+    bin.M2sun = t.Msun; bin.type = t.type; bin.R_star2 = t.R_star; bin.T_eff2 = t.T_eff;
+    bin.age2 = t.age; bin.Z2 = t.Z; bin.cepheid = t.cepheid; bin.cepheidAmp = t.cepheidAmp;
+    bin.B2 = t.B; bin._stellarTouched = t._stellarTouched;
+
+    // Primary stays geometric M = 1; companion geometric mass is the new ratio.
+    bin.M2 = Math.max(0.001, p.Msun > 0 ? bin.M2sun / p.Msun : 1);
+    // Re-apply each body's intrinsic spin/charge in the new normalization.
+    p.a = chi2 * p.M; p.Q = qq2 * p.M;          // new central ← old companion's a/M, Q/M
+    bin.a2 = chi1 * bin.M2; bin.Q2 = q1 * bin.M2; // new companion ← old central's a/M, Q/M
+    // Sub-extremal safety for the central (companion stays sub-extremal by construction).
+    const cap = 0.998, ext = Math.hypot(p.Q, p.a);
+    if (ext > cap * p.M) { const s = cap * p.M / ext; p.Q *= s; p.a *= s; }
+
+    // Exchange the live motion state (positions / velocities / trails) in place.
+    const sw = (o, k1, k2) => { const v = o[k1]; o[k1] = o[k2]; o[k2] = v; };
+    sw(bin, 'x1', 'x2'); sw(bin, 'y1', 'y2'); sw(bin, 'vx1', 'vx2'); sw(bin, 'vy1', 'vy2');
+    const tr1 = bin.trail1; bin.trail1 = bin.trail2; bin.trail2 = tr1;
+
+    // The geometric total mass is in units of the (now different) primary mass, so it
+    // changes with the swap. Rescale ONLY the relative velocity by √(Mt'/Mt) so the
+    // orbit keeps its shape (a circular orbit stays circular at the same separation,
+    // an ellipse keeps its eccentricity) — the barycentre velocity is left untouched,
+    // so momentum is conserved. √ on both legs makes the swap a clean involution.
+    const Mt = p.M + bin.M2;
+    const f1 = bin.M2 / Mt, f2 = p.M / Mt;
+    const vcx = (p.M * bin.vx1 + bin.M2 * bin.vx2) / Mt;   // conserved barycentre velocity
+    const vcy = (p.M * bin.vy1 + bin.M2 * bin.vy2) / Mt;
+    const s = Math.sqrt(Mt / Math.max(1e-9, MtOld));
+    const Vx = (bin.vx2 - bin.vx1) * s, Vy = (bin.vy2 - bin.vy1) * s;
+    bin.vx1 = vcx - f1 * Vx; bin.vy1 = vcy - f1 * Vy;
+    bin.vx2 = vcx + f2 * Vx; bin.vy2 = vcy + f2 * Vy;
+
+    sim.primary.x = bin.x1; sim.primary.y = bin.y1; sim.primary.vx = bin.vx1; sim.primary.vy = bin.vy1;
+    // Conserved barycentre (analytically unchanged; recompute from the new state).
+    bin.cx = (p.M * bin.x1 + bin.M2 * bin.x2) / Mt;
+    bin.cy = (p.M * bin.y1 + bin.M2 * bin.y2) / Mt;
+    bin.d = Math.hypot(bin.x2 - bin.x1, bin.y2 - bin.y1);
+    bin.theta = Math.atan2(bin.y2 - bin.y1, bin.x2 - bin.x1);
+
+    // Each accretion disc follows its body, so a quasar that becomes the companion
+    // keeps its disc/jet (sim.disc is the primary's, sim.disc2 the companion's).
+    if (sim.disc && sim.disc2) { const d = sim.disc; sim.disc = sim.disc2; sim.disc2 = d; }
+    sim.smbhStructure = (sim.disc && sim.disc.enabled) ? 'quasar' : 'smbh';
+
+    // The donor/accretor indices are now inverted — re-evaluate transfer cleanly.
+    resetMassTransfer(bin);
+    if (sim.selectedId != null) sim.selectedId = null;
+
+    logEv(sim, 'good', tr('central ⇄ companion roles swapped', '主天體 ⇄ 伴星 角色已互換'));
+    return true;
+  }
+
   // --- renderer ---
   function worldToScreen(sim, w, h, x, y) {
     return [w / 2 + (x + sim.view.ox) * sim.view.scale,
@@ -1495,7 +1580,7 @@
 
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
-                   setBHRegime, cycleBHRegime, applySMBHStructure,
+                   setBHRegime, cycleBHRegime, applySMBHStructure, swapCentralCompanion,
                    worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();
