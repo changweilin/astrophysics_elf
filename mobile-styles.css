@@ -786,6 +786,27 @@ html, body {
 }
 .type-pick .type-tab.on .g { color: var(--amber); }
 
+/* Black-hole mass-regime selector (mobile) — cyan accent, scale axis. */
+.bh-regime { margin-bottom: 14px; font-family: var(--mono); }
+.bh-regime .rs-head {
+  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--fg-3); display: block; margin-bottom: 5px;
+}
+.bh-regime-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.bh-regime-chip {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: var(--bg-0); border: 1px solid var(--line); border-radius: 4px;
+  padding: 8px 3px; color: var(--fg-2); cursor: pointer;
+}
+.bh-regime-chip .l { font-size: 10px; letter-spacing: 0.03em; }
+.bh-regime-chip small { color: var(--fg-3); font-size: 8px; }
+.bh-regime-chip.on {
+  border-color: var(--cyan);
+  background: color-mix(in oklch, var(--cyan) 12%, var(--bg-0));
+  color: var(--cyan);
+}
+.bh-regime-chip.on small { color: var(--cyan); }
+
 .stellar-sub {
   margin-top: 12px;
   padding-top: 10px;

@@ -174,6 +174,13 @@ function BodyEditor({ sim, force, role }) {
   const type = isCentral ? (sim.params.type || 'bh') : ((bin && bin.type) || 'bh');
   const category = phys.uiCategory(type);
   const range = phys.MASS_RANGES[category];
+  // A central black hole follows the active mass regime's band (stellar /
+  // intermediate / supermassive); everything else uses the per-stage range.
+  const regime = sim.bhRegime || 'stellar';
+  const regDef = phys.BH_REGIMES[regime];
+  const bhBand = (isCentral && type === 'bh' && regDef) ? regDef : null;
+  const mMin = bhBand ? bhBand.min : range.min;
+  const mMax = bhBand ? bhBand.max : range.max;
   const accessors = isCentral ? {
     type, category,
     Mgeo: sim.params.M,
@@ -184,7 +191,7 @@ function BodyEditor({ sim, force, role }) {
     cepheid: !!sim.params.cepheid,
     cepheidAmp: sim.params.cepheidAmp != null ? sim.params.cepheidAmp : 0.07,
     B: sim.params.B || 0,
-    massUnit: 'M⊙', mMin: range.min, mMax: range.max,
+    massUnit: 'M⊙', mMin, mMax,
   } : {
     type, category,
     Mgeo: (bin && bin.M2) || 0.8,
@@ -195,7 +202,7 @@ function BodyEditor({ sim, force, role }) {
     cepheid: !!(bin && bin.cepheid),
     cepheidAmp: (bin && bin.cepheidAmp != null) ? bin.cepheidAmp : 0.07,
     B: (bin && bin.B2) || 0,
-    massUnit: 'M⊙', mMin: range.min, mMax: range.max,
+    massUnit: 'M⊙', mMin, mMax,
   };
 
   const isBH = accessors.type === 'bh';
@@ -437,8 +444,8 @@ function BodyEditor({ sim, force, role }) {
 
       <Param sym={isCentral ? 'M' : 'M₂'} name={tr('Mass', '質量')} val={accessors.Msun} unit={accessors.massUnit}
              min={accessors.mMin} max={accessors.mMax} step={0.01} scale="log"
-             fmt={(v) => v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v).toString()} onChange={setMass}
-             scaleLabels={[String(accessors.mMin), 'log', String(accessors.mMax)]} />
+             fmt={(v) => phys.fmtSolarMass(v)} onChange={setMass}
+             scaleLabels={[phys.fmtSolarMass(accessors.mMin), 'log', phys.fmtSolarMass(accessors.mMax)]} />
       <Param sym={isCentral ? 'Q' : 'Q₂'} name={tr('Charge', '電荷')} unit="√(M)" val={accessors.Q}
              min={-1.5} max={1.5} step={0.01}
              color="magenta" fmt={(v) => (v >= 0 ? '+' : '') + v.toFixed(2)}
@@ -644,6 +651,18 @@ function LeftPanel({ sim, force }) {
         </div>
 
         <div className="body-tabs" role="tablist">
+          {(() => {
+            const reg = phys.BH_REGIMES[sim.bhRegime || 'stellar'];
+            return (
+              <button className="body-tab scale-cycle"
+                onClick={() => { window.KNSim.cycleBHRegime(sim, 1); force(); }}
+                title={tr('Black-hole mass scale — click to cycle (stellar → intermediate → supermassive); rescales both bodies and the object library. Key: B',
+                          '黑洞質量尺度 — 點擊循環（恆星級 → 中等 → 超大）；同時調整主天體/伴星與天體庫。按鍵：B')}>
+                <span className="g">◍</span>
+                <span className="l">{tr('SCALE', '尺度')}<br/>{tr(reg.label_en, reg.label_zh)}</span>
+              </button>
+            );
+          })()}
           <button className={`body-tab ${activeBody === 'central' ? 'on' : ''}`}
             onClick={() => setActiveBody('central')}>
             <span className="g">⦿</span><span className="l">{tr('Central Body', '主天體')}</span>
@@ -716,7 +735,7 @@ function LeftPanel({ sim, force }) {
           <div className="name">{cls.name}</div>
           <div className="desc">{cls.desc}</div>
           <div className="ratios">
-            <div><span className="k">{tr('mass', '質量')}</span><span className="v">{(p.Msun || 0) < 10 ? (p.Msun || 0).toFixed(2) : Math.round(p.Msun || 0)}<small> M⊙</small></span></div>
+            <div><span className="k">{tr('mass', '質量')}</span><span className="v">{phys.fmtSolarMass(p.Msun || 0)}<small> M⊙</small></span></div>
             <div><span className="k">|a|/M</span><span className="v">{Math.abs(aN).toFixed(3)}</span></div>
             <div><span className="k">|Q|/M</span><span className="v">{Math.abs(qN).toFixed(3)}</span></div>
             <div><span className="k">a² + Q² (M²)</span><span className="v" style={{ color: ext > 1 ? 'var(--warn)' : 'inherit' }}>{ext}</span></div>

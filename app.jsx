@@ -455,6 +455,13 @@ function App() {
         if (SIM.binary) SIM.binary.held = false;
         force();
       }
+      // Cycle the black-hole mass regime (stellar → intermediate → supermassive),
+      // adjusting the BH mass band and the scale of the interactive Object Library.
+      // Shift+B steps backward.
+      if (e.key === 'b' || e.key === 'B') {
+        window.KNSim.cycleBHRegime(SIM, e.shiftKey ? -1 : 1);
+        force();
+      }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -510,7 +517,10 @@ function App() {
         </div>
         <div className="overlay-tr">
           <div className="chip">{tr('CLASS', '類別')} · <b>{cls.name}</b></div>
-          <div className="chip">M=<b>{(SIM.params.Msun || 0) < 10 ? (SIM.params.Msun || 0).toFixed(2) : Math.round(SIM.params.Msun || 0)}</b>M⊙ · Q=<b>{SIM.params.Q.toFixed(2)}</b> · a=<b>{SIM.params.a.toFixed(2)}</b>
+          {SIM.params.type === 'bh' && phys.BH_REGIMES[SIM.bhRegime || 'stellar'] && (
+            <div className="chip">{tr('SCALE', '尺度')} · <b>{tr(phys.BH_REGIMES[SIM.bhRegime || 'stellar'].label_en, phys.BH_REGIMES[SIM.bhRegime || 'stellar'].label_zh)}</b> · <span style={{color:'var(--fg-3)'}}>{tr('B to cycle', 'B 切換')}</span></div>
+          )}
+          <div className="chip">M=<b>{phys.fmtSolarMass(SIM.params.Msun || 0)}</b>M⊙ · Q=<b>{SIM.params.Q.toFixed(2)}</b> · a=<b>{SIM.params.a.toFixed(2)}</b>
             {SIM.params.type && SIM.params.type !== 'bh' && <> · R★=<b>{(SIM.params.R_star || 3).toFixed(2)}</b></>}
           </div>
         </div>

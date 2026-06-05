@@ -333,9 +333,24 @@ html, body {
 /* ---------- Body tabs (Central Body / Binary Companion) ---------- */
 .body-tabs {
   display: grid;
-  grid-template-columns: 1fr 1.2fr;
+  grid-template-columns: auto 1fr 1.2fr;
   gap: 4px;
   margin-bottom: 12px;
+}
+/* Black-hole mass-scale cycle button, left of the body tabs. Cyan accent sets the
+   scale axis apart from the amber/purple body tabs; one click → next regime. */
+.body-tabs .body-tab.scale-cycle {
+  flex-direction: column; gap: 2px; padding: 6px 8px;
+  border-color: color-mix(in oklch, var(--cyan) 35%, var(--line));
+  color: var(--cyan);
+  text-transform: none; letter-spacing: 0.02em; line-height: 1.15;
+}
+.body-tabs .body-tab.scale-cycle .g { color: var(--cyan); font-size: 13px; }
+.body-tabs .body-tab.scale-cycle .l { font-size: 8.5px; text-align: center; }
+.body-tabs .body-tab.scale-cycle:hover {
+  border-color: var(--cyan);
+  background: color-mix(in oklch, var(--cyan) 12%, var(--bg-0));
+  color: var(--cyan);
 }
 .body-tabs .body-tab {
   position: relative;

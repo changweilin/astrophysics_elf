@@ -57,6 +57,10 @@
       timescale: 1.0,
       selectedId: null,
       seq: 1,
+      // Black-hole mass regime: 'stellar' | 'intermediate' | 'supermassive'.
+      // Sets the BH mass band and which scale of interactive bodies the Object
+      // Library offers (see KNphysics.BH_REGIMES; toggled with the B key).
+      bhRegime: 'stellar',
     };
   }
 
@@ -1274,6 +1278,68 @@
     bin.trail2.length = 0;
   }
 
+  // ── Black-hole mass regime switching ──────────────────────
+  // Set the central body to a black hole of the given mass regime (stellar /
+  // intermediate / supermassive). The mass snaps to that band's default unless
+  // the current mass already sits inside it (so re-entering a regime keeps a
+  // user-tuned mass), a/Q are clamped sub-extremal, and the camera reframes to
+  // the compact-object zoom. The picker reads sim.bhRegime to offer scale-matched
+  // interactive bodies. Geometry stays frozen in units of M — this is a physical
+  // *scale* change, not a geometric one.
+  function setBHRegime(sim, regime) {
+    const reg = phys.BH_REGIMES[regime];
+    if (!reg) return;
+    sim.bhRegime = regime;
+    const cur = sim.params.Msun || 0;
+    const inBand = sim.params.type === 'bh' && cur >= reg.bhMin && cur <= reg.max;
+    const Msun = inBand ? cur : reg.def;
+    sim.params.Msun = Msun;
+    sim.params.type = 'bh';
+    // Clamp spin + charge sub-extremal for the frozen geometric mass (M = 1):
+    // a² + Q² < M². A black hole has no stellar surface to re-derive.
+    const cap = 0.998;
+    if (Math.abs(sim.params.Q) > cap) sim.params.Q = Math.sign(sim.params.Q || 1) * cap;
+    const room = Math.sqrt(Math.max(0, cap * cap - sim.params.Q * sim.params.Q));
+    if (Math.abs(sim.params.a) > room) sim.params.a = Math.sign(sim.params.a || 1) * room;
+    sim.view.scale = phys.VIEW_SCALES.remnant;
+    // The companion follows the new scale: keep the binary's geometric mass ratio
+    // (its physical mass rides the central mass) and reclassify it by the rescaled
+    // mass, so switching scale changes BOTH bodies' selection (a stellar pair →
+    // an SMBH-SMBH pair, etc.). Surfaces are re-derived by syncStellar next frame.
+    const bin = sim.binary;
+    if (bin) {
+      const ratio = bin.M2 > 0 ? bin.M2 : 0.8;        // companion geom mass / primary
+      bin.M2sun = Math.max(0.05, ratio * Msun);
+      bin.M2 = Math.max(0.01, bin.M2sun / Math.max(0.01, Msun));   // == ratio
+      const nt = phys.remnantType(bin.M2sun);
+      if (nt !== bin.type) {
+        bin.type = nt;
+        if (nt !== 'bh') {
+          const d = phys.STELLAR_DEFAULTS[nt];
+          if (d) { bin.R_star2 = d.R; bin.T_eff2 = d.T; }
+          bin._stellarTouched = false;
+        }
+      }
+      if (bin.type === 'bh') {
+        if (Math.abs(bin.Q2 || 0) > bin.M2 * cap) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * cap;
+        const room2 = Math.sqrt(Math.max(0, (bin.M2 * cap) ** 2 - (bin.Q2 || 0) ** 2));
+        if (Math.abs(bin.a2 || 0) > room2) bin.a2 = Math.sign(bin.a2 || 1) * room2;
+      }
+    }
+    logEv(sim, 'warn', trp('central → {label} BH · M = {m} M⊙', {
+      label: tr(reg.label_en, reg.label_zh), m: phys.fmtSolarMass(Msun) }));
+    return regime;
+  }
+
+  // Advance the regime by dir (+1 next, -1 previous), wrapping through the order.
+  function cycleBHRegime(sim, dir = 1) {
+    const order = phys.BH_REGIME_ORDER;
+    const i = Math.max(0, order.indexOf(sim.bhRegime || 'stellar'));
+    const n = order.length;
+    const next = order[((i + dir) % n + n) % n];
+    return setBHRegime(sim, next);
+  }
+
   // --- renderer ---
   function worldToScreen(sim, w, h, x, y) {
     return [w / 2 + (x + sim.view.ox) * sim.view.scale,
@@ -1299,6 +1365,7 @@
 
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
+                   setBHRegime, cycleBHRegime,
                    worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

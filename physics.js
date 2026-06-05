@@ -172,6 +172,90 @@
   // shrinking to a dot. The UI remembers the user's per-stage zoom on top of this.
   const VIEW_SCALES = { star: 9, giant: 6, remnant: 18 };
 
+  // ── Black-hole mass regimes (real-universe distribution) ─────────────
+  // Geometry is frozen in units of M, so a stellar BH and a supermassive BH draw
+  // the same horizon — the regime is a *physical-scale label*. It does three
+  // things: sets the BH mass-slider band, picks the default mass when you switch
+  // regimes, and swaps the interactive Object Library to bodies that actually
+  // populate that environment. The mass bands follow the observed population:
+  //   · stellar      ~3-150 M⊙   collapsed massive stars · X-ray binaries · LIGO
+  //   · intermediate ~10²-10⁵ M⊙ dense star clusters · ULX sources (e.g. HLX-1)
+  //   · supermassive ~10⁵-10¹⁰   galactic nuclei (Sgr A* 4×10⁶, M87* 6.5×10⁹)
+  // The interactive bodies scale with the host: a stellar BH shreds planets and
+  // comets; an IMBH swallows cluster stars and stellar remnants; an SMBH disrupts
+  // whole stars (TDEs), molecular clouds and entire star clusters. Object schema
+  // matches the picker's { name, name_zh, kind, radius, binding, charge, spawnR };
+  // kind ∈ {planet, gas, star, ship, probe} (drives the card glyph + drop flow).
+  const BH_REGIMES = {
+    stellar: {
+      key: 'stellar', label_en: 'Stellar-mass', label_zh: '恆星級',
+      // The stellar band shares the compact-object slider (0.1-150 M⊙) so the same
+      // stage still reaches white dwarfs and neutron stars below the BH threshold.
+      min: 0.1, max: 150, def: 10, bhMin: 3,
+      note_en: 'collapsed massive star', note_zh: '大質量恆星塌縮',
+      objects: [
+        { name: 'Rocky planet',   name_zh: '岩質行星',   kind: 'planet', radius: 0.30, binding: 2.5,  charge: 0,   spawnR: 12 },
+        { name: 'Gas giant',      name_zh: '氣態巨行星', kind: 'gas',    radius: 0.55, binding: 0.9,  charge: 0,   spawnR: 14 },
+        { name: 'Asteroid',       name_zh: '小行星',     kind: 'probe',  radius: 0.08, binding: 3.0,  charge: 0,   spawnR: 20 },
+        { name: 'Comet',          name_zh: '彗星',       kind: 'probe',  radius: 0.05, binding: 0.4,  charge: 0,   spawnR: 22 },
+        { name: 'Brown dwarf',    name_zh: '棕矮星',     kind: 'star',   radius: 0.45, binding: 4.0,  charge: 0,   spawnR: 16 },
+        { name: 'Crewed ship',    name_zh: '載人飛船',   kind: 'ship',   radius: 0.02, binding: 8.0,  charge: 0,   spawnR: 9  },
+        { name: 'Charged probe',  name_zh: '帶電探測器', kind: 'probe',  radius: 0.05, binding: 5.0,  charge: 0.6, spawnR: 11 },
+      ],
+    },
+    intermediate: {
+      key: 'intermediate', label_en: 'Intermediate-mass', label_zh: '中等尺度',
+      min: 1e2, max: 1e5, def: 1e3, bhMin: 1e2,
+      note_en: 'dense star cluster', note_zh: '緻密星團',
+      objects: [
+        { name: 'Main-sequence star', name_zh: '主序星',     kind: 'star',  radius: 0.60, binding: 5.0,   charge: 0,    spawnR: 20 },
+        { name: 'Red giant',          name_zh: '紅巨星',     kind: 'gas',   radius: 0.90, binding: 1.0,   charge: 0,    spawnR: 24 },
+        { name: 'White dwarf',        name_zh: '白矮星',     kind: 'star',  radius: 0.12, binding: 35.0,  charge: 0,    spawnR: 12 },
+        { name: 'Neutron star',       name_zh: '中子星',     kind: 'star',  radius: 0.05, binding: 120.0, charge: 0.02, spawnR: 9  },
+        { name: 'Stellar black hole', name_zh: '恆星級黑洞', kind: 'probe', radius: 0.04, binding: 200.0, charge: 0,    spawnR: 14 },
+        { name: 'Cluster gas clump',  name_zh: '星團氣體雲', kind: 'gas',   radius: 0.55, binding: 0.5,   charge: 0,    spawnR: 26 },
+      ],
+    },
+    supermassive: {
+      key: 'supermassive', label_en: 'Supermassive', label_zh: '超大尺度',
+      min: 1e5, max: 1e10, def: 4e6, bhMin: 1e5,   // default ≈ Sgr A*
+      note_en: 'galactic nucleus', note_zh: '星系核心',
+      objects: [
+        { name: 'S-star',             name_zh: 'S 星',       kind: 'star',  radius: 0.50, binding: 6.0,   charge: 0,    spawnR: 22 },
+        { name: 'Hypervelocity star', name_zh: '超高速恆星', kind: 'star',  radius: 0.45, binding: 6.0,   charge: 0,    spawnR: 30 },
+        { name: 'Molecular cloud',    name_zh: '分子雲',     kind: 'gas',   radius: 0.75, binding: 0.3,   charge: 0,    spawnR: 30 },
+        { name: 'Star cluster',       name_zh: '星團',       kind: 'gas',   radius: 0.85, binding: 0.4,   charge: 0,    spawnR: 26 },
+        { name: 'Stellar black hole', name_zh: '恆星級黑洞', kind: 'probe', radius: 0.04, binding: 200.0, charge: 0,    spawnR: 16 },
+        { name: 'Neutron star',       name_zh: '中子星',     kind: 'star',  radius: 0.05, binding: 120.0, charge: 0.02, spawnR: 12 },
+      ],
+    },
+  };
+  // Cycle order for the keyboard / UI toggle.
+  const BH_REGIME_ORDER = ['stellar', 'intermediate', 'supermassive'];
+
+  // Which regime a black-hole solar mass falls in (boundaries at 10² and 10⁵ M⊙).
+  function bhRegimeForMass(Msun) {
+    const m = Msun || 0;
+    if (m >= BH_REGIMES.supermassive.bhMin) return 'supermassive';
+    if (m >= BH_REGIMES.intermediate.bhMin) return 'intermediate';
+    return 'stellar';
+  }
+
+  // Compact, readable solar-mass label across the whole population. Large masses
+  // (IMBH/SMBH) render in ×10ⁿ scientific form; stellar masses stay plain.
+  function fmtSolarMass(Msun) {
+    const m = Math.abs(Msun || 0);
+    if (m >= 1e4) {
+      const e = Math.floor(Math.log10(m));
+      const mant = m / Math.pow(10, e);
+      const sup = String(e).replace(/[0-9]/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+d]);
+      return (mant < 9.95 ? mant.toFixed(1) : Math.round(mant)) + '×10' + sup;
+    }
+    if (m >= 10) return Math.round(m).toString();
+    if (m >= 1)  return m.toFixed(1);
+    return m.toFixed(2);
+  }
+
   // Which evolutionary stage a concrete type belongs to.
   function uiCategory(type) {
     if (type === 'ms') return 'star';
@@ -765,6 +849,7 @@
     ceOutcome, novaIgnitionMass, gasStreamPaths,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
+    BH_REGIMES, BH_REGIME_ORDER, bhRegimeForMass, fmtSolarMass,
     M_CHANDRASEKHAR, M_TOV, CE_ALPHA, CE_LAMBDA, NOVA_RETAIN, MT_K,
     msLuminosity, msRadius, msLifetime, effTemp,
     mainSequenceState, giantState, whiteDwarfState, neutronStarState, deriveStellar,

@@ -11,8 +11,17 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
     if (window.KNFull) setKnReady(true);
     return () => window.removeEventListener('knfull-ready', onReady);
   }, []);
-  const library = (knReady && window.KNFull && window.KNFull.objectCatalog && window.KNFull.objectCatalog.length)
-    ? window.KNFull.objectCatalog : LIBRARY;
+  // The interactive bodies follow the black-hole mass regime: a stellar BH offers
+  // planets/comets, an IMBH offers cluster stars + remnants, an SMBH offers whole
+  // stars/clouds/clusters (see KNphysics.BH_REGIMES). The regime catalog wins when
+  // present; otherwise fall back to the full-physics catalog, then the inline list.
+  const phys = window.KNphysics;
+  const regime = (phys && phys.BH_REGIMES) ? phys.BH_REGIMES[sim.bhRegime || 'stellar'] : null;
+  const regimeObjects = regime && regime.objects;
+  const library = (regimeObjects && regimeObjects.length)
+    ? regimeObjects
+    : ((knReady && window.KNFull && window.KNFull.objectCatalog && window.KNFull.objectCatalog.length)
+        ? window.KNFull.objectCatalog : LIBRARY);
   return (
     <div className="bottom">
       <div className="pane">
@@ -65,7 +74,7 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
             <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
           </div>
           <div className="meta-row">
-            <span style={{color:'var(--fg-3)'}}>{tr('Keyboard', '鍵盤')} <span className="kbd">space</span> {tr('play', '播放')} · <span className="kbd">R</span> {tr('reset', '重置')} · <span className="kbd">·</span></span>
+            <span style={{color:'var(--fg-3)'}}>{tr('Keyboard', '鍵盤')} <span className="kbd">space</span> {tr('play', '播放')} · <span className="kbd">R</span> {tr('reset', '重置')} · <span className="kbd">B</span> {tr('BH scale', '黑洞尺度')}</span>
           </div>
         </div>
       </div>

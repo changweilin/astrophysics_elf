@@ -126,6 +126,11 @@ function MBodyEditor({ sim, force, role }) {
   const type = isCentral ? (sim.params.type || 'bh') : ((bin && bin.type) || 'bh');
   const category = phys.uiCategory(type);
   const range = phys.MASS_RANGES[category];
+  // A central black hole follows the active mass regime's band (see desktop
+  // BodyEditor); everything else uses the per-stage range.
+  const regDef = (isCentral && type === 'bh') ? phys.BH_REGIMES[sim.bhRegime || 'stellar'] : null;
+  const mMin = regDef ? regDef.min : range.min;
+  const mMax = regDef ? regDef.max : range.max;
   const A = isCentral ? {
     type, category,
     Mgeo: sim.params.M,
@@ -136,7 +141,7 @@ function MBodyEditor({ sim, force, role }) {
     cepheid: !!sim.params.cepheid,
     cepheidAmp: sim.params.cepheidAmp != null ? sim.params.cepheidAmp : 0.07,
     B: sim.params.B || 0,
-    massUnit: 'M⊙', mMin: range.min, mMax: range.max,
+    massUnit: 'M⊙', mMin, mMax,
   } : {
     type, category,
     Mgeo: (bin && bin.M2) || 0.8,
@@ -147,7 +152,7 @@ function MBodyEditor({ sim, force, role }) {
     cepheid: !!(bin && bin.cepheid),
     cepheidAmp: (bin && bin.cepheidAmp != null) ? bin.cepheidAmp : 0.07,
     B: (bin && bin.B2) || 0,
-    massUnit: 'M⊙', mMin: range.min, mMax: range.max,
+    massUnit: 'M⊙', mMin, mMax,
   };
   const isBH = A.type === 'bh';
   // No stellar surface is a free variable: R★/T★/colour/L follow the mass plus
@@ -330,6 +335,13 @@ function MBodyEditor({ sim, force, role }) {
     force();   // R★/T★ re-derived for the new stage by KNSim.syncStellar
   }
 
+  // Switch the central BH mass regime (mobile has no keyboard, so this is the
+  // primary control; the desktop B key drives the same KNSim path).
+  function switchRegime(rk) {
+    window.KNSim.setBHRegime(sim, rk);
+    force();
+  }
+
   return (
     <>
       <div className="type-pick">
@@ -359,10 +371,28 @@ function MBodyEditor({ sim, force, role }) {
           ))}
         </div>
       )}
+      {isCentral && A.category === 'remnant' && (
+        <div className="bh-regime" role="tablist">
+          <span className="rs-head">{tr('BH scale', '黑洞尺度')}</span>
+          <div className="bh-regime-row">
+            {phys.BH_REGIME_ORDER.map((rk) => {
+              const r = phys.BH_REGIMES[rk];
+              const on = (sim.bhRegime || 'stellar') === rk && A.type === 'bh';
+              return (
+                <button key={rk} className={`bh-regime-chip ${on ? 'on' : ''}`}
+                  onClick={() => switchRegime(rk)}>
+                  <span className="l">{tr(r.label_en, r.label_zh)}</span>
+                  <small>{phys.fmtSolarMass(r.bhMin)}–{phys.fmtSolarMass(r.max)}</small>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <MParam sym={isCentral ? 'M' : 'M₂'} name={tr('Mass', '質量')} val={A.Msun} unit={A.massUnit}
               min={A.mMin} max={A.mMax} step={0.01} scale="log"
-              fmt={(v) => v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v).toString()} onChange={setMass}
-              scaleLabels={[String(A.mMin), 'log', String(A.mMax)]} />
+              fmt={(v) => phys.fmtSolarMass(v)} onChange={setMass}
+              scaleLabels={[phys.fmtSolarMass(A.mMin), 'log', phys.fmtSolarMass(A.mMax)]} />
       <MParam sym={isCentral ? 'Q' : 'Q₂'} name={tr('Charge', '電荷')} val={A.Q} unit="√(M)"
               min={-1.5} max={1.5} step={0.01}
               color="magenta" fmt={(v) => (v >= 0 ? '+' : '') + v.toFixed(2)}
@@ -1364,8 +1394,16 @@ function TabSpawn({ sim, force, onArm }) {
     if (window.KNFull) setKnReady(true);
     return () => window.removeEventListener('knfull-ready', onReady);
   }, []);
-  const library = (knReady && window.KNFull && window.KNFull.objectCatalog && window.KNFull.objectCatalog.length)
-    ? window.KNFull.objectCatalog : M_LIBRARY;
+  // Interactive bodies follow the central black hole's mass regime (stellar /
+  // intermediate / supermassive); see KNphysics.BH_REGIMES. Falls back to the
+  // full-physics catalog then the inline list when no regime catalog applies.
+  const phys = window.KNphysics;
+  const regime = (phys && phys.BH_REGIMES) ? phys.BH_REGIMES[sim.bhRegime || 'stellar'] : null;
+  const regimeObjects = regime && regime.objects;
+  const library = (regimeObjects && regimeObjects.length)
+    ? regimeObjects
+    : ((knReady && window.KNFull && window.KNFull.objectCatalog && window.KNFull.objectCatalog.length)
+        ? window.KNFull.objectCatalog : M_LIBRARY);
   return (
     <>
       <div className="m-sec">
