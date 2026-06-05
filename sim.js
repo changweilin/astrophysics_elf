@@ -31,8 +31,14 @@
         // (0 = ZAMS / birth, 1 = turnoff). Drives ms R★/T★/L evolution.
         age: 0,
         // Heavy-element (metallicity) fraction, 0..1 with 0.5 ≈ solar. Drives
-        // giant R★/T★ (metal-rich → cooler, more swollen, redder).
+        // giant R★/T★ (metal-rich → cooler, more swollen, redder). For a Cepheid
+        // it also slides the mean photosphere across the instability strip.
         Z: 0.5,
+        // Cepheid pulsation (giant only): the κ-mechanism drives radial pulsation
+        // when the giant sits in the instability strip. cepheidAmp is the fractional
+        // radius amplitude (0..0.2); the period is derived (P ∝ √(R³/M)), not a knob.
+        cepheid: false,
+        cepheidAmp: 0.07,
         // surface magnetic field strength (decorative; main MHD field is sim.params.B added below as needed)
       },
       // Central body kinematic state (world frame). All scene rendering pivots on this.
@@ -97,6 +103,8 @@
       T_eff2: 1e6,       // companion photosphere temperature
       age2: 0,           // companion main-sequence age fraction (ms evolution)
       Z2: 0.5,           // companion metallicity fraction (giant envelope tuning)
+      cepheid: false,    // companion Cepheid pulsation (giant only; κ-mechanism)
+      cepheidAmp: 0.07,  // companion fractional radius amplitude
       B2: 0.30,          // companion magnetic field (matches the primary's default
                          // so a placed companion is magnetised symmetrically — drives
                          // its own Blandford-Znajek jet and shows poloidal field lines)
@@ -1100,19 +1108,54 @@
   // field) through KNphysics.deriveStellar. A black hole has no surface. Called
   // every frame (step + render) so the canvas, the collision surfaces and the
   // panel read-outs can never drift apart.
+  // Sim-time units per physical day for the Cepheid clock. The pulsation period is
+  // physical (P ∝ √(R³/M), reported in days), but real Cepheid periods (days–months)
+  // are vastly longer than the demo's orbital timescales, so the visible cadence is
+  // compressed by this factor — the √(R³/M) scaling (and hence the P-L relation) is
+  // preserved exactly; only the absolute clock is rescaled for the eye.
+  const CEP_SIM_PER_DAY = 0.26;
+
+  // Apply κ-mechanism pulsation to an equilibrium giant photosphere and stash the
+  // period / phase / strip efficiency for the panel read-out. `tgt` is sim.params
+  // (central) or sim.binary (companion, keyed by the `2` suffix). Uses sim.t so the
+  // pulse freezes while paused and speeds up with the timescale, in step with orbits.
+  function applyCepheid(sim, tgt, base, Msun, ampRaw, companion) {
+    const amp = Math.max(0, Math.min(0.2, ampRaw != null ? ampRaw : 0.07));
+    const q = phys.instabilityStrip(base.T_eff, base.L);
+    const P_days = phys.cepheidPeriodDays(base.R_solar, Msun);
+    const P_sim = Math.max(0.5, P_days * CEP_SIM_PER_DAY);
+    const phase = (sim.t / P_sim) % 1;                 // 0..1 cycle fraction
+    const out = phys.cepheidModulate(base, 2 * Math.PI * phase, amp, q);
+    const k = companion
+      ? { P: '_cepPeriod2', ph: '_cepPhase2', dr: '_cepDrive2', ac: '_cepActive2' }
+      : { P: '_cepPeriod',  ph: '_cepPhase',  dr: '_cepDrive',  ac: '_cepActive'  };
+    tgt[k.P] = P_days; tgt[k.ph] = phase; tgt[k.dr] = q; tgt[k.ac] = q > 0;
+    return out;
+  }
+
   function syncStellar(sim) {
     const p = sim.params;
     if (p) {
+      const cep = p.type === 'giant' && !!p.cepheid;
       const d = phys.deriveStellar(p.type, p.Msun,
-        { age: p.age || 0, Z: p.Z != null ? p.Z : 0.5, B: p.B || 0, a: p.a || 0 });
+        { age: p.age || 0, Z: p.Z != null ? p.Z : 0.5, B: p.B || 0, a: p.a || 0, cepheid: cep });
       // _L (solar luminosity) is stashed for the renderer's brightness/glow.
-      if (d) { p.R_star = d.R_star; p.T_eff = d.T_eff; p._L = d.L; } else p._L = null;
+      if (d) {
+        const s = cep ? applyCepheid(sim, p, d, p.Msun, p.cepheidAmp, false) : d;
+        p.R_star = s.R_star; p.T_eff = s.T_eff; p._L = s.L;
+      } else p._L = null;
+      if (!cep) p._cepActive = false;
     }
     const b = sim.binary;
     if (b) {
+      const cep2 = b.type === 'giant' && !!b.cepheid;
       const d2 = phys.deriveStellar(b.type, b.M2sun,
-        { age: b.age2 || 0, Z: b.Z2 != null ? b.Z2 : 0.5, B: b.B2 || 0, a: b.a2 || 0 });
-      if (d2) { b.R_star2 = d2.R_star; b.T_eff2 = d2.T_eff; b._L2 = d2.L; } else b._L2 = null;
+        { age: b.age2 || 0, Z: b.Z2 != null ? b.Z2 : 0.5, B: b.B2 || 0, a: b.a2 || 0, cepheid: cep2 });
+      if (d2) {
+        const s2 = cep2 ? applyCepheid(sim, b, d2, b.M2sun, b.cepheidAmp, true) : d2;
+        b.R_star2 = s2.R_star; b.T_eff2 = s2.T_eff; b._L2 = s2.L;
+      } else b._L2 = null;
+      if (!cep2) b._cepActive2 = false;
     }
   }
 

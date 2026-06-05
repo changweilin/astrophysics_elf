@@ -133,6 +133,8 @@ function MBodyEditor({ sim, force, role }) {
     Q: sim.params.Q, a: sim.params.a,
     R_star: sim.params.R_star || 3.0, T_eff: sim.params.T_eff || 1e6,
     age: sim.params.age || 0, Z: sim.params.Z != null ? sim.params.Z : 0.5,
+    cepheid: !!sim.params.cepheid,
+    cepheidAmp: sim.params.cepheidAmp != null ? sim.params.cepheidAmp : 0.07,
     B: sim.params.B || 0,
     massUnit: 'M⊙', mMin: range.min, mMax: range.max,
   } : {
@@ -142,6 +144,8 @@ function MBodyEditor({ sim, force, role }) {
     Q: (bin && bin.Q2) || 0, a: (bin && bin.a2) || 0,
     R_star: (bin && bin.R_star2) || 3.0, T_eff: (bin && bin.T_eff2) || 1e6,
     age: (bin && bin.age2) || 0, Z: (bin && bin.Z2 != null) ? bin.Z2 : 0.5,
+    cepheid: !!(bin && bin.cepheid),
+    cepheidAmp: (bin && bin.cepheidAmp != null) ? bin.cepheidAmp : 0.07,
     B: (bin && bin.B2) || 0,
     massUnit: 'M⊙', mMin: range.min, mMax: range.max,
   };
@@ -151,8 +155,13 @@ function MBodyEditor({ sim, force, role }) {
   // re-derives them each frame; the panel only shows R★/T★ as read-outs.
   const isDerived = !isBH;
   const stellarState = isDerived
-    ? phys.deriveStellar(A.type, A.Msun, { age: A.age, Z: A.Z, B: A.B || 0, a: A.a })
+    ? phys.deriveStellar(A.type, A.Msun, { age: A.age, Z: A.Z, B: A.B || 0, a: A.a,
+        cepheid: A.type === 'giant' && A.cepheid })
     : null;
+  const cep = (A.type === 'giant' && A.cepheid && stellarState) ? {
+    P: phys.cepheidPeriodDays(stellarState.R_solar, A.Msun),
+    q: phys.instabilityStrip(stellarState.T_eff, stellarState.L),
+  } : null;
   const liveR = stellarState ? stellarState.R_star : A.R_star;
   const collapseHint = !isBH && phys.wouldCollapse(A.Mgeo, A.Q, A.a, liveR);
   const surfaceDriver = {
@@ -185,6 +194,17 @@ function MBodyEditor({ sim, force, role }) {
   }
   function setMetallicity(v) {
     if (isCentral) sim.params.Z = v; else if (bin) bin.Z2 = v;
+    force();
+  }
+  function setCepheid(on) {
+    if (isCentral) sim.params.cepheid = on; else if (bin) bin.cepheid = on;
+    window.KNSim.logEv(sim, on ? 'good' : 'warn', on
+      ? tr('Cepheid pulsation engaged — κ-mechanism', '造父變星脈動啟動 — κ 機制')
+      : tr('Cepheid pulsation off', '造父變星脈動關閉'));
+    force();
+  }
+  function setCepheidAmp(v) {
+    if (isCentral) sim.params.cepheidAmp = v; else if (bin) bin.cepheidAmp = v;
     force();
   }
 
@@ -388,6 +408,34 @@ function MBodyEditor({ sim, force, role }) {
                   color="amber" fmt={(v) => v === 0.5 ? tr('solar', '太陽') : (v < 0.5 ? '−' : '+') + Math.abs(v - 0.5).toFixed(2)}
                   onChange={setMetallicity}
                   scaleLabels={[tr('metal-poor', '貧金屬'), tr('solar', '太陽'), tr('metal-rich', '富金屬')]} />
+        )}
+        {A.type === 'giant' && (
+          <div style={{ margin: '4px 0 8px' }}>
+            <button className={`disc-toggle ${A.cepheid ? 'on' : ''}`}
+              onClick={() => setCepheid(!A.cepheid)}>
+              {A.cepheid
+                ? tr('CEPHEID · κ-mechanism pulsation', '造父變星 · κ 機制脈動')
+                : tr('Make it a Cepheid (κ-mechanism)', '設為造父變星（κ 機制）')}
+            </button>
+            {A.cepheid && (
+              <MParam sym={isCentral ? 'ΔR' : 'ΔR₂'} name={tr('Pulsation amplitude', '脈動振幅')}
+                      val={A.cepheidAmp} unit=""
+                      min={0.01} max={0.2} step={0.005}
+                      color="amber" fmt={(v) => '±' + (v * 100).toFixed(0) + '%'}
+                      onChange={setCepheidAmp}
+                      scaleLabels={[tr('subtle', '輕微'), tr('δ Cep', 'δ Cep'), tr('strong', '強烈')]} />
+            )}
+            {A.cepheid && cep && (
+              <div style={{ fontSize: '0.78em', opacity: 0.82, lineHeight: 1.5 }}>
+                <div>{tr('Period', '週期')} P ≈ <b>{cep.P < 10 ? cep.P.toFixed(1) : Math.round(cep.P)}</b> {tr('d', '天')} · P ∝ √(R³/M)</div>
+                <div style={{ color: cep.q > 0 ? 'var(--good, #8fd6a0)' : 'var(--warn, #e0a458)' }}>
+                  {cep.q > 0
+                    ? tr('● inside instability strip', '● 位於不穩定帶內') + ` · ${(cep.q * 100).toFixed(0)}%`
+                    : tr('○ outside strip — κ-valve damped', '○ 超出不穩定帶 — κ 閥阻尼')}
+                </div>
+              </div>
+            )}
+          </div>
         )}
         {(A.type === 'wd' || A.type === 'ns') && (
           <div className="sub-note" style={{ fontSize: '0.78em', opacity: 0.7, margin: '2px 0 8px' }}>

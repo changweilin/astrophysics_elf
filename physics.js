@@ -255,13 +255,79 @@
   // Giant state. Beyond mass, a heavy-element (metallicity) knob Z ∈ [0,1]
   // (0.5 ≈ solar) raises envelope opacity: metal-rich → cooler, more swollen,
   // redder; metal-poor → hotter, more compact, bluer (Population II giants).
-  function giantState(Msun, Z = 0.5) {
+  //
+  // opts.cepheid switches to the Cepheid / yellow-supergiant stage that sits in
+  // the κ-mechanism instability strip: brighter (L ∝ M^2.6) and hotter, with the
+  // mean effective temperature placed inside the strip and shifted across it by
+  // metallicity. Because the pulsation period follows the mean density
+  // (P ∝ √(R³/M)), a more massive → more luminous → larger Cepheid pulsates more
+  // slowly — the period-luminosity (Leavitt) relation emerges, not imposed.
+  function giantState(Msun, Z = 0.5, opts = {}) {
     const M = Math.max(0.1, Msun);
     const z = Math.max(0, Math.min(1, Z));
+    if (opts.cepheid) {
+      const L = 200 * Math.pow(M, 2.6);
+      const T_eff = 6000 - 1100 * z;           // K — within the instability strip
+      const R_solar = Math.sqrt(L) / Math.pow(T_eff / T_SUN, 2);
+      return { L, R_solar, T_eff, R_star: geomRadius(R_solar, 7.2, 0.4, 12, 40) };
+    }
     const L = 60 * Math.pow(M, 1.5);
     const T_eff = 4800 - 1600 * z;             // K — metal-rich cools the envelope
     const R_solar = Math.sqrt(L) / Math.pow(T_eff / T_SUN, 2);
     return { L, R_solar, T_eff, R_star: geomRadius(R_solar, 7.2, 0.4, 12, 40) };
+  }
+
+  // ── κ-mechanism (Cepheid) pulsation ──────────────────────────────────
+  // The Eddington valve: in the He II partial-ionization zone, compression raises
+  // the opacity κ instead of lowering it, so the layer dams the radiation flux,
+  // heats, and pushes back out — a self-exciting radial oscillation. The driving
+  // only works when that zone sits at the right depth, which happens in a narrow
+  // band of effective temperature: the instability strip.
+  const CEPHEID_Q_DAYS = 0.039;   // pulsation constant Q (days), fundamental mode
+
+  // Driving efficiency of the κ-valve, 0..1. The strip's blue (hot) and red (cool)
+  // edges drift cooler as the luminosity rises (the strip leans redward up the HR
+  // diagram). Returns a smooth bump: peak mid-strip, zero at either edge, and a
+  // hard zero outside (κ-mechanism damped → the star does not pulsate).
+  function instabilityStrip(T_eff, Lsun) {
+    const logL = Math.log10(Math.max(1, Lsun));
+    const blue = 7000 - 220 * logL;            // hot (blue) edge, K
+    const red  = 5200 - 130 * logL;            // cool (red) edge, K
+    if (!(T_eff < blue && T_eff > red)) return 0;
+    const x = (T_eff - red) / (blue - red);    // 0 at red edge → 1 at blue edge
+    return Math.sin(Math.PI * x);              // smooth 0 → 1 → 0 across the strip
+  }
+
+  // Fundamental-mode pulsation period (days) from the period–mean-density relation
+  // P·√(ρ̄/ρ⊙) = Q, with ρ̄/ρ⊙ = (M/M⊙)/(R/R⊙)³ ⇒ P = Q·√(R³/M) in solar units.
+  function cepheidPeriodDays(R_solar, Msun) {
+    return CEPHEID_Q_DAYS * Math.sqrt(Math.pow(Math.max(1e-3, R_solar), 3) / Math.max(0.05, Msun));
+  }
+
+  // Modulate an equilibrium photosphere `base` ({L,R_solar,T_eff,R_star}) about its
+  // mean for pulsation phase φ (radians), fractional radius amplitude `amp`, and
+  // strip driving efficiency `q` (0 → returns the mean unchanged). Phase relations
+  // reproduce the observed Cepheid behaviour:
+  //   · radius      R = R0 (1 + a·sinφ)       — mean at φ=0, maximum at φ=π/2
+  //   · temperature T = T0 (1 + 1.1a·cosφ)    — peaks a quarter-period BEFORE max
+  //     radius (the classic phase lag: hottest near minimum radius, during the
+  //     fastest expansion), so maximum light leads maximum radius.
+  //   · luminosity  L = 4πR²σT⁴ ∝ R²T⁴        — follows self-consistently; the T⁴
+  //     term dominates, which is why the light curve tracks temperature.
+  // A second harmonic skews the curve into the fast-rise / slow-decline shape the
+  // nonlinear κ-mechanism produces (the Hertzsprung progression).
+  function cepheidModulate(base, phi, amp, q) {
+    const aR = Math.max(0, amp) * Math.max(0, Math.min(1, q));
+    if (aR <= 1e-6) return { L: base.L, R_solar: base.R_solar, T_eff: base.T_eff, R_star: base.R_star };
+    const aT = 1.1 * aR;                        // temperature swing ≈ radius swing
+    const h = 0.25;                             // 2nd-harmonic ratio (anharmonic skew)
+    const sR = Math.sin(phi) + h * Math.sin(2 * phi);
+    const sT = Math.cos(phi) + h * Math.cos(2 * phi);
+    const R_solar = base.R_solar * (1 + aR * sR);
+    const T_eff = base.T_eff * (1 + aT * sT);
+    const L = R_solar * R_solar * Math.pow(T_eff / T_SUN, 4);
+    const R_star = base.R_star * (1 + aR * sR); // displayed disk tracks the same swing
+    return { L, R_solar, T_eff, R_star };
   }
 
   // White-dwarf state. Electron degeneracy gives an INVERSE mass-radius relation:
@@ -308,7 +374,7 @@
   // field B (wd/ns). R and T are therefore never independent variables.
   function deriveStellar(type, Msun, opts = {}) {
     if (type === 'ms')    return mainSequenceState(Msun, opts.age != null ? opts.age : 0);
-    if (type === 'giant') return giantState(Msun, opts.Z != null ? opts.Z : 0.5);
+    if (type === 'giant') return giantState(Msun, opts.Z != null ? opts.Z : 0.5, { cepheid: !!opts.cepheid });
     if (type === 'wd')    return whiteDwarfState(Msun, opts);
     if (type === 'ns')    return neutronStarState(Msun, opts);
     return null;
@@ -702,6 +768,6 @@
     M_CHANDRASEKHAR, M_TOV, CE_ALPHA, CE_LAMBDA, NOVA_RETAIN, MT_K,
     msLuminosity, msRadius, msLifetime, effTemp,
     mainSequenceState, giantState, whiteDwarfState, neutronStarState, deriveStellar,
-    stellarGlow,
+    stellarGlow, instabilityStrip, cepheidPeriodDays, cepheidModulate, CEPHEID_Q_DAYS,
   };
 })();

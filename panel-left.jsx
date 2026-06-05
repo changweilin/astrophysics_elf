@@ -181,6 +181,8 @@ function BodyEditor({ sim, force, role }) {
     Q: sim.params.Q, a: sim.params.a,
     R_star: sim.params.R_star || 3.0, T_eff: sim.params.T_eff || 1e6,
     age: sim.params.age || 0, Z: sim.params.Z != null ? sim.params.Z : 0.5,
+    cepheid: !!sim.params.cepheid,
+    cepheidAmp: sim.params.cepheidAmp != null ? sim.params.cepheidAmp : 0.07,
     B: sim.params.B || 0,
     massUnit: 'M⊙', mMin: range.min, mMax: range.max,
   } : {
@@ -190,6 +192,8 @@ function BodyEditor({ sim, force, role }) {
     Q: (bin && bin.Q2) || 0, a: (bin && bin.a2) || 0,
     R_star: (bin && bin.R_star2) || 3.0, T_eff: (bin && bin.T_eff2) || 1e6,
     age: (bin && bin.age2) || 0, Z: (bin && bin.Z2 != null) ? bin.Z2 : 0.5,
+    cepheid: !!(bin && bin.cepheid),
+    cepheidAmp: (bin && bin.cepheidAmp != null) ? bin.cepheidAmp : 0.07,
     B: (bin && bin.B2) || 0,
     massUnit: 'M⊙', mMin: range.min, mMax: range.max,
   };
@@ -203,8 +207,15 @@ function BodyEditor({ sim, force, role }) {
   const isDerived = !isBH;
   const stellarState = isDerived
     ? phys.deriveStellar(accessors.type, accessors.Msun,
-        { age: accessors.age, Z: accessors.Z, B: accessors.B || 0, a: accessors.a })
+        { age: accessors.age, Z: accessors.Z, B: accessors.B || 0, a: accessors.a,
+          cepheid: accessors.type === 'giant' && accessors.cepheid })
     : null;
+  // Cepheid read-out (mean period + instability-strip driving efficiency). The
+  // live pulsation phase is tracked by the engine on sim.params / sim.binary.
+  const cep = (accessors.type === 'giant' && accessors.cepheid && stellarState) ? {
+    P: phys.cepheidPeriodDays(stellarState.R_solar, accessors.Msun),
+    q: phys.instabilityStrip(stellarState.T_eff, stellarState.L),
+  } : null;
   // Live derived geometric radius — the collapse check must use it, not the
   // possibly one-frame-stale stored R_star.
   const liveR = stellarState ? stellarState.R_star : accessors.R_star;
@@ -242,6 +253,19 @@ function BodyEditor({ sim, force, role }) {
   function setMetallicity(v) {
     if (isCentral) sim.params.Z = v;
     else if (bin) bin.Z2 = v;
+    force();
+  }
+  function setCepheid(on) {
+    if (isCentral) sim.params.cepheid = on;
+    else if (bin) bin.cepheid = on;
+    window.KNSim.logEv(sim, on ? 'good' : 'warn', on
+      ? tr('Cepheid pulsation engaged — κ-mechanism', '造父變星脈動啟動 — κ 機制')
+      : tr('Cepheid pulsation off', '造父變星脈動關閉'));
+    force();
+  }
+  function setCepheidAmp(v) {
+    if (isCentral) sim.params.cepheidAmp = v;
+    else if (bin) bin.cepheidAmp = v;
     force();
   }
 
@@ -462,6 +486,40 @@ function BodyEditor({ sim, force, role }) {
                  color="amber" fmt={(v) => v === 0.5 ? tr('solar', '太陽') : (v < 0.5 ? '−' : '+') + Math.abs(v - 0.5).toFixed(2)}
                  onChange={setMetallicity}
                  scaleLabels={[tr('metal-poor', '貧金屬'), tr('solar', '太陽'), tr('metal-rich', '富金屬')]} />
+        )}
+        {accessors.type === 'giant' && (
+          <div className="cepheid-block" style={{ margin: '4px 0 8px' }}>
+            <button className={`disc-toggle ${accessors.cepheid ? 'on' : ''}`}
+              onClick={() => setCepheid(!accessors.cepheid)}
+              title={tr('κ-mechanism radial pulsation in the instability strip',
+                       'κ 機制：不穩定帶內的徑向脈動')}>
+              {accessors.cepheid
+                ? tr('CEPHEID · κ-mechanism pulsation', '造父變星 · κ 機制脈動')
+                : tr('Make it a Cepheid (κ-mechanism)', '設為造父變星（κ 機制）')}
+            </button>
+            {accessors.cepheid && (
+              <Param sym={isCentral ? 'ΔR' : 'ΔR₂'} name={tr('Pulsation amplitude', '脈動振幅')}
+                     val={accessors.cepheidAmp} unit=""
+                     min={0.01} max={0.2} step={0.005}
+                     color="amber" fmt={(v) => '±' + (v * 100).toFixed(0) + '%'}
+                     onChange={setCepheidAmp}
+                     scaleLabels={[tr('subtle', '輕微'), tr('δ Cep', 'δ Cep'), tr('strong', '強烈')]} />
+            )}
+            {accessors.cepheid && cep && (
+              <div className="cep-readout" style={{ fontSize: '0.78em', opacity: 0.82, lineHeight: 1.5 }}>
+                <div>{tr('Period', '週期')} P ≈ <b>{cep.P < 10 ? cep.P.toFixed(1) : Math.round(cep.P)}</b> {tr('d', '天')}
+                  <small style={{ opacity: 0.6 }}> · P ∝ √(R³/M)</small></div>
+                <div style={{ color: cep.q > 0 ? 'var(--good, #8fd6a0)' : 'var(--warn, #e0a458)' }}>
+                  {cep.q > 0
+                    ? tr('● inside instability strip', '● 位於不穩定帶內') + ` · ${tr('drive', '驅動')} ${(cep.q * 100).toFixed(0)}%`
+                    : tr('○ outside strip — κ-valve damped (no pulsation)', '○ 超出不穩定帶 — κ 閥阻尼（不脈動）')}
+                </div>
+                <div style={{ opacity: 0.6 }}>
+                  {tr('light max leads radius max (phase lag)', '光度極大領先半徑極大（相位差）')}
+                </div>
+              </div>
+            )}
+          </div>
         )}
         {(accessors.type === 'wd' || accessors.type === 'ns') && (
           <div className="sub-note" style={{ fontSize: '0.78em', opacity: 0.7, margin: '2px 0 8px' }}>
