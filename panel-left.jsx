@@ -472,6 +472,21 @@ function BodyEditor({ sim, force, role }) {
       </div>
       )}
 
+      {/* Live in-range star count for the active structure cloud (shrinks as a
+          galaxy/cluster loses stars to stripping / ejection / the central BH). */}
+      {smbhStructures && (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
+          <span className="sn-v">N = {sim._cloudN1 || 0}</span>
+        </div>
+      )}
+      {companionStructures && (companionStructure === 'galaxy' || companionStructure === 'cluster') && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
+          <span className="sn-v">N = {sim._cloudN2 || 0}</span>
+        </div>
+      )}
+
       {accessors.category === 'remnant' && !smbhStructures && !companionStructures && (
         <div className="remnant-stage" role="status">
           <span className="rs-head">{tr('mass selects remnant', '質量決定緻密天體')}</span>

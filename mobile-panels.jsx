@@ -388,6 +388,18 @@ function MBodyEditor({ sim, force, role }) {
         })}
       </div>
       )}
+      {smbhStructures && (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
+          <span className="sn-v">N = {sim._cloudN1 || 0}</span>
+        </div>
+      )}
+      {companionStructures && (companionStructure === 'galaxy' || companionStructure === 'cluster') && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
+          <span className="sn-v">N = {sim._cloudN2 || 0}</span>
+        </div>
+      )}
       {bin && bin.enabled && (
         <button className="swap-bodies"
           onClick={() => { window.KNSim.swapCentralCompanion(sim); force(); }}>

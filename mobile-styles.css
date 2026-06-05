@@ -767,6 +767,14 @@ html, body {
 }
 
 /* ─── Mobile central-type selector ───────────────────────── */
+.struct-n {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin: -8px 0 14px; font-family: var(--mono);
+}
+.struct-n .sn-l {
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3);
+}
+.struct-n .sn-v { font-size: 12px; color: var(--fg-2); }
 .type-pick {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

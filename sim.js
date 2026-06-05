@@ -69,6 +69,10 @@
       // (null = no halo). Consumed by the integrator's smooth field. See seedStructureCloud.
       _halo1: null,
       _halo2: null,
+      // Live in-range star counts for the central / companion structure cloud (N1 / N2),
+      // refreshed each step + on seeding. Shrinks as a galaxy/cluster loses stars.
+      _cloudN1: 0,
+      _cloudN2: 0,
       // Post-event transient animation (set by coalesce / a Type Ia detonation;
       // advanced by stepTransient, drawn by render.js). null when idle. Drives the
       // multi-phase merger choreography — tidal-tail ejecta, short-GRB jet,
@@ -235,6 +239,14 @@
     bin.trail2.length = 0;
     sim.transient = null;
     resetMassTransfer(bin);
+    // If this companion is a galaxy/cluster, (re)seed its star cloud around the freshly
+    // placed position — N2 stars, scaled by its mass. The structure may have been chosen
+    // BEFORE placement (when the binary wasn't enabled yet, so the earlier seed bailed),
+    // so seeding here guarantees the swarm appears wherever the companion lands.
+    if (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster') {
+      seedStructureCloud(sim, bin.smbhStructure, 'companion');
+      recordCloudCounts(sim);
+    }
   }
 
   // Clear the mass-transfer state + flash timers for a fresh / removed companion.
@@ -1374,6 +1386,20 @@
       remaining -= dt;
       guard++;
     }
+    recordCloudCounts(sim);
+  }
+
+  // Record how many cloud stars are still in range for each structure (central N1 /
+  // companion N2). Orbiting cloud particles ARE the in-range population — ones that
+  // leave or are consumed get pruned in integrate() — so this count shrinks over a
+  // merger. Surfaced in the body panels.
+  function recordCloudCounts(sim) {
+    let n1 = 0, n2 = 0;
+    for (const b of sim.bodies) {
+      if (!b._cloud || b.state !== 'orbit') continue;
+      if (b._cloudRole === 'companion') n2++; else n1++;
+    }
+    sim._cloudN1 = n1; sim._cloudN2 = n2;
   }
 
   // ── Camera reference-frame lock ───────────────────────────
@@ -1733,6 +1759,7 @@
         clearStructureCloud(sim, 'companion'); sim._halo2 = null;
         logEv(sim, 'good', tr('Quiescent supermassive companion', '寧靜的超大質量伴星'));
       }
+      recordCloudCounts(sim);
       return key;
     }
     sim.params.type = 'bh';
@@ -1753,6 +1780,7 @@
       clearStructureCloud(sim, 'central'); sim._halo1 = null;
       logEv(sim, 'good', tr('Quiescent supermassive black hole', '寧靜的超大質量黑洞'));
     }
+    recordCloudCounts(sim);
     return key;
   }
 

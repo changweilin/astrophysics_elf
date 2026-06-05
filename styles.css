@@ -450,6 +450,14 @@ html, body {
   color: var(--amber);
 }
 .remnant-stage .rs-chip.on .g, .remnant-stage .rs-chip.on small { color: var(--amber); }
+.struct-n {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin: -8px 0 14px; font-family: var(--mono);
+}
+.struct-n .sn-l {
+  font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-3);
+}
+.struct-n .sn-v { font-size: 10px; color: var(--fg-2); }
 .type-pick .type-tab {
   background: var(--bg-0);
   border: 1px solid var(--line);
