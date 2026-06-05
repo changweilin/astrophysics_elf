@@ -233,6 +233,48 @@
   // Cycle order for the keyboard / UI toggle.
   const BH_REGIME_ORDER = ['stellar', 'intermediate', 'supermassive'];
 
+  // Real-universe mass limits per evolutionary stage (M⊙). Hydrogen-fusing and
+  // post-main-sequence stars share an upper mass limit near ~150 M⊙ (the stellar
+  // upper-mass limit; the heaviest known stars, e.g. R136a1, sit a little above
+  // it). Compact remnants exist at every scale: WD/NS up to a few M⊙, then black
+  // holes all the way to the supermassive range. These cap which stages are
+  // *physically possible* at each mass scale — see stageRegimeRange.
+  const STAGE_MASS_LIMITS = {
+    star:    { min: 0.08, max: 150 },   // main sequence (incl. very massive stars)
+    giant:   { min: 0.5,  max: 150 },   // evolved giants / hypergiants / LBVs
+    remnant: { min: 0.1,  max: 1e10 },  // WD / NS (≲3) then BH to galactic-nucleus mass
+  };
+
+  // The mass band for a (stage, regime) pair: the intersection of the stage's real
+  // mass range with the regime's scale band. Returns null when the overlap is empty
+  // — i.e. no body of that evolutionary stage exists at that scale (e.g. there is no
+  // supermassive main-sequence star), in which case the stage is LOCKED for that
+  // regime. The default mass keeps the per-stage default when it lands in-band, the
+  // regime's black-hole default for a compact remnant, else the band's geometric
+  // midpoint (natural for these log-wide ranges).
+  function stageRegimeRange(category, regime) {
+    const reg = BH_REGIMES[regime] || BH_REGIMES.stellar;
+    const lim = STAGE_MASS_LIMITS[category] || STAGE_MASS_LIMITS.remnant;
+    const min = Math.max(reg.min, lim.min);
+    const max = Math.min(reg.max, lim.max);
+    if (!(min < max)) return null;                  // empty overlap → stage locked
+    let def;
+    if (category === 'remnant') {
+      const rd = MASS_RANGES.remnant.def;           // WD-friendly default at stellar scale
+      def = (rd >= min && rd <= max) ? rd : reg.def;
+    } else {
+      const sd = MASS_RANGES[category] ? MASS_RANGES[category].def : reg.def;
+      def = (sd >= min && sd <= max) ? sd : Math.sqrt(min * max);
+    }
+    return { min, max, def };
+  }
+
+  // True when a stage has no real-universe counterpart at the given regime (its
+  // overlap band is empty) — the UI locks that stage tab.
+  function stageLockedAtRegime(category, regime) {
+    return stageRegimeRange(category, regime) === null;
+  }
+
   // Which regime a black-hole solar mass falls in (boundaries at 10² and 10⁵ M⊙).
   function bhRegimeForMass(Msun) {
     const m = Msun || 0;
@@ -850,6 +892,7 @@
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
     BH_REGIMES, BH_REGIME_ORDER, bhRegimeForMass, fmtSolarMass,
+    STAGE_MASS_LIMITS, stageRegimeRange, stageLockedAtRegime,
     M_CHANDRASEKHAR, M_TOV, CE_ALPHA, CE_LAMBDA, NOVA_RETAIN, MT_K,
     msLuminosity, msRadius, msLifetime, effTemp,
     mainSequenceState, giantState, whiteDwarfState, neutronStarState, deriveStellar,

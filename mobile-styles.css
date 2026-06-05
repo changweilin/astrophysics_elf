@@ -785,6 +785,9 @@ html, body {
   color: var(--amber);
 }
 .type-pick .type-tab.on .g { color: var(--amber); }
+/* Locked stage — no real body of this kind exists at the current mass scale. */
+.type-pick .type-tab.locked { opacity: 0.4; cursor: not-allowed; border-style: dashed; }
+.type-pick .type-tab.locked .g { color: var(--fg-3); }
 
 /* Black-hole mass-regime selector (mobile) — cyan accent, scale axis. */
 .bh-regime { margin-bottom: 14px; font-family: var(--mono); }

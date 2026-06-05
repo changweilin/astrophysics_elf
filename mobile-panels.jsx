@@ -126,11 +126,12 @@ function MBodyEditor({ sim, force, role }) {
   const type = isCentral ? (sim.params.type || 'bh') : ((bin && bin.type) || 'bh');
   const category = phys.uiCategory(type);
   const range = phys.MASS_RANGES[category];
-  // A central black hole follows the active mass regime's band (see desktop
-  // BodyEditor); everything else uses the per-stage range.
-  const regDef = (isCentral && type === 'bh') ? phys.BH_REGIMES[sim.bhRegime || 'stellar'] : null;
-  const mMin = regDef ? regDef.min : range.min;
-  const mMax = regDef ? regDef.max : range.max;
+  // The mass scale (regime) governs every stage; the slider band is the overlap of
+  // this stage's real mass range with the active scale (see desktop BodyEditor).
+  const regime = sim.bhRegime || 'stellar';
+  const sr = phys.stageRegimeRange(category, regime);
+  const mMin = sr ? sr.min : range.min;
+  const mMax = sr ? sr.max : range.max;
   const A = isCentral ? {
     type, category,
     Mgeo: sim.params.M,
@@ -256,6 +257,9 @@ function MBodyEditor({ sim, force, role }) {
   // leaving stashes, returning restores; an unvisited stage gets defaults + zoom.
   function switchCategory(cat) {
     if (cat === A.category) return;
+    if (phys.stageLockedAtRegime(cat, regime)) return;   // no such body at this scale
+    const band = phys.stageRegimeRange(cat, regime) || phys.MASS_RANGES[cat];
+    const clampMass = (m) => Math.min(band.max, Math.max(band.min, (m >= band.min && m <= band.max) ? m : band.def));
     const stash = (sim._stageStash = sim._stageStash || { central: {}, companion: {} });
     const slot = isCentral ? stash.central : stash.companion;
     const stageName = (t) => t === 'bh' ? tr('BLACK HOLE', '黑洞') : phys.STELLAR_INFO[t].name;
@@ -268,17 +272,16 @@ function MBodyEditor({ sim, force, role }) {
       };
       const saved = slot[cat];
       if (saved) {
-        sim.params.Msun = saved.Msun; sim.params.Q = saved.Q; sim.params.a = saved.a;
-        sim.params.type = saved.type; sim.params.R_star = saved.R_star; sim.params.T_eff = saved.T_eff;
+        sim.params.Msun = clampMass(saved.Msun); sim.params.Q = saved.Q; sim.params.a = saved.a;
+        sim.params.type = phys.typeForStage(cat, sim.params.Msun);
+        sim.params.R_star = saved.R_star; sim.params.T_eff = saved.T_eff;
         sim.params.age = saved.age != null ? saved.age : 0;
         sim.params.Z = saved.Z != null ? saved.Z : 0.5;
         sim.params._stellarTouched = saved._stellarTouched;
         sim.view.scale = saved.viewScale || phys.VIEW_SCALES[cat];
-        window.KNSim.logEv(sim, saved.type === 'bh' ? 'warn' : 'good', trp('central → {type}', { type: stageName(saved.type) }));
+        window.KNSim.logEv(sim, sim.params.type === 'bh' ? 'warn' : 'good', trp('central → {type}', { type: stageName(sim.params.type) }));
       } else {
-        const r = phys.MASS_RANGES[cat];
-        let Msun = A.Msun;
-        if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
+        const Msun = clampMass(A.Msun);
         const newType = phys.typeForStage(cat, Msun);
         sim.params.Msun = Msun;
         sim.params.type = newType;
@@ -304,15 +307,14 @@ function MBodyEditor({ sim, force, role }) {
       };
       const saved = slot[cat];
       if (saved) {
-        bin.M2sun = saved.M2sun; bin.Q2 = saved.Q2; bin.a2 = saved.a2; bin.type = saved.type;
+        bin.M2sun = clampMass(saved.M2sun); bin.Q2 = saved.Q2; bin.a2 = saved.a2;
+        bin.type = phys.typeForStage(cat, bin.M2sun);
         bin.R_star2 = saved.R_star2; bin.T_eff2 = saved.T_eff2; bin._stellarTouched = saved._stellarTouched;
         bin.age2 = saved.age2 != null ? saved.age2 : 0;
         bin.Z2 = saved.Z2 != null ? saved.Z2 : 0.5;
-        window.KNSim.logEv(sim, saved.type === 'bh' ? 'warn' : 'good', trp('companion → {type}', { type: stageName(saved.type) }));
+        window.KNSim.logEv(sim, bin.type === 'bh' ? 'warn' : 'good', trp('companion → {type}', { type: stageName(bin.type) }));
       } else {
-        const r = phys.MASS_RANGES[cat];
-        let Msun = A.Msun;
-        if (!(Msun >= r.min && Msun <= r.max)) Msun = r.def;
+        const Msun = clampMass(A.Msun);
         const newType = phys.typeForStage(cat, Msun);
         bin.M2sun = Msun;
         bin.type = newType;
@@ -349,14 +351,17 @@ function MBodyEditor({ sim, force, role }) {
           { k: 'star',    label: tr('MS', '主序'),    glyph: '✱' },
           { k: 'giant',   label: tr('Giant', '巨星'), glyph: '✸' },
           { k: 'remnant', label: tr('Compact', '緻密'),  glyph: '●' },
-        ].map((t) => (
-          <button key={t.k}
-            className={`type-tab ${A.category === t.k ? 'on' : ''}`}
+        ].map((t) => {
+          const locked = phys.stageLockedAtRegime(t.k, regime);
+          return (
+          <button key={t.k} disabled={locked}
+            className={`type-tab ${A.category === t.k ? 'on' : ''} ${locked ? 'locked' : ''}`}
             onClick={() => switchCategory(t.k)}>
-            <span className="g">{t.glyph}</span>
+            <span className="g">{locked ? '⊘' : t.glyph}</span>
             <span className="l">{t.label}</span>
           </button>
-        ))}
+          );
+        })}
       </div>
       {A.category === 'remnant' && (
         <div className="remnant-stage" role="status">

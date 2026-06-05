@@ -480,6 +480,13 @@ html, body {
   color: var(--amber);
 }
 .type-pick .type-tab.on .g { color: var(--amber); }
+/* Locked stage — no real body of this kind exists at the current mass scale. */
+.type-pick .type-tab.locked {
+  opacity: 0.4; cursor: not-allowed;
+  border-style: dashed;
+}
+.type-pick .type-tab.locked:hover { border-color: var(--line); color: var(--fg-2); }
+.type-pick .type-tab.locked .g { color: var(--fg-3); }
 
 /* Companion tab — distinct purple/magenta theme to set it apart from the 4 central types */
 .type-pick .companion-tab {

@@ -1278,40 +1278,61 @@
     bin.trail2.length = 0;
   }
 
-  // ── Black-hole mass regime switching ──────────────────────
-  // Set the central body to a black hole of the given mass regime (stellar /
-  // intermediate / supermassive). The mass snaps to that band's default unless
-  // the current mass already sits inside it (so re-entering a regime keeps a
-  // user-tuned mass), a/Q are clamped sub-extremal, and the camera reframes to
-  // the compact-object zoom. The picker reads sim.bhRegime to offer scale-matched
-  // interactive bodies. Geometry stays frozen in units of M — this is a physical
-  // *scale* change, not a geometric one.
+  // ── Mass-scale regime switching ───────────────────────────
+  // Move the system to a mass scale (stellar / intermediate / supermassive). The
+  // scale governs every evolutionary stage, not just black holes: the central body
+  // KEEPS its current stage (main sequence / giant / compact) when real bodies of
+  // that stage exist at the new scale, and otherwise falls back to the compact
+  // (black-hole) stage — there is no supermassive main-sequence star, so that stage
+  // locks out. The mass snaps into the (stage × scale) band (keeping a user mass
+  // already in-band), a/Q stay sub-extremal, surfaces re-derive, the camera
+  // reframes, and the companion follows by mass ratio. Geometry stays frozen in
+  // units of M — this is a physical *scale* change, not a geometric one.
   function setBHRegime(sim, regime) {
     const reg = phys.BH_REGIMES[regime];
     if (!reg) return;
     sim.bhRegime = regime;
-    const cur = sim.params.Msun || 0;
-    const inBand = sim.params.type === 'bh' && cur >= reg.bhMin && cur <= reg.max;
-    const Msun = inBand ? cur : reg.def;
-    sim.params.Msun = Msun;
-    sim.params.type = 'bh';
-    // Clamp spin + charge sub-extremal for the frozen geometric mass (M = 1):
-    // a² + Q² < M². A black hole has no stellar surface to re-derive.
     const cap = 0.998;
+
+    // Central: keep the stage if it survives at this scale, else drop to compact.
+    let cat = phys.uiCategory(sim.params.type || 'bh');
+    if (phys.stageLockedAtRegime(cat, regime)) cat = 'remnant';
+    const rng = phys.stageRegimeRange(cat, regime);            // remnant is never null
+    const cur = sim.params.Msun || 0;
+    const Msun = (cur >= rng.min && cur <= rng.max)
+      ? cur : (cat === 'remnant' ? reg.def : rng.def);         // compact → BH default
+    sim.params.Msun = Msun;
+    sim.params.type = phys.typeForStage(cat, Msun);
+    // Clamp spin + charge sub-extremal for the frozen geometric mass (M = 1).
     if (Math.abs(sim.params.Q) > cap) sim.params.Q = Math.sign(sim.params.Q || 1) * cap;
     const room = Math.sqrt(Math.max(0, cap * cap - sim.params.Q * sim.params.Q));
     if (Math.abs(sim.params.a) > room) sim.params.a = Math.sign(sim.params.a || 1) * room;
-    sim.view.scale = phys.VIEW_SCALES.remnant;
+    // Re-seat a stellar stage's surface (a black hole has none); syncStellar then
+    // keeps R★/T★ tracking the new mass each frame.
+    if (sim.params.type !== 'bh') {
+      sim.params.age = sim.params.age || 0;
+      if (sim.params.Z == null) sim.params.Z = 0.5;
+      const ds = phys.deriveStellar(sim.params.type, Msun,
+        { age: sim.params.age, Z: sim.params.Z, a: sim.params.a, B: sim.params.B || 0 });
+      if (ds) { sim.params.R_star = ds.R_star; sim.params.T_eff = ds.T_eff; }
+      sim.params._stellarTouched = false;
+    }
+    sim.view.scale = phys.VIEW_SCALES[cat];
+
     // The companion follows the new scale: keep the binary's geometric mass ratio
-    // (its physical mass rides the central mass) and reclassify it by the rescaled
-    // mass, so switching scale changes BOTH bodies' selection (a stellar pair →
-    // an SMBH-SMBH pair, etc.). Surfaces are re-derived by syncStellar next frame.
+    // (its physical mass rides the central mass) and reclassify it for the scale —
+    // its stage drops to a compact object when stars can't exist there, otherwise
+    // a compact remnant tracks the mass and a star/giant keeps its stage. So
+    // switching scale changes BOTH bodies' selection (a stellar pair → an SMBH-SMBH
+    // pair, etc.). Surfaces are re-derived by syncStellar next frame.
     const bin = sim.binary;
     if (bin) {
       const ratio = bin.M2 > 0 ? bin.M2 : 0.8;        // companion geom mass / primary
       bin.M2sun = Math.max(0.05, ratio * Msun);
       bin.M2 = Math.max(0.01, bin.M2sun / Math.max(0.01, Msun));   // == ratio
-      const nt = phys.remnantType(bin.M2sun);
+      let cCat = phys.uiCategory(bin.type || 'bh');
+      if (phys.stageLockedAtRegime(cCat, regime)) cCat = 'remnant';
+      const nt = (cCat === 'remnant') ? phys.remnantType(bin.M2sun) : bin.type;
       if (nt !== bin.type) {
         bin.type = nt;
         if (nt !== 'bh') {
@@ -1326,8 +1347,11 @@
         if (Math.abs(bin.a2 || 0) > room2) bin.a2 = Math.sign(bin.a2 || 1) * room2;
       }
     }
-    logEv(sim, 'warn', trp('central → {label} BH · M = {m} M⊙', {
-      label: tr(reg.label_en, reg.label_zh), m: phys.fmtSolarMass(Msun) }));
+
+    const tlabel = sim.params.type === 'bh' ? 'BH'
+      : (phys.STELLAR_INFO[sim.params.type] ? phys.STELLAR_INFO[sim.params.type].name : sim.params.type.toUpperCase());
+    logEv(sim, 'warn', trp('central → {label} {type} · M = {m} M⊙', {
+      label: tr(reg.label_en, reg.label_zh), type: tlabel, m: phys.fmtSolarMass(Msun) }));
     return regime;
   }
 
