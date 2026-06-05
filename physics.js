@@ -884,6 +884,83 @@
     return 0.02 * Math.pow(0.6 / M, 2);
   }
 
+  // Accreted-fuel layer mass (M⊙) that triggers a Type I X-ray burst on a
+  // neutron-star accretor. The NS surface gravity is ~1e5× a white dwarf's, so a
+  // far THINNER unstable H/He shell ignites — bursts recur much more often than
+  // novae and release less mass each time. A more massive (more compact) NS
+  // ignites an even thinner shell. Scaled to the demo's interactive timescale
+  // (true bursts need ~1e-12 M⊙; this is enlarged to be watchable), and kept
+  // smaller than the nova ignition mass so an NS bursts more frequently than a WD.
+  function xrayBurstIgnitionMass(M_ns) {
+    const M = Math.max(M_CHANDRASEKHAR, Math.min(M_TOV, M_ns || 1.4));
+    return 0.006 * Math.pow(1.4 / M, 2);
+  }
+
+  // ── Compact-merger transient channel ────────────────────────────────────
+  // Classify the multi-messenger transients a CONTACT coalescence produces from
+  // the two progenitor types + solar masses. A neutron star in the pair is
+  // tidally shredded and its neutron-rich debris powers an r-process KILONOVA
+  // and, via a relativistic jet from the accreting remnant, a short GAMMA-RAY
+  // BURST; a clean black-hole pair radiates only GRAVITATIONAL WAVES; a carbon-
+  // oxygen white-dwarf pair over the Chandrasekhar mass detonates as a (double-
+  // degenerate) TYPE Ia; an extended star in the pair merges as a slow optical
+  // LUMINOUS RED NOVA. Returns the booleans the demo's transient animation reads
+  // (the bound remnant's type is still set by coalesce via remnantType).
+  //   channel: 'gw' | 'nsns' | 'nsbh' | 'nsbh-plunge' | 'ddIa' | 'wdwd' |
+  //            'disc' | 'lrn'
+  function compactMergerChannel(t1, M1sun, t2, M2sun) {
+    const compact = (t) => t === 'bh' || t === 'ns' || t === 'wd';
+    const out = { channel: 'gw', grb: false, kilonova: false, rProcess: false,
+                  ddIa: false, lrn: false, nsDisrupted: false, ejecta: 0 };
+    // At least one extended (main-sequence / giant) star → stellar coalescence →
+    // a luminous red nova (slow, cool, dusty optical transient — e.g. V1309 Sco).
+    if (!compact(t1) || !compact(t2)) {
+      out.channel = 'lrn'; out.lrn = true; out.ejecta = 0.5;
+      return out;
+    }
+    const bothNS = t1 === 'ns' && t2 === 'ns';
+    const bothWD = t1 === 'wd' && t2 === 'wd';
+    const hasNS = t1 === 'ns' || t2 === 'ns';
+    const hasBH = t1 === 'bh' || t2 === 'bh';
+    if (bothNS) {
+      // NS-NS (GW170817-class): GW chirp + short GRB + blue→red kilonova + r-process.
+      out.channel = 'nsns'; out.grb = true; out.kilonova = true;
+      out.rProcess = true; out.nsDisrupted = true; out.ejecta = 0.7;
+      return out;
+    }
+    if (hasNS && hasBH) {
+      // NS-BH: EM-bright ONLY if the NS is tidally disrupted OUTSIDE the BH's
+      // ISCO. Disruption needs a low BH:NS mass ratio (and is helped by high BH
+      // spin / a stiff NS); a heavy BH swallows the NS whole → a clean plunge
+      // with GW only and no electromagnetic counterpart.
+      const Mbh = t1 === 'bh' ? M1sun : M2sun;
+      const Mns = t1 === 'ns' ? M1sun : M2sun;
+      const ratio = Mbh / Math.max(0.1, Mns);
+      if (ratio < 5) {
+        out.channel = 'nsbh'; out.grb = true; out.kilonova = true;
+        out.rProcess = true; out.nsDisrupted = true; out.ejecta = 0.5;
+      } else {
+        out.channel = 'nsbh-plunge';
+      }
+      return out;
+    }
+    if (bothWD) {
+      // WD-WD double-degenerate: combined mass over Chandrasekhar detonates as a
+      // Type Ia; a sub-Chandrasekhar pair merges into a single heavier WD.
+      if (M1sun + M2sun > M_CHANDRASEKHAR) {
+        out.channel = 'ddIa'; out.ddIa = true; out.ejecta = 0.6;
+      } else {
+        out.channel = 'wdwd';
+      }
+      return out;
+    }
+    // WD + NS/BH: the white dwarf is tidally disrupted into a debris disc around
+    // the compact accretor (a faint, reddened transient + accretion), not a
+    // kilonova. bothBH falls through here as the default 'gw' (no matter at all).
+    if (t1 === 'wd' || t2 === 'wd') { out.channel = 'disc'; out.ejecta = 0.3; }
+    return out;
+  }
+
   // Tidal stress at distance r on a body of radius R_b — units arbitrary, 0..∞.
   // Returns normalised 0..1.2+ against the body's binding threshold thr.
   // The 300× factor scales so disruption happens at observationally interesting
@@ -959,7 +1036,7 @@
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
     classify, acceleration, circularSpeed, tidalStress, r_s, peters, mergerRemnant,
     rocheLobeEggleton, massTransferRate, orbitalResponseRate, ceCriticalQ,
-    ceOutcome, novaIgnitionMass, gasStreamPaths,
+    ceOutcome, novaIgnitionMass, xrayBurstIgnitionMass, compactMergerChannel, gasStreamPaths,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES, VIEW_SCALE_MIN, VIEW_SCALE_MAX,
     BH_REGIMES, BH_REGIME_ORDER, SMBH_STRUCTURES, bhRegimeForMass, fmtSolarMass,

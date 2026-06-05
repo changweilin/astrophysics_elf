@@ -64,6 +64,12 @@
       // Supermassive-scale central structure: 'quasar' | 'cluster' | 'smbh'
       // (only meaningful at the supermassive scale; see KNphysics.SMBH_STRUCTURES).
       smbhStructure: 'smbh',
+      // Post-event transient animation (set by coalesce / a Type Ia detonation;
+      // advanced by stepTransient, drawn by render.js). null when idle. Drives the
+      // multi-phase merger choreography — tidal-tail ejecta, short-GRB jet,
+      // blue/red kilonova, r-process cloud, luminous red nova — so a coalescence
+      // unfolds over several seconds rather than two bodies snapping into one.
+      transient: null,
     };
   }
 
@@ -142,10 +148,14 @@
       // Live mass-transfer state (set by stepMassTransfer). donor/accretor are
       // 1 (primary) or 2 (companion); mode classifies the transfer regime.
       mt: { active: false, donor: 0, accretor: 0, mode: 'none',
-            mdot: 0, transferred: 0, q: 0, RL1: 0, RL2: 0, mAccH: 0, novaCount: 0 },
+            mdot: 0, transferred: 0, q: 0, RL1: 0, RL2: 0,
+            mAccH: 0, novaCount: 0, mAccHe: 0, xrayCount: 0 },
       // Surface-flash timers (seconds) and the common-envelope glow flag — these
       // drive the render-side nova/Ia/CE visuals, mirroring mergerFlash.
+      // xrayFlash = Type I X-ray burst (NS accretor); aicFlash = accretion-induced
+      // collapse implosion (NS → BH); aicAt holds the collapsing star's index.
       novaFlash: 0, snFlash: 0, ceFlash: 0, ceActive: false,
+      xrayFlash: 0, aicFlash: 0, aicAt: 0,
       // Common-envelope spiral-in bookkeeping (set when CE is triggered; the orbit
       // then shrinks over several steps so the pair visibly spirals in rather than
       // teleporting into a merger). ceSurvive/ceTargetA decide the close-binary vs
@@ -218,14 +228,17 @@
     bin.mergerFlash = 0;
     bin.trail1.length = 0;
     bin.trail2.length = 0;
+    sim.transient = null;
     resetMassTransfer(bin);
   }
 
   // Clear the mass-transfer state + flash timers for a fresh / removed companion.
   function resetMassTransfer(bin) {
     bin.mt = { active: false, donor: 0, accretor: 0, mode: 'none',
-               mdot: 0, transferred: 0, q: 0, RL1: 0, RL2: 0, mAccH: 0, novaCount: 0 };
+               mdot: 0, transferred: 0, q: 0, RL1: 0, RL2: 0,
+               mAccH: 0, novaCount: 0, mAccHe: 0, xrayCount: 0 };
     bin.novaFlash = 0; bin.snFlash = 0; bin.ceFlash = 0; bin.ceActive = false;
+    bin.xrayFlash = 0; bin.aicFlash = 0; bin.aicAt = 0;
     bin.ceSurvive = false; bin.ceTargetA = 0; bin.ceCore = 0; bin.ceCoreType = null; bin.ceDonor = 0;
   }
 
@@ -250,12 +263,16 @@
     bin.vx2 = 0; bin.vy2 = 0;
     bin.trail1.length = 0;
     bin.trail2.length = 0;
+    sim.transient = null;
     resetMassTransfer(bin);
   }
 
   function stepBinary(sim, dt) {
     const bin = sim.binary;
     if (!bin) return;
+    // The post-event transient outlives the binary (a merger ends it), so advance
+    // it every step regardless of whether the pair is still evolving.
+    if (sim.transient) stepTransient(sim, dt);
     if (!bin.enabled) {
       bin.x1 = sim.primary.x; bin.y1 = sim.primary.y;
       if (bin.mergerFlash > 0) bin.mergerFlash = Math.max(0, bin.mergerFlash - dt);
@@ -264,6 +281,8 @@
       if (bin.novaFlash > 0) bin.novaFlash = Math.max(0, bin.novaFlash - dt);
       if (bin.snFlash > 0)   bin.snFlash   = Math.max(0, bin.snFlash - dt);
       if (bin.ceFlash > 0)   bin.ceFlash   = Math.max(0, bin.ceFlash - dt);
+      if (bin.xrayFlash > 0) bin.xrayFlash = Math.max(0, bin.xrayFlash - dt);
+      if (bin.aicFlash > 0)  bin.aicFlash  = Math.max(0, bin.aicFlash - dt);
       return;
     }
 
@@ -274,6 +293,8 @@
     if (bin.novaFlash > 0) bin.novaFlash = Math.max(0, bin.novaFlash - dt);
     if (bin.snFlash > 0)   bin.snFlash   = Math.max(0, bin.snFlash - dt);
     if (bin.ceFlash > 0)   bin.ceFlash   = Math.max(0, bin.ceFlash - dt);
+    if (bin.xrayFlash > 0) bin.xrayFlash = Math.max(0, bin.xrayFlash - dt);
+    if (bin.aicFlash > 0)  bin.aicFlash  = Math.max(0, bin.aicFlash - dt);
 
     if (bin.held) {
       // User is repositioning the companion — freeze the orbit and re-derive the
@@ -401,8 +422,19 @@
         return;
       }
       if (isCompact(cType) && isCompact(sType)) {
-        // Two compact bodies touching → a clean compact merger / GW ringdown.
-        coalesce(sim, bin, M1, M2, 'gw');
+        // Two compact bodies touching → classify the multi-messenger channel
+        // (GW only, NS-NS/NS-BH kilonova + short GRB, or a double-degenerate
+        // Type Ia) and coalesce accordingly.
+        const ch = phys.compactMergerChannel(cType, starMsun(sim, bin, 1), sType, starMsun(sim, bin, 2));
+        if (ch.ddIa) {
+          // WD-WD over Chandrasekhar → double-degenerate Type Ia detonation: the
+          // central white dwarf detonates and the companion is unbound, mirroring
+          // the single-degenerate path, with a dedicated transient overlay.
+          armTransient(sim, bin, ch);
+          typeIaSupernova(sim, bin, 1, 2);
+        } else {
+          coalesce(sim, bin, M1, M2, 'gw', ch);
+        }
       } else {
         // At least one EXTENDED star (MS/giant) makes contact → the envelope
         // engulfs the companion and a common envelope forms; the cores spiral in
@@ -432,10 +464,19 @@
   // the full NR-fit (~5.5% at equal mass), while two diffuse stars merge with
   // negligible GW loss. Used by both the contact path and the common-envelope
   // spiral-in. `reason` tags the event log ('gw' merger vs 'ce' common envelope).
-  function coalesce(sim, bin, M1, M2, reason = 'gw') {
+  function coalesce(sim, bin, M1, M2, reason = 'gw', channel = null) {
     const cType = sim.params.type || 'bh';
     const sType = bin.type || 'bh';
     const bothBH = cType === 'bh' && sType === 'bh';
+
+    // Arm the multi-phase EM/GW transient for this coalescence (tidal-tail
+    // ejecta, short-GRB jet, kilonova, r-process cloud, or a luminous red nova).
+    // A clean black-hole pair / clean NS-BH plunge has no rich transient — the
+    // existing merger flash + ringdown stand in. Computed from the progenitor
+    // types unless a channel was already classified by the caller.
+    const ch = channel || phys.compactMergerChannel(
+      cType, starMsun(sim, bin, 1), sType, starMsun(sim, bin, 2));
+    armTransient(sim, bin, ch);
 
     // Remnant mass, spin and radiated energy from the NR-fit (mass ratio +
     // both progenitor spins). Equal-mass non-spinning → ~5.5% of Mt radiated
@@ -523,6 +564,51 @@
     } else {
       logEv(sim, 'amber', trp('remnant → {type}', { type: newType.toUpperCase() }));
     }
+  }
+
+  // ── Post-coalescence transient sequencer ──────────────────
+  // Arm (or skip) the multi-phase animation that plays out AFTER a coalescence
+  // from its classified channel. It stores only the flags + jet axis the
+  // renderer needs; the burst is anchored at the scene centre (where the remnant
+  // is drawn), like the existing merger / SN flashes. Channels with no
+  // electromagnetic counterpart (a clean black-hole pair, or a neutron star
+  // swallowed whole by a heavy black hole) arm nothing — the merger flash and
+  // ringdown already stand in for them. Also writes the multi-messenger log so
+  // each physically-triggered channel is recorded as it fires.
+  function armTransient(sim, bin, ch) {
+    if (!ch) { return; }
+    // Jet / ejecta axis: perpendicular to the final separation vector (the orbital
+    // angular-momentum direction projected into the equatorial view plane).
+    const sepAng = Math.atan2((bin.y2 - bin.y1) || 0, (bin.x2 - bin.x1) || 1);
+    const axis = sepAng + Math.PI / 2;
+    if (ch.grb || ch.kilonova) {
+      logEv(sim, 'warn', tr('compact merger -> kilonova + short GRB', '密緻天體合併 → 千新星 + 短伽瑪射線暴'));
+      logEv(sim, 'amber', tr('relativistic jet + accretion disc formed', '相對論性噴流 + 吸積盤形成'));
+      if (ch.rProcess) logEv(sim, 'amber', tr('r-process nucleosynthesis · heavy elements forged', 'r-過程核合成 · 鍛造重元素'));
+    } else if (ch.lrn) {
+      logEv(sim, 'warn', tr('stellar merger -> luminous red nova', '恆星合併 → 紅色高光度新星'));
+    } else if (ch.ddIa) {
+      logEv(sim, 'warn', tr('double-degenerate WD merger -> Type Ia', '雙簡併白矮星合併 → Ia 型'));
+    } else if (ch.channel === 'disc') {
+      logEv(sim, 'amber', tr('white dwarf shredded -> debris disc', '白矮星被瓦解 → 碎屑吸積盤'));
+    }
+    const RICH = { nsns: 1, nsbh: 1, lrn: 1, ddIa: 1, disc: 1 };
+    if (!RICH[ch.channel]) { sim.transient = null; return; }
+    sim.transient = {
+      kind: ch.channel, t: 0,
+      dur: ch.lrn ? 6.0 : ch.channel === 'disc' ? 3.5 : 5.0,
+      axis,
+      grb: !!ch.grb, kilonova: !!ch.kilonova, rProcess: !!ch.rProcess,
+      ddIa: !!ch.ddIa, lrn: !!ch.lrn, ejecta: ch.ejecta || 0.5,
+    };
+  }
+
+  // Advance the active transient; clear it when its timeline completes.
+  function stepTransient(sim, dt) {
+    const tx = sim.transient;
+    if (!tx) return;
+    tx.t += dt;
+    if (tx.t >= tx.dur) sim.transient = null;
   }
 
   // ── Mass-transfer helpers ─────────────────────────────────
@@ -758,13 +844,31 @@
         bin.novaFlash = 1.2;
         logEv(sim, 'amber', trp('NOVA · #{n} · M_WD={m} M⊙', { n: mt.novaCount, m: MaNew.toFixed(3) }));
       }
-    } else {
+    } else if (accType === 'ns') {
       setStarMsun(sim, bin, accIdx, MaNew);
-      // A neutron-star accretor pushed past the TOV limit collapses to a BH.
-      if (accType === 'ns' && MaNew >= phys.M_TOV) {
+      if (MaNew >= phys.M_TOV) {
+        // Accretion-induced collapse: the neutron star is pushed past the TOV
+        // ceiling and implodes to a black hole (a brief implosion + neutrino
+        // flash, then a tiny new horizon). The binary continues as BH + donor.
         setStarType(sim, bin, accIdx, 'bh');
+        bin.aicFlash = 1.4; bin.aicAt = accIdx;
+        deriveStarSurface(sim, bin, accIdx);
         logEv(sim, 'warn', trp('accretion-induced collapse → BH · M={m} M⊙', { m: MaNew.toFixed(2) }));
+      } else {
+        // Type I X-ray burst: accreted H/He builds an unstable shell on the
+        // neutron-star crust that ignites in a thermonuclear flash, far more
+        // frequently than a white-dwarf nova (the NS surface gravity is ~1e5×).
+        mt.mAccHe = (mt.mAccHe || 0) + dm;
+        if (mt.mAccHe >= phys.xrayBurstIgnitionMass(MaNew)) {
+          mt.mAccHe = 0;
+          mt.xrayCount = (mt.xrayCount || 0) + 1;
+          bin.xrayFlash = 0.9;
+          logEv(sim, 'amber', trp('X-RAY BURST · #{n} · M_NS={m} M⊙', { n: mt.xrayCount, m: MaNew.toFixed(2) }));
+        }
       }
+    } else {
+      // Black-hole accretor (or any other): simply grows.
+      setStarMsun(sim, bin, accIdx, MaNew);
     }
 
     // Orbital reaction to the transfer (J-conserving): shrinks if the donor is

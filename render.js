@@ -424,6 +424,45 @@
         ctx.beginPath(); ctx.arc(ac[0], ac[1], nr, 0, Math.PI * 2); ctx.fill();
       }
 
+      // Type I X-ray burst — a hard (blue-white), fast thermonuclear flash on the
+      // neutron-star accretor: brighter, smaller and quicker than a WD nova, with
+      // a thin shock ring that races outward as it fades.
+      if (bin.xrayFlash > 0 && mt && mt.accretor) {
+        const t = Math.max(0, Math.min(1, bin.xrayFlash / 0.9));
+        const ac = mt.accretor === 1 ? [bx1, by1] : [bx2, by2];
+        const xr = Math.max(2, (1 - t) * 30 + 5);
+        const xg = ctx.createRadialGradient(ac[0], ac[1], 0, ac[0], ac[1], xr);
+        xg.addColorStop(0, `oklch(0.97 0.06 235 / ${t * 0.8})`);
+        xg.addColorStop(0.5, `oklch(0.86 0.11 250 / ${t * 0.3})`);
+        xg.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+        ctx.fillStyle = xg;
+        ctx.beginPath(); ctx.arc(ac[0], ac[1], xr, 0, Math.PI * 2); ctx.fill();
+        const ring = Math.max(2, (1 - t) * 34 + 4);
+        ctx.strokeStyle = `oklch(0.92 0.07 240 / ${t * 0.5})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(ac[0], ac[1], ring, 0, Math.PI * 2); ctx.stroke();
+      }
+
+      // Accretion-induced collapse — the neutron-star accretor implodes to a black
+      // hole: a blue-white shell that CONTRACTS (rather than expands) onto a new,
+      // shrinking horizon, with a brief neutrino-bright core, then settles.
+      if (bin.aicFlash > 0 && bin.aicAt) {
+        const t = Math.max(0, Math.min(1, bin.aicFlash / 1.4));
+        const ac = bin.aicAt === 1 ? [bx1, by1] : [bx2, by2];
+        const collapseR = Math.max(2, t * 40 + 4);      // large early, shrinks to the core
+        const ag = ctx.createRadialGradient(ac[0], ac[1], 0, ac[0], ac[1], collapseR);
+        ag.addColorStop(0, `oklch(0.98 0.05 230 / ${(1 - t) * 0.85})`);
+        ag.addColorStop(0.45, `oklch(0.80 0.12 255 / ${t * 0.35})`);
+        ag.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+        ctx.fillStyle = ag;
+        ctx.beginPath(); ctx.arc(ac[0], ac[1], collapseR, 0, Math.PI * 2); ctx.fill();
+        // In-falling shock ring closing on the new horizon.
+        const inR = Math.max(2, t * 30 + 3);
+        ctx.strokeStyle = `oklch(0.88 0.09 250 / ${(1 - t) * 0.5})`;
+        ctx.lineWidth = 1.3;
+        ctx.beginPath(); ctx.arc(ac[0], ac[1], inR, 0, Math.PI * 2); ctx.stroke();
+      }
+
       // Primary — stellar or black hole. A stellar primary is drawn at its
       // photosphere R_star so the visible disk matches the collision surface the
       // inspiral uses (surface1 = R_star); otherwise its tiny horizon would make
@@ -736,6 +775,10 @@
       }
     }
 
+    // Multi-phase post-coalescence transient (tidal-tail ejecta, short-GRB jet,
+    // blue/red kilonova, r-process cloud, luminous red nova, WD debris disc).
+    drawTransient(sim, ctx, w, h, cx, cy, s);
+
     // ---- Bodies & trails ----
     for (const b of sim.bodies) {
       // trail
@@ -800,6 +843,224 @@
 
     // Jet central luminosity (above bodies)
     if (window.KNDisc) window.KNDisc.renderJetCenter(sim, ctx, w, h, worldToScreen);
+  }
+
+  // ── Post-coalescence transient choreography ─────────────────────────────
+  // Draws the seconds-long aftermath of a coalescence so a merger reads as a
+  // continuous physical event — matter is flung off, a relativistic jet lights,
+  // a kilonova swells and reddens, freshly-forged heavy elements drift outward —
+  // rather than two bodies snapping into one. Anchored at the scene centre (cx,cy)
+  // where the remnant is drawn; sim.transient (set by armTransient) carries the
+  // channel flags + jet axis. Kept gentle/muted per the project's visual rule.
+  function drawTransient(sim, ctx, w, h, cx, cy, s) {
+    const tx = sim.transient;
+    if (!tx || !(w > 0) || !(h > 0)) return;
+    const T = tx.t;                       // seconds since coalescence
+    const span = Math.min(w, h);
+    const ax = tx.axis || 0;
+    const ej = Math.max(0.2, tx.ejecta || 0.5);
+    // Phase helpers: ramp = clamped 0→1 over [a,b]; bell = 0→1→0 over [a,b].
+    const ramp = (t, a, b) => Math.max(0, Math.min(1, (t - a) / (b - a)));
+    const bell = (t, a, b) => (t <= a || t >= b) ? 0 : Math.sin(Math.PI * (t - a) / (b - a));
+    const rand = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+
+    ctx.save();
+
+    // (1) Tidal-tail ejecta — two trailing arms of matter flung tangentially as the
+    // cores touch, winding outward in the orbital sense and dispersing. This is the
+    // smooth bridge from "two bodies" to "one remnant": the lost mass is visibly
+    // thrown off. Skipped for a clean BH-BH pair (no matter) — that stays pure GW.
+    if (tx.kind !== 'gw') {
+      const tailDur = tx.lrn ? 2.6 : 1.7;
+      const p = ramp(T, 0, tailDur);
+      if (p < 1) {
+        const grow = 1 - Math.pow(1 - p, 2);             // ease-out expansion
+        const fade = (1 - p) * Math.min(1, T / 0.15);    // quick rise, slow fade
+        // Cool neutron-rich ejecta (compact) vs warm stellar ejecta (LRN / Ia).
+        const hue = (tx.kind === 'nsns' || tx.kind === 'nsbh') ? 32 : tx.lrn ? 40 : 55;
+        const chroma = tx.lrn ? 0.12 : 0.13;
+        const orbDir = Math.sign(Math.sin(ax)) || 1;     // wind in the orbital sense
+        for (let arm = 0; arm < 2; arm++) {
+          const base = ax + Math.PI / 2 + arm * Math.PI;  // tangential, two opposite arms
+          const N = 26;
+          for (let i = 0; i < N; i++) {
+            const f = i / (N - 1);
+            const swirl = orbDir * (0.9 + 1.4 * ej) * f;   // logarithmic-spiral wind
+            const ang = base + swirl;
+            const rr = (0.03 + (0.34 + 0.18 * ej) * f) * span * grow;
+            const px = cx + Math.cos(ang) * rr, py = cy + Math.sin(ang) * rr;
+            const a0 = fade * (0.26 * (1 - f));
+            if (a0 <= 0.004) continue;
+            const rad = (2.4 + 4 * (1 - f)) * (0.7 + 0.5 * ej);
+            const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
+            g.addColorStop(0, `oklch(${0.78 - 0.16 * f} ${chroma} ${hue} / ${a0})`);
+            g.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+            ctx.fillStyle = g;
+            ctx.beginPath(); ctx.arc(px, py, rad, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+      }
+    }
+
+    // (2) Short gamma-ray burst — a bipolar relativistic jet along the orbital
+    // axis, launched within a fraction of a second of merger from the accreting
+    // remnant. The forward jet is Doppler-beamed brighter than the counter-jet.
+    if (tx.grb) {
+      const k = bell(T, 0.10, 1.5);
+      if (k > 0.01) {
+        const L = span * (0.26 + 0.30 * ramp(T, 0.10, 0.8));
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(ax);
+        for (const dir of [1, -1]) {
+          const beam = dir === 1 ? 1 : 0.5;               // relativistic beaming
+          const w0 = 4, w1 = Math.max(6, L * 0.11);
+          const g = ctx.createLinearGradient(0, 0, dir * L, 0);
+          g.addColorStop(0, `oklch(0.97 0.08 245 / ${0.5 * k * beam})`);
+          g.addColorStop(0.5, `oklch(0.90 0.11 250 / ${0.26 * k * beam})`);
+          g.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.moveTo(0, -w0);
+          ctx.lineTo(dir * L, -w1);
+          ctx.lineTo(dir * L, w1);
+          ctx.lineTo(0, w0);
+          ctx.closePath(); ctx.fill();
+          ctx.strokeStyle = `oklch(0.99 0.05 240 / ${0.45 * k * beam})`;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(dir * L, 0); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    // (3) Kilonova — the quasi-thermal glow of the radioactive r-process ejecta.
+    // It opens BLUE (early, lanthanide-poor polar ejecta) and reddens as the
+    // lanthanide-rich tidal ejecta dominates, swelling as it expands.
+    if (tx.kilonova) {
+      const blueA = (1 - ramp(T, 0.5, 2.6)) * Math.min(1, T / 0.4) * 0.42;
+      if (blueA > 0.01) {
+        const rb = span * (0.05 + 0.20 * ramp(T, 0.4, 3.0)) * (0.7 + 0.6 * ej);
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rb);
+        g.addColorStop(0, `oklch(0.88 0.09 240 / ${blueA})`);
+        g.addColorStop(0.6, `oklch(0.78 0.10 250 / ${blueA * 0.4})`);
+        g.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, rb, 0, Math.PI * 2); ctx.fill();
+      }
+      const redA = bell(T, 0.9, tx.dur) * 0.5;
+      if (redA > 0.01) {
+        const rr = span * (0.06 + 0.27 * ramp(T, 1.0, tx.dur)) * (0.7 + 0.6 * ej);
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+        g.addColorStop(0, `oklch(0.70 0.14 34 / ${redA})`);
+        g.addColorStop(0.55, `oklch(0.58 0.15 28 / ${redA * 0.45})`);
+        g.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
+    // (4) r-process ejecta cloud — a diffuse, clumpy shell of newly-forged heavy
+    // elements drifting outward and shimmering as it cools (copper-red glints).
+    if (tx.rProcess) {
+      const p = ramp(T, 1.1, tx.dur);
+      const shell = span * (0.10 + 0.30 * p) * (0.7 + 0.6 * ej);
+      const fade = bell(T, 1.0, tx.dur);
+      if (fade > 0.01) {
+        const N = 70;
+        for (let i = 0; i < N; i++) {
+          const a1 = rand(i + 11.3) * Math.PI * 2;
+          const rr = shell * (0.55 + 0.45 * rand(i + 47.1));
+          const px = cx + Math.cos(a1) * rr, py = cy + Math.sin(a1) * rr * 0.92;
+          const shimmer = 0.5 + 0.5 * Math.sin(T * 3 + i);
+          const a0 = fade * (0.05 + 0.12 * rand(i + 91.7)) * shimmer;
+          if (a0 <= 0.004) continue;
+          const rad = 1.8 + 2.4 * rand(i + 5.5);
+          ctx.fillStyle = `oklch(${0.52 + 0.14 * rand(i + 3.1)} 0.11 ${30 + 18 * rand(i + 7.7)} / ${a0})`;
+          ctx.beginPath(); ctx.arc(px, py, rad, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+
+    // (5) Luminous red nova — the slow, cool, dusty optical transient of a STELLAR
+    // merger (e.g. V1309 Sco): a swelling red envelope that brightens then fades to
+    // an even cooler, dustier red over several seconds. No jet, no blue phase.
+    if (tx.lrn) {
+      const rr = span * (0.06 + 0.22 * ramp(T, 0.3, tx.dur)) * (0.8 + 0.5 * ej);
+      const env = bell(T, 0.2, tx.dur);
+      if (env > 0.01) {
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rr);
+        g.addColorStop(0, `oklch(0.74 0.12 48 / ${env * 0.5})`);
+        g.addColorStop(0.5, `oklch(0.58 0.14 32 / ${env * 0.3})`);
+        g.addColorStop(1, 'oklch(0.1 0 0 / 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.fill();
+        // Dust wisps — faint cool clumps in the expanding envelope.
+        const N = 30;
+        for (let i = 0; i < N; i++) {
+          const a1 = rand(i + 2.7) * Math.PI * 2;
+          const dr = rr * (0.5 + 0.5 * rand(i + 13.1));
+          const px = cx + Math.cos(a1) * dr, py = cy + Math.sin(a1) * dr;
+          const a0 = env * 0.10 * rand(i + 31.7);
+          if (a0 <= 0.004) continue;
+          ctx.fillStyle = `oklch(0.46 0.10 30 / ${a0})`;
+          ctx.beginPath(); ctx.arc(px, py, 2 + 2 * rand(i + 4.4), 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+
+    // (6) WD debris disc — a white dwarf tidally shredded by a compact accretor
+    // wraps its stream into a faint, reddened debris disc that orbits and fades.
+    if (tx.kind === 'disc') {
+      const fade = bell(T, 0.1, tx.dur);
+      if (fade > 0.01) {
+        const rOut = span * (0.06 + 0.10 * ramp(T, 0.1, tx.dur));
+        const N = 90;
+        for (let i = 0; i < N; i++) {
+          const r1 = rand(i + 101.1), r2 = rand(i + 211.3);
+          const rr = rOut * (0.35 + 0.65 * Math.sqrt(r1));
+          const om = 1.4 * Math.pow((rOut * 0.35) / Math.max(1, rr), 1.5);
+          const th = r2 * Math.PI * 2 + om * T;
+          const px = cx + Math.cos(th) * rr, py = cy + Math.sin(th) * rr * 0.5;  // inclined disc
+          const a0 = fade * (0.06 + 0.12 * (1 - rr / rOut));
+          if (a0 <= 0.004) continue;
+          ctx.fillStyle = `oklch(${0.62 - 0.1 * (rr / rOut)} 0.10 45 / ${a0})`;
+          ctx.beginPath(); ctx.arc(px, py, 1.6 + 1.4 * (1 - rr / rOut), 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+
+    // Headline — names the transient as it unfolds (placed below centre so it
+    // clears the ringdown / SN labels the merger flash draws at the core). The
+    // double-degenerate Ia is already labelled by its SN flash, so it is skipped.
+    if (!tx.ddIa) {
+      const la = bell(T, 0.2, 2.4);
+      if (la > 0.02) {
+        const head = {
+          nsns: tr('NS-NS MERGER · KILONOVA', '中子星雙星合併 · 千新星'),
+          nsbh: tr('NS-BH MERGER · KILONOVA', '中子星-黑洞合併 · 千新星'),
+          lrn:  tr('LUMINOUS RED NOVA', '紅色高光度新星'),
+          disc: tr('TIDAL DISRUPTION · DEBRIS DISC', '潮汐瓦解 · 碎屑盤'),
+        }[tx.kind] || '';
+        const sub = tx.grb
+          ? tr('short GRB · r-process ejecta', '短伽瑪射線暴 · r-過程拋射物')
+          : tx.lrn ? tr('stellar coalescence', '恆星合併')
+          : tx.kind === 'disc' ? tr('white dwarf shredded', '白矮星被瓦解') : '';
+        const ly = cy + span * 0.20;
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 11px JetBrains Mono, monospace';
+        ctx.fillStyle = `oklch(0.86 0.10 ${tx.lrn ? 40 : 250} / ${la})`;
+        ctx.fillText(head, cx, ly);
+        if (sub) {
+          ctx.font = '9px JetBrains Mono, monospace';
+          ctx.fillStyle = `oklch(0.72 0.08 ${tx.lrn ? 36 : 240} / ${la * 0.9})`;
+          ctx.fillText(sub, cx, ly + 13);
+        }
+        ctx.textAlign = 'left';
+      }
+    }
+
+    ctx.restore();
   }
 
   function colorOf(b, alpha = 1) {
