@@ -344,10 +344,13 @@ function MBodyEditor({ sim, force, role }) {
     force();
   }
 
-  // At the supermassive scale the central tabs offer galactic-nucleus structures
-  // (quasar / nuclear cluster / bare SMBH); a companion can only be a black hole.
+  // At the supermassive scale the body tabs offer galactic-nucleus structures.
+  // Both the central and the companion get the full set (quasar / nuclear cluster
+  // / bare SMBH) — all are an SMBH at heart.
   const smbhStructures = isCentral && regime === 'supermassive';
-  const companionBHOnly = !isCentral && regime === 'supermassive';
+  const companionStructures = !isCentral && regime === 'supermassive';
+  const companionStructure = (bin && bin.smbhStructure)
+    || ((sim.disc2 && sim.disc2.enabled) ? 'quasar' : 'smbh');
 
   return (
     <>
@@ -362,12 +365,16 @@ function MBodyEditor({ sim, force, role }) {
             </button>
           ))}
         </div>
-      ) : companionBHOnly ? (
+      ) : companionStructures ? (
         <div className="type-pick">
-          <button className="type-tab on" disabled>
-            <span className="g">●</span>
-            <span className="l">{tr('Black hole', '黑洞')}</span>
-          </button>
+          {phys.SMBH_STRUCTURES.map((s) => (
+            <button key={s.key}
+              className={`type-tab ${companionStructure === s.key ? 'on' : ''}`}
+              onClick={() => { window.KNSim.applySMBHStructure(sim, s.key, 'companion'); force(); }}>
+              <span className="g">{s.glyph}</span>
+              <span className="l">{tr(s.label_en, s.label_zh)}</span>
+            </button>
+          ))}
         </div>
       ) : (
       <div className="type-pick">
@@ -394,7 +401,7 @@ function MBodyEditor({ sim, force, role }) {
           ⇄ {tr('Swap central ⇄ companion', '主天體 ⇄ 伴星 互換')}
         </button>
       )}
-      {A.category === 'remnant' && !smbhStructures && !companionBHOnly && (
+      {A.category === 'remnant' && !smbhStructures && !companionStructures && (
         <div className="remnant-stage" role="status">
           {[
             { k: 'wd', g: '◐', label: tr('WD', '白矮') },
@@ -588,9 +595,17 @@ function TabBlackHole({ sim, force }) {
   const companionAiming  = sim.aiming && sim.aiming.kind === 'companion';
   const companionArmed   = companionPlacing || companionAiming;
 
+  function cancelCompanionPlacement() {
+    if (!companionArmed) return false;
+    sim.placement = null; sim.aiming = null;
+    window.KNSim.logEv(sim, 'amber', tr('companion placement cancelled', '已取消伴星放置'));
+    return true;
+  }
   function activateCompanionTab() {
     setActiveBody('companion');
-    if (!bin || bin.enabled || companionArmed) return;
+    if (!bin || bin.enabled) return;
+    // Already waiting to place → a second tap on the tab cancels the wait.
+    if (companionArmed) { cancelCompanionPlacement(); force(); return; }
     const sType = bin.type || 'bh';
     sim.placement = null; sim.aiming = null;
     sim.placement = {
@@ -622,7 +637,7 @@ function TabBlackHole({ sim, force }) {
 
         <div className="body-tabs">
           <button className={`body-tab ${activeBody === 'central' ? 'on' : ''}`}
-            onClick={() => setActiveBody('central')}>
+            onClick={() => { cancelCompanionPlacement(); setActiveBody('central'); }}>
             <span className="g">⦿</span><span className="l">{tr('Central', '主天體')}</span>
           </button>
           <button className={`body-tab companion ${activeBody === 'companion' ? 'on' : ''} ${companionArmed ? 'armed' : ''}`}

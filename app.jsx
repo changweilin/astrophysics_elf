@@ -543,8 +543,26 @@ function App() {
           <div className="view-zoom" role="group" aria-label={tr('Zoom', '縮放')}>
             <button title={tr('Zoom in', '放大')} onClick={() => { SIM.view.scale = Math.min(80, SIM.view.scale * 1.25); force(); }}>+</button>
             <button title={tr('Fit body to view', '符合天體尺度')} onClick={() => {
-              SIM.view.scale = window.KNphysics.VIEW_SCALES[window.KNphysics.uiCategory(SIM.params.type || 'bh')];
-              SIM.view.ox = 0; SIM.view.oy = 0; force();
+              const fitScale = window.KNphysics.VIEW_SCALES[window.KNphysics.uiCategory(SIM.params.type || 'bh')];
+              const bin = SIM.binary;
+              // With a placed companion, frame BOTH bodies: centre on their midpoint
+              // and zoom out (never past the single-body scale) so the companion is
+              // on screen without a second manual zoom.
+              if (bin && bin.enabled && isFinite(bin.x2) && isFinite(bin.y2)) {
+                const midx = (bin.x1 + bin.x2) / 2, midy = (bin.y1 + bin.y2) / 2;
+                const half = Math.max(Math.hypot(bin.x1 - midx, bin.y1 - midy),
+                                      Math.hypot(bin.x2 - midx, bin.y2 - midy), 1);
+                let s = fitScale;
+                if (SIM._vw && SIM._vh) {
+                  s = Math.min(fitScale, (Math.min(SIM._vw, SIM._vh) / 2) * 0.8 / half);
+                }
+                SIM.view.scale = Math.max(4, Math.min(80, s));
+                SIM.view.ox = -midx; SIM.view.oy = -midy;
+              } else {
+                SIM.view.scale = fitScale;
+                SIM.view.ox = 0; SIM.view.oy = 0;
+              }
+              force();
             }}>⤢</button>
             <button title={tr('Zoom out', '縮小')} onClick={() => { SIM.view.scale = Math.max(4, SIM.view.scale * 0.8); force(); }}>−</button>
           </div>

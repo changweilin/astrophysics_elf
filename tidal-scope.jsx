@@ -116,15 +116,9 @@ function TidalMicroscope({ sim, force }) {
     return () => cancelAnimationFrame(raf);
   }, [collapsed]);
 
-  // Kept for the collapsed mini integrity bar; the full numeric readout (Δg,
-  // stretch ratio, status) now renders in the right sidebar (panel-right §04c).
-  // The tidal source mass is the body's own (companion → the larger star).
-  const r = body ? Math.hypot(body.x, body.y) : 0;
-  const srcM = (body && body.tidalM != null) ? body.tidalM : sim.params.M;
-  const tidal = body && body.state === 'orbit'
-    ? phys.tidalStress(r, srcM, body.radius || 0.4, body.binding || 1) : 0;
-  const integrity = body ? Math.max(0, Math.min(1, 1 - tidal)) : 0;
-
+  // The full numeric readout (Δg, stretch ratio, integrity, status) renders in
+  // the right sidebar (panel-right §04c); collapsed, this window shows just its
+  // header (chevron + title), nothing else.
   return (
     <div ref={drag.rootRef}
          className={`microscope kn-draggable ${collapsed ? 'is-collapsed' : ''} ${drag.dragging ? 'is-dragging' : ''} ${drag.resized ? 'kn-resized' : ''}`}
@@ -152,22 +146,7 @@ function TidalMicroscope({ sim, force }) {
         </div>
       </div>
 
-      {collapsed ? (
-        <div className="microscope-mini">
-          <div className="mm-row">
-            <span className="mm-k">{tr('integrity', '完整性')}</span>
-            <div className="mm-bar">
-              <div className="mm-fill"
-                style={{
-                  width: (integrity * 100).toFixed(0) + '%',
-                  background: tidal > 0.85 ? 'var(--warn)' :
-                              tidal > 0.5  ? 'var(--amber)' : 'var(--cyan)'
-                }} />
-            </div>
-            <span className="mm-v">{(integrity * 100).toFixed(0)}%</span>
-          </div>
-        </div>
-      ) : (
+      {!collapsed && (
         <div className="microscope-body">
           <div className="kn-win-screen">
             <canvas ref={canvasRef} className="microscope-canvas" />

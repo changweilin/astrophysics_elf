@@ -93,21 +93,7 @@ function MHDMonitor({ sim, force }) {
           <span>{off ? tr('INERT', '靜止') : `P = ${m.P.toFixed(2)}`}</span>
         </div>
       </div>
-      {collapsed ? (
-        <div className="microscope-mini">
-          <div className="mm-row">
-            <span className="mm-k">{tr('jet P', '噴流 P')}</span>
-            <div className="mm-bar">
-              <div className="mm-fill"
-                style={{
-                  width: Math.min(100, m.P * 3.3).toFixed(0) + '%',
-                  background: m.P > 5 ? 'var(--magenta)' : m.P > 1 ? 'var(--amber)' : 'var(--cyan-dim)'
-                }} />
-            </div>
-            <span className="mm-v">{m.P.toFixed(1)}</span>
-          </div>
-        </div>
-      ) : (
+      {!collapsed && (
         <div className="microscope-body">
           <div className="kn-win-screen">
             <canvas ref={canvasRef} className="microscope-canvas mhd-canvas" />

@@ -414,12 +414,16 @@ function BodyEditor({ sim, force, role }) {
     force();   // R★/T★ re-derived for the new stage by KNSim.syncStellar
   }
 
-  // At the supermassive scale stars cannot exist, so the central tabs offer the
-  // galactic-nucleus structures that DO couple to an SMBH (quasar / nuclear cluster
-  // / bare hole) instead of the dead, locked stellar stages. A companion at this
-  // scale can only be a black hole — there is nothing else that massive.
+  // At the supermassive scale stars cannot exist, so the body tabs offer the
+  // galactic-nucleus structures that DO couple to an SMBH instead of the dead,
+  // locked stellar stages. Both the central and the companion offer the full set
+  // (quasar / nuclear cluster / bare hole) — all are an SMBH at heart.
   const smbhStructures = isCentral && regime === 'supermassive';
-  const companionBHOnly = !isCentral && regime === 'supermassive';
+  const companionStructures = !isCentral && regime === 'supermassive';
+  // The companion's active structure: its stored choice, else inferred from disc
+  // state (an accreting companion is a quasar; otherwise a quiescent hole).
+  const companionStructure = (bin && bin.smbhStructure)
+    || ((sim.disc2 && sim.disc2.enabled) ? 'quasar' : 'smbh');
 
   return (
     <>
@@ -435,14 +439,17 @@ function BodyEditor({ sim, force, role }) {
             </button>
           ))}
         </div>
-      ) : companionBHOnly ? (
+      ) : companionStructures ? (
         <div className="type-pick" role="tablist">
-          <button className="type-tab on" disabled
-            title={tr('At the supermassive scale a companion can only be a black hole.',
-                      '超大尺度下,伴星只能是黑洞。')}>
-            <span className="g">●</span>
-            <span className="l">{tr('Black hole', '黑洞')}</span>
-          </button>
+          {phys.SMBH_STRUCTURES.map((s) => (
+            <button key={s.key}
+              className={`type-tab ${companionStructure === s.key ? 'on' : ''}`}
+              title={tr(s.desc_en, s.desc_zh)}
+              onClick={() => { window.KNSim.applySMBHStructure(sim, s.key, 'companion'); force(); }}>
+              <span className="g">{s.glyph}</span>
+              <span className="l">{tr(s.label_en, s.label_zh)}</span>
+            </button>
+          ))}
         </div>
       ) : (
       <div className="type-pick" role="tablist">
@@ -466,7 +473,7 @@ function BodyEditor({ sim, force, role }) {
       </div>
       )}
 
-      {accessors.category === 'remnant' && !smbhStructures && !companionBHOnly && (
+      {accessors.category === 'remnant' && !smbhStructures && !companionStructures && (
         <div className="remnant-stage" role="status">
           <span className="rs-head">{tr('mass selects remnant', '質量決定緻密天體')}</span>
           {[
@@ -653,12 +660,21 @@ function LeftPanel({ sim, force }) {
   const companionAiming  = sim.aiming && sim.aiming.kind === 'companion';
   const companionArmed   = companionPlacing || companionAiming;
 
+  // Clear a pending (not-yet-dropped) companion placement / aiming.
+  function cancelCompanionPlacement() {
+    if (!companionArmed) return false;
+    sim.placement = null; sim.aiming = null;
+    window.KNSim.logEv(sim, 'amber', tr('companion placement cancelled', '已取消伴星放置'));
+    return true;
+  }
+
   function activateCompanionTab(e) {
     if (e && e.preventDefault) e.preventDefault();   // press-drag like body cards
     setActiveBody('companion');
     if (!bin) return;
     if (bin.enabled) return;
-    if (companionArmed) return;
+    // Already waiting to place → a second tap on the tab cancels the wait.
+    if (companionArmed) { cancelCompanionPlacement(); force(); return; }
     const sType = bin.type || 'bh';
     sim.placement = null; sim.aiming = null;
     sim.placement = {
@@ -703,7 +719,7 @@ function LeftPanel({ sim, force }) {
             );
           })()}
           <button className={`body-tab ${activeBody === 'central' ? 'on' : ''}`}
-            onClick={() => setActiveBody('central')}>
+            onClick={() => { cancelCompanionPlacement(); setActiveBody('central'); }}>
             <span className="g">⦿</span><span className="l">{tr('Central Body', '主天體')}</span>
           </button>
           <button className={`body-tab companion ${activeBody === 'companion' ? 'on' : ''} ${companionArmed ? 'armed' : ''}`}

@@ -1446,11 +1446,35 @@
     }
   }
 
-  // Apply a supermassive-scale central structure (see KNphysics.SMBH_STRUCTURES).
-  // All keep the central an SMBH; they differ in how the hole interacts with its
-  // surroundings — an accreting quasar (disc + jet), a tidally-fed nuclear star
-  // cluster, or a quiescent bare hole.
-  function applySMBHStructure(sim, key) {
+  // Apply a supermassive-scale structure (see KNphysics.SMBH_STRUCTURES). All keep
+  // the body an SMBH; they differ in how the hole interacts with its surroundings —
+  // an accreting quasar (disc + jet), a tidally-fed nuclear star cluster, or a
+  // quiescent bare hole. role 'companion' targets the binary secondary (its own
+  // disc/jet on sim.disc2); a nuclear cluster is a scene-wide population, so the
+  // companion's cluster seeds the same swarm around the nucleus.
+  function applySMBHStructure(sim, key, role = 'central') {
+    if (role === 'companion') {
+      const bin = sim.binary;
+      if (!bin) return key;
+      bin.type = 'bh';
+      bin.smbhStructure = key;
+      if (key === 'quasar') {
+        if (sim.disc2) sim.disc2.enabled = true;
+        if (!(bin.B2 > 0.4)) bin.B2 = 0.6;                          // power a BZ jet
+        if (Math.abs(bin.a2) < 0.5 * bin.M2) bin.a2 = 0.9 * bin.M2 * (Math.sign(bin.a2) || 1);
+        logEv(sim, 'warn', tr('Companion quasar (AGN) — accretion disc + jet active',
+                              '伴星類星體(活躍星系核)— 吸積盤 + 噴流啟動'));
+      } else if (key === 'cluster') {
+        if (sim.disc2) sim.disc2.enabled = false;
+        seedNuclearCluster(sim);
+        logEv(sim, 'good', tr('Nuclear star cluster seeded around the nucleus',
+                              '已在星系核周圍佈署核星團'));
+      } else {
+        if (sim.disc2) sim.disc2.enabled = false;
+        logEv(sim, 'good', tr('Quiescent supermassive companion', '寧靜的超大質量伴星'));
+      }
+      return key;
+    }
     sim.params.type = 'bh';
     sim.smbhStructure = key;
     if (key === 'quasar') {

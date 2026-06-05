@@ -21,7 +21,7 @@
     const binSnap = b ? {
       type: b.type, M2: b.M2, M2sun: b.M2sun, Q2: b.Q2, a2: b.a2,
       R_star2: b.R_star2, T_eff2: b.T_eff2, B2: b.B2, d: b.d,
-      age2: b.age2, Z2: b.Z2,
+      age2: b.age2, Z2: b.Z2, smbhStructure: b.smbhStructure,
       cepheid: !!b.cepheid, cepheidAmp: b.cepheidAmp,
       _stellarTouched: !!b._stellarTouched,
       enabled: !!b.enabled,
@@ -46,6 +46,10 @@
       disc2: sim.disc2 ? { enabled: !!sim.disc2.enabled, alpha: sim.disc2.alpha, emissionRate: sim.disc2.emissionRate } : null,
       binary: binSnap,
       flags: { ...f },
+      // Mass scale (stellar / intermediate / supermassive) + the supermassive
+      // central structure, so a reload returns to the scale the user left.
+      bhRegime: sim.bhRegime,
+      smbhStructure: sim.smbhStructure,
       view: { scale: v.scale },
       timescale: sim.timescale,
       t: sim.t,
@@ -141,6 +145,7 @@
       if (isNum(b.d)) { B.d = b.d; B.d0 = b.d; }
       B.age2 = isNum(b.age2) ? b.age2 : 0;
       B.Z2 = isNum(b.Z2) ? b.Z2 : 0.5;
+      if (typeof b.smbhStructure === 'string') B.smbhStructure = b.smbhStructure;
       B.cepheid = !!b.cepheid;
       B.cepheidAmp = isNum(b.cepheidAmp) ? b.cepheidAmp : 0.07;
       B._stellarTouched = !!b._stellarTouched;
@@ -173,6 +178,13 @@
         if (typeof cfg.flags[k] === 'boolean') sim.flags[k] = cfg.flags[k];
       }
     }
+    // Restore the mass scale + supermassive structure (validated against the
+    // known regimes). The restored params already match this scale, so we set
+    // it directly rather than re-running setBHRegime (which would rebuild/stash).
+    if (typeof cfg.bhRegime === 'string' && window.KNphysics.BH_REGIMES[cfg.bhRegime]) {
+      sim.bhRegime = cfg.bhRegime;
+    }
+    if (typeof cfg.smbhStructure === 'string') sim.smbhStructure = cfg.smbhStructure;
     if (cfg.view && isNum(cfg.view.scale)) {
       sim.view.scale = Math.min(80, Math.max(4, cfg.view.scale));
     }
