@@ -1278,23 +1278,58 @@
     bin.trail2.length = 0;
   }
 
-  // ── Mass-scale regime switching ───────────────────────────
-  // Move the system to a mass scale (stellar / intermediate / supermassive). The
-  // scale governs every evolutionary stage, not just black holes: the central body
-  // KEEPS its current stage (main sequence / giant / compact) when real bodies of
-  // that stage exist at the new scale, and otherwise falls back to the compact
-  // (black-hole) stage — there is no supermassive main-sequence star, so that stage
-  // locks out. The mass snaps into the (stage × scale) band (keeping a user mass
-  // already in-band), a/Q stay sub-extremal, surfaces re-derive, the camera
-  // reframes, and the companion follows by mass ratio. Geometry stays frozen in
-  // units of M — this is a physical *scale* change, not a geometric one.
-  function setBHRegime(sim, regime) {
-    const reg = phys.BH_REGIMES[regime];
-    if (!reg) return;
-    sim.bhRegime = regime;
-    const cap = 0.998;
+  // ── Per-scale scene memory ────────────────────────────────
+  // Each mass scale is an independent sandbox: it keeps its own central body,
+  // companion, spawned objects (count / type / live motion), accretion discs and
+  // camera zoom. Leaving a scale snapshots its scene; returning restores it
+  // verbatim. structuredClone preserves Infinity/NaN (e.g. a binary's t_merge);
+  // the JSON path is a fallback for very old engines.
+  function cloneState(v) {
+    if (v == null) return v;
+    try { return structuredClone(v); }
+    catch (e) { return JSON.parse(JSON.stringify(v)); }
+  }
+  function captureScene(sim) {
+    return {
+      params: cloneState(sim.params),
+      primary: cloneState(sim.primary),
+      binary: cloneState(sim.binary),
+      bodies: cloneState(sim.bodies),
+      disc: cloneState(sim.disc),
+      disc2: cloneState(sim.disc2),
+      selectedId: sim.selectedId,
+      viewScale: sim.view.scale,
+      stageStash: cloneState(sim._stageStash),
+      seq: sim.seq,
+    };
+  }
+  function restoreScene(sim, s) {
+    sim.params = cloneState(s.params);
+    sim.primary = cloneState(s.primary) || sim.primary;
+    if (s.binary) sim.binary = cloneState(s.binary);
+    sim.bodies = cloneState(s.bodies) || [];
+    if (s.disc) sim.disc = cloneState(s.disc);
+    if (s.disc2) sim.disc2 = cloneState(s.disc2);
+    sim.selectedId = s.selectedId != null ? s.selectedId : null;
+    if (s.viewScale) sim.view.scale = s.viewScale;
+    sim._stageStash = cloneState(s.stageStash) || { central: {}, companion: {} };
+    // Never reuse an id the restored scene already holds (the seq counter is global).
+    if (s.seq) sim.seq = Math.max(sim.seq || 1, s.seq);
+  }
 
-    // Central: keep the stage if it survives at this scale, else drop to compact.
+  // Build a fresh scene at `regime` from the *current* central/companion: keep the
+  // stage if real bodies of it exist at the new scale, else drop to the compact
+  // (black-hole) stage (there is no supermassive main-sequence star). The mass
+  // snaps into the (stage × scale) band, a/Q stay sub-extremal, the surface
+  // re-derives, the camera reframes and the companion follows by mass ratio. The
+  // spawned objects start empty — each scale collects its own bodies. Geometry
+  // stays frozen in units of M; this is a physical *scale* change, not a geometric.
+  function buildFreshScene(sim, reg, regime) {
+    const cap = 0.998;
+    sim.bodies = [];
+    sim.selectedId = null;
+    sim._stageStash = { central: {}, companion: {} };
+
     let cat = phys.uiCategory(sim.params.type || 'bh');
     if (phys.stageLockedAtRegime(cat, regime)) cat = 'remnant';
     const rng = phys.stageRegimeRange(cat, regime);            // remnant is never null
@@ -1303,12 +1338,9 @@
       ? cur : (cat === 'remnant' ? reg.def : rng.def);         // compact → BH default
     sim.params.Msun = Msun;
     sim.params.type = phys.typeForStage(cat, Msun);
-    // Clamp spin + charge sub-extremal for the frozen geometric mass (M = 1).
     if (Math.abs(sim.params.Q) > cap) sim.params.Q = Math.sign(sim.params.Q || 1) * cap;
     const room = Math.sqrt(Math.max(0, cap * cap - sim.params.Q * sim.params.Q));
     if (Math.abs(sim.params.a) > room) sim.params.a = Math.sign(sim.params.a || 1) * room;
-    // Re-seat a stellar stage's surface (a black hole has none); syncStellar then
-    // keeps R★/T★ tracking the new mass each frame.
     if (sim.params.type !== 'bh') {
       sim.params.age = sim.params.age || 0;
       if (sim.params.Z == null) sim.params.Z = 0.5;
@@ -1319,12 +1351,6 @@
     }
     sim.view.scale = phys.VIEW_SCALES[cat];
 
-    // The companion follows the new scale: keep the binary's geometric mass ratio
-    // (its physical mass rides the central mass) and reclassify it for the scale —
-    // its stage drops to a compact object when stars can't exist there, otherwise
-    // a compact remnant tracks the mass and a star/giant keeps its stage. So
-    // switching scale changes BOTH bodies' selection (a stellar pair → an SMBH-SMBH
-    // pair, etc.). Surfaces are re-derived by syncStellar next frame.
     const bin = sim.binary;
     if (bin) {
       const ratio = bin.M2 > 0 ? bin.M2 : 0.8;        // companion geom mass / primary
@@ -1347,11 +1373,36 @@
         if (Math.abs(bin.a2 || 0) > room2) bin.a2 = Math.sign(bin.a2 || 1) * room2;
       }
     }
-
     const tlabel = sim.params.type === 'bh' ? 'BH'
       : (phys.STELLAR_INFO[sim.params.type] ? phys.STELLAR_INFO[sim.params.type].name : sim.params.type.toUpperCase());
     logEv(sim, 'warn', trp('central → {label} {type} · M = {m} M⊙', {
       label: tr(reg.label_en, reg.label_zh), type: tlabel, m: phys.fmtSolarMass(Msun) }));
+  }
+
+  // ── Mass-scale regime switching ───────────────────────────
+  // Switch the system to a mass scale (stellar / intermediate / supermassive),
+  // stashing the scene we leave and restoring the target scale's saved scene if it
+  // has one (so every scale keeps its own independent set of bodies + central +
+  // companion + discs). A never-visited scale gets a fresh scene built for it.
+  function setBHRegime(sim, regime) {
+    const reg = phys.BH_REGIMES[regime];
+    if (!reg) return;
+    const prev = sim.bhRegime || 'stellar';
+    if (regime === prev) return regime;             // already here — keep the live scene
+
+    sim._regimeStash = sim._regimeStash || {};
+    sim._regimeStash[prev] = captureScene(sim);     // snapshot the scale we are leaving
+    sim.bhRegime = regime;
+    // Drop transient interaction state that pointed at the old scene.
+    sim.placement = null; sim.aiming = null; sim.moving = null;
+
+    const saved = sim._regimeStash[regime];
+    if (saved) {
+      restoreScene(sim, saved);
+      logEv(sim, 'good', trp('scale → {label} · scene restored', { label: tr(reg.label_en, reg.label_zh) }));
+    } else {
+      buildFreshScene(sim, reg, regime);
+    }
     return regime;
   }
 

@@ -841,6 +841,33 @@ html, body {
 .view-toggles button:disabled {
   color: var(--fg-3); opacity: 0.4; cursor: not-allowed; background: transparent;
 }
+
+/* Gravitational-lens scale read-out: r_g + shadow angular size at a representative
+   distance. The lensed image is mass-invariant; this row shows what truly scales. */
+.lens-scale {
+  border-top: 1px solid var(--line);
+  padding: 5px 8px 6px;
+  font-family: var(--mono);
+  display: flex; flex-direction: column; gap: 2px;
+  cursor: help;
+}
+.lens-scale .ls-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  font-size: 9px; color: var(--fg-2);
+}
+.lens-scale .ls-row b { color: var(--cyan); font-weight: 500; }
+.lens-scale .ls-row sub { font-size: 7px; }
+.lens-scale .ls-eht {
+  margin-left: auto;
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 0 5px; font-size: 8px; color: var(--fg-3);
+}
+.lens-scale .ls-eht.on {
+  border-color: var(--amber);
+  background: color-mix(in oklch, var(--amber) 12%, var(--bg-0));
+  color: var(--amber);
+}
+.lens-scale .ls-dist { font-size: 8px; color: var(--fg-3); }
 .view-toggles .vt-label {
   font-family: var(--mono);
   font-size: 10px;

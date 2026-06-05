@@ -298,6 +298,48 @@
     return m.toFixed(2);
   }
 
+  // ── On-sky lensing observables (the part that DOES depend on scale) ───────
+  // Gravitational lensing is scale-INVARIANT in units of M: the deflection, the
+  // photon ring and the shadow are identical for a 10 M⊙ and a 10⁹ M⊙ black hole
+  // when measured in gravitational radii. What an observer actually resolves is the
+  // ANGULAR size on the sky, θ = b · r_g / D, which scales with the physical mass
+  // (r_g = GM/c²) and the distance D. So the lensed *image* in the demo is the same
+  // at every scale (correct), and only this read-out changes with the regime.
+  const R_G_KM_PER_MSUN = 1.4766;        // GM/c² in km per solar mass
+  const KM_PER_PC       = 3.0856776e13;  // parsec in km
+  const RAD_TO_UAS      = 206264.806 * 1e6; // radians → microarcseconds
+  const EHT_RES_UAS     = 23;            // ~ Event Horizon Telescope angular resolution
+
+  // A real exemplar distance for each scale, used ONLY to report the on-sky size
+  // (the lensed image never depends on it). Stellar: Cygnus X-1. Intermediate:
+  // ω Centauri's central IMBH candidate. Supermassive: Sgr A* (the EHT anchor —
+  // a 4×10⁶ M⊙ hole here returns ≈50 μas, matching the measured shadow).
+  const REGIME_DISTANCE = {
+    stellar:      { pc: 2200,  label_en: 'Cygnus X-1, 2.2 kpc',   label_zh: '天鵝座 X-1，2.2 kpc' },
+    intermediate: { pc: 5200,  label_en: 'ω Cen, 5.2 kpc',        label_zh: 'ω 半人馬，5.2 kpc' },
+    supermassive: { pc: 8178,  label_en: 'Sgr A*, 8.2 kpc',       label_zh: '人馬座 A*，8.2 kpc' },
+  };
+
+  // Real-world observables for a black hole of physical mass Msun viewed from its
+  // regime's representative distance, given the shadow's critical impact parameter
+  // bM in units of M (defaults to the Schwarzschild value √27; pass the spin/charge
+  // -aware value from the ray trace for an exact shadow). Returns the gravitational
+  // radius (km), the shadow's physical diameter (km) and its angular diameter (μas),
+  // plus whether it is large enough for the EHT to resolve.
+  function bhObservables(Msun, regime, bM) {
+    const b = (bM > 0) ? bM : Math.sqrt(27);
+    const rgKm = R_G_KM_PER_MSUN * Math.max(0, Msun || 0);
+    const dist = REGIME_DISTANCE[regime] || REGIME_DISTANCE.stellar;
+    const Dkm = dist.pc * KM_PER_PC;
+    const shadowDiamKm = 2 * b * rgKm;
+    const shadowUas = Dkm > 0 ? (shadowDiamKm / Dkm) * RAD_TO_UAS : 0;
+    return {
+      rgKm, bM: b, shadowDiamKm, shadowUas,
+      distancePc: dist.pc, distanceLabel_en: dist.label_en, distanceLabel_zh: dist.label_zh,
+      ehtResolvable: shadowUas >= EHT_RES_UAS,
+    };
+  }
+
   // Which evolutionary stage a concrete type belongs to.
   function uiCategory(type) {
     if (type === 'ms') return 'star';
@@ -893,6 +935,7 @@
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
     BH_REGIMES, BH_REGIME_ORDER, bhRegimeForMass, fmtSolarMass,
     STAGE_MASS_LIMITS, stageRegimeRange, stageLockedAtRegime,
+    bhObservables, EHT_RES_UAS,
     M_CHANDRASEKHAR, M_TOV, CE_ALPHA, CE_LAMBDA, NOVA_RETAIN, MT_K,
     msLuminosity, msRadius, msLifetime, effTemp,
     mainSequenceState, giantState, whiteDwarfState, neutronStarState, deriveStellar,

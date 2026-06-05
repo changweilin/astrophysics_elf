@@ -40,6 +40,32 @@ function knWriteLensPrefs(prefs) {
   try { window.localStorage.setItem(LENS_PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* storage blocked */ }
 }
 
+// Compact length read-out for the gravitational radius: km → AU → pc as it grows
+// across the black-hole mass scales (a stellar r_g is a few km; a supermassive one
+// is astronomical units to parsecs).
+function knFmtKmScale(km) {
+  const AU = 1.495978707e8, PC = 3.0856776e13;
+  if (km >= PC) return (km / PC).toFixed(2) + ' pc';
+  if (km >= AU) return (km / AU).toFixed(2) + ' AU';
+  if (km >= 1e4) {
+    const e = Math.floor(Math.log10(km)); const mant = km / Math.pow(10, e);
+    const sup = String(e).replace(/[0-9]/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+d]);
+    return mant.toFixed(1) + '×10' + sup + ' km';
+  }
+  return (km >= 100 ? String(Math.round(km)) : km.toFixed(1)) + ' km';
+}
+
+// Angular size read-out: mas → μas → nas → pas. The shadow of a stellar/IMBH hole
+// is sub-nanoarcsecond (unresolvable); only a supermassive hole reaches the tens of
+// μas the Event Horizon Telescope can actually image.
+function knFmtAngle(uas) {
+  const v = Math.abs(uas || 0);
+  if (v >= 1e3)  return (v / 1e3).toFixed(2) + ' mas';
+  if (v >= 1)    return v.toFixed(1) + ' μas';
+  if (v >= 1e-3) return (v * 1e3).toFixed(1) + ' nas';
+  return (v * 1e6).toFixed(1) + ' pas';
+}
+
 function ObserverView({ sim }) {
   // Inclination presets (degrees from the spin pole). 90 deg is edge-on.
   const INCL = [20, 40, 60, 80];
@@ -83,6 +109,20 @@ function ObserverView({ sim }) {
 
   const thetaDeg = INCL[inclIdx];
   const azDeg = AZIM[azIdx];
+
+  // Scale-dependent observables. The lensed image above is scale-INVARIANT (it
+  // only depends on a/M, Q/M), so it is identical for a stellar-mass and a
+  // supermassive hole — correct GR. What changes with the chosen mass scale is the
+  // on-sky size: r_g = GM/c² and the shadow's angular diameter θ = b·r_g/D at the
+  // regime's representative distance. b comes from the spin/charge-aware ray trace
+  // (its critical impact parameter) when available, else the Schwarzschild √27.
+  const phys = window.KNphysics;
+  const regime = sim.bhRegime || 'stellar';
+  const centralBH = (sim.params.type || 'bh') === 'bh';
+  const bCritM = (traceRef.current && traceRef.current.bCrit > 0) ? traceRef.current.bCrit : Math.sqrt(27);
+  const lensObs = phys.bhObservables(sim.params.Msun, regime, bCritM);
+  const regName = phys.BH_REGIMES[regime]
+    ? tr(phys.BH_REGIMES[regime].label_en, phys.BH_REGIMES[regime].label_zh) : '';
   const cycleIncl = () => setInclIdx((inclIdx + 1) % INCL.length);
   const cycleAzim = () => setAzIdx((azIdx + 1) % AZIM.length);
 
@@ -327,6 +367,23 @@ function ObserverView({ sim }) {
               {tr('AZ', '方位')} {azDeg}°
             </button>
           </div>
+          {/* Scale-dependent read-out. The image is mass-independent; this row is the
+              honest part that scales with the chosen black-hole mass + distance. */}
+          {centralBH && (
+            <div className="lens-scale"
+                 title={tr(
+                   'Lensing is scale-invariant in units of M: the image above is identical for any black-hole mass (it depends only on a/M, Q/M). Only the on-sky angular size scales with mass and distance — shown here at a representative distance for the selected scale.',
+                   '以 M（重力半徑）為單位時，重力透鏡為尺度不變：上方影像對任何黑洞質量都相同（僅取決於 a/M、Q/M）。只有天空角尺寸隨質量與距離改變 — 此處以所選尺度的代表距離顯示。')}>
+              <div className="ls-row">
+                <span>r<sub>g</sub> <b>{knFmtKmScale(lensObs.rgKm)}</b></span>
+                <span>{tr('shadow', '陰影')} Ø <b>{knFmtAngle(lensObs.shadowUas)}</b></span>
+                <span className={`ls-eht ${lensObs.ehtResolvable ? 'on' : ''}`}>
+                  {lensObs.ehtResolvable ? tr('EHT-resolvable', 'EHT 可解析') : tr('unresolved', '無法解析')}
+                </span>
+              </div>
+              <div className="ls-dist">{regName} · @ {tr(lensObs.distanceLabel_en, lensObs.distanceLabel_zh)}</div>
+            </div>
+          )}
         </React.Fragment>
       )}
       {!collapsed && <div className="kn-resize-grip" onPointerDown={drag.onResizeDown} />}
