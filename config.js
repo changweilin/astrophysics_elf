@@ -55,8 +55,11 @@
       t: sim.t,
       // Mobile layout: remembered universe/settings splitter height (px).
       mDrawerH: isNum(sim.mDrawerH) ? sim.mDrawerH : undefined,
-      // Live bodies the user spawned/launched — only the ones still orbiting.
-      bodies: (sim.bodies || []).filter((bd) => bd.state === 'orbit').map((bd) => ({
+      // Live bodies the user spawned/launched — only the ones still orbiting. Galaxy/
+      // cluster cloud particles are excluded: they are a regenerable population, re-seeded
+      // from the structure choice + mass on reload (see reseedStructureClouds), so they
+      // are never persisted as individual bodies.
+      bodies: (sim.bodies || []).filter((bd) => bd.state === 'orbit' && !bd._cloud).map((bd) => ({
         id: bd.id, name: bd.name, kind: bd.kind,
         radius: bd.radius, binding: bd.binding, charge: bd.charge || 0,
         x: bd.x, y: bd.y, vx: bd.vx, vy: bd.vy,
@@ -218,6 +221,10 @@
         sim.selectedId = sim.bodies.length ? sim.bodies[sim.bodies.length - 1].id : null;
       }
     }
+    // Re-seed the galaxy/cluster star clouds for the restored structures (they are not
+    // persisted as individual bodies). Regenerates N stars from the restored mass, so a
+    // reload returns to the same structure rather than an empty core (N = 0).
+    if (typeof KN.reseedStructureClouds === 'function') KN.reseedStructureClouds(sim);
     // Record the resulting state as "already saved" so the first autosave no-ops.
     sim._cfgJson = JSON.stringify(configSnapshot(sim));
     return true;
