@@ -414,8 +414,26 @@ function BodyEditor({ sim, force, role }) {
     force();   // R★/T★ re-derived for the new stage by KNSim.syncStellar
   }
 
+  // At the supermassive scale stars cannot exist, so the central tabs offer the
+  // galactic-nucleus structures that DO couple to an SMBH (quasar / nuclear cluster
+  // / bare hole) instead of the dead, locked stellar stages.
+  const smbhStructures = isCentral && regime === 'supermassive';
+
   return (
     <>
+      {smbhStructures ? (
+        <div className="type-pick" role="tablist">
+          {phys.SMBH_STRUCTURES.map((s) => (
+            <button key={s.key}
+              className={`type-tab ${(sim.smbhStructure || 'smbh') === s.key ? 'on' : ''}`}
+              title={tr(s.desc_en, s.desc_zh)}
+              onClick={() => { window.KNSim.applySMBHStructure(sim, s.key); force(); }}>
+              <span className="g">{s.glyph}</span>
+              <span className="l">{tr(s.label_en, s.label_zh)}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
       <div className="type-pick" role="tablist">
         {[
           { k: 'star',    label: tr('Main sequence', '主序星'), glyph: '✱' },
@@ -435,8 +453,9 @@ function BodyEditor({ sim, force, role }) {
           );
         })}
       </div>
+      )}
 
-      {accessors.category === 'remnant' && (
+      {accessors.category === 'remnant' && !smbhStructures && (
         <div className="remnant-stage" role="status">
           <span className="rs-head">{tr('mass selects remnant', '質量決定緻密天體')}</span>
           {[

@@ -61,6 +61,9 @@
       // Sets the BH mass band and which scale of interactive bodies the Object
       // Library offers (see KNphysics.BH_REGIMES; toggled with the B key).
       bhRegime: 'stellar',
+      // Supermassive-scale central structure: 'quasar' | 'cluster' | 'smbh'
+      // (only meaningful at the supermassive scale; see KNphysics.SMBH_STRUCTURES).
+      smbhStructure: 'smbh',
     };
   }
 
@@ -1300,6 +1303,7 @@
       selectedId: sim.selectedId,
       viewScale: sim.view.scale,
       stageStash: cloneState(sim._stageStash),
+      smbhStructure: sim.smbhStructure,
       seq: sim.seq,
     };
   }
@@ -1313,6 +1317,7 @@
     sim.selectedId = s.selectedId != null ? s.selectedId : null;
     if (s.viewScale) sim.view.scale = s.viewScale;
     sim._stageStash = cloneState(s.stageStash) || { central: {}, companion: {} };
+    sim.smbhStructure = s.smbhStructure || 'smbh';
     // Never reuse an id the restored scene already holds (the seq counter is global).
     if (s.seq) sim.seq = Math.max(sim.seq || 1, s.seq);
   }
@@ -1329,6 +1334,11 @@
     sim.bodies = [];
     sim.selectedId = null;
     sim._stageStash = { central: {}, companion: {} };
+    sim.smbhStructure = 'smbh';     // a fresh supermassive scene starts as a bare hole
+    // A fresh scene is its own sandbox — start with discs off (a quasar/AGN turns
+    // them back on); the previous scale's disc state is kept in its own snapshot.
+    if (sim.disc)  { sim.disc.enabled = false;  sim.disc.particles.length = 0; }
+    if (sim.disc2) { sim.disc2.enabled = false; sim.disc2.particles.length = 0; }
 
     let cat = phys.uiCategory(sim.params.type || 'bh');
     if (phys.stageLockedAtRegime(cat, regime)) cat = 'remnant';
@@ -1415,6 +1425,51 @@
     return setBHRegime(sim, next);
   }
 
+  // Seed a nuclear star cluster: a swarm of stars on tight prograde orbits about the
+  // central SMBH — the S-star-like population that orbits and is tidally fed to a
+  // galactic-nucleus hole. Idempotent: a previous cluster (tagged _seed) is cleared
+  // first so re-selecting the structure re-seeds rather than piling up.
+  function seedNuclearCluster(sim, n = 10) {
+    sim.bodies = sim.bodies.filter((b) => b._seed !== 'cluster');
+    const dir = Math.sign(sim.params.a || 1) || 1;
+    for (let i = 0; i < n; i++) {
+      const r = 12 + Math.random() * 30;
+      const th = Math.random() * Math.PI * 2;
+      const x = r * Math.cos(th), y = r * Math.sin(th);
+      const vc = phys.circularSpeed(r, sim.params.M) || Math.sqrt(sim.params.M / r);
+      addBody(sim, {
+        name: 'S-' + String(i + 1).padStart(2, '0'),
+        kind: 'star', radius: 0.5, binding: 6, charge: 0,
+        x, y, vx: -Math.sin(th) * vc * dir, vy: Math.cos(th) * vc * dir,
+        _seed: 'cluster',
+      });
+    }
+  }
+
+  // Apply a supermassive-scale central structure (see KNphysics.SMBH_STRUCTURES).
+  // All keep the central an SMBH; they differ in how the hole interacts with its
+  // surroundings — an accreting quasar (disc + jet), a tidally-fed nuclear star
+  // cluster, or a quiescent bare hole.
+  function applySMBHStructure(sim, key) {
+    sim.params.type = 'bh';
+    sim.smbhStructure = key;
+    if (key === 'quasar') {
+      if (sim.disc) sim.disc.enabled = true;
+      if (!(sim.params.B > 0.4)) sim.params.B = 0.6;                 // power a BZ jet
+      if (Math.abs(sim.params.a) < 0.5) sim.params.a = 0.9 * (Math.sign(sim.params.a) || 1);
+      logEv(sim, 'warn', tr('Quasar (AGN) — accretion disc + jet active',
+                            '類星體(活躍星系核)— 吸積盤 + 噴流啟動'));
+    } else if (key === 'cluster') {
+      seedNuclearCluster(sim);
+      logEv(sim, 'good', tr('Nuclear star cluster seeded around the SMBH',
+                            '已在超大質量黑洞周圍佈署核星團'));
+    } else {
+      if (sim.disc) sim.disc.enabled = false;
+      logEv(sim, 'good', tr('Quiescent supermassive black hole', '寧靜的超大質量黑洞'));
+    }
+    return key;
+  }
+
   // --- renderer ---
   function worldToScreen(sim, w, h, x, y) {
     return [w / 2 + (x + sim.view.ox) * sim.view.scale,
@@ -1440,7 +1495,7 @@
 
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
-                   setBHRegime, cycleBHRegime,
+                   setBHRegime, cycleBHRegime, applySMBHStructure,
                    worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

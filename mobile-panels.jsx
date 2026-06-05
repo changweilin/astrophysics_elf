@@ -344,8 +344,24 @@ function MBodyEditor({ sim, force, role }) {
     force();
   }
 
+  // At the supermassive scale the central tabs offer galactic-nucleus structures
+  // (quasar / nuclear cluster / bare SMBH) instead of the locked stellar stages.
+  const smbhStructures = isCentral && regime === 'supermassive';
+
   return (
     <>
+      {smbhStructures ? (
+        <div className="type-pick">
+          {phys.SMBH_STRUCTURES.map((s) => (
+            <button key={s.key}
+              className={`type-tab ${(sim.smbhStructure || 'smbh') === s.key ? 'on' : ''}`}
+              onClick={() => { window.KNSim.applySMBHStructure(sim, s.key); force(); }}>
+              <span className="g">{s.glyph}</span>
+              <span className="l">{tr(s.label_en, s.label_zh)}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
       <div className="type-pick">
         {[
           { k: 'star',    label: tr('MS', '主序'),    glyph: '✱' },
@@ -363,7 +379,8 @@ function MBodyEditor({ sim, force, role }) {
           );
         })}
       </div>
-      {A.category === 'remnant' && (
+      )}
+      {A.category === 'remnant' && !smbhStructures && (
         <div className="remnant-stage" role="status">
           {[
             { k: 'wd', g: '◐', label: tr('WD', '白矮') },

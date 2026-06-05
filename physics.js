@@ -233,6 +233,29 @@
   // Cycle order for the keyboard / UI toggle.
   const BH_REGIME_ORDER = ['stellar', 'intermediate', 'supermassive'];
 
+  // ── Supermassive-scale central structures ─────────────────────────────
+  // At the supermassive scale there is no main-sequence or giant star (those stages
+  // are locked), so the central-body tabs offer the galactic-nucleus structures that
+  // actually couple to a supermassive black hole instead. All are an SMBH at heart —
+  // they differ in how the hole interacts with its surroundings:
+  //   · quasar  — the SMBH accreting (luminous disc + Blandford-Znajek jet, an AGN)
+  //   · cluster — a nuclear star cluster on tight orbits, tidally fed to the hole
+  //   · smbh    — the quiescent bare hole (e.g. Sgr A*)
+  // A galactic spiral arm is deliberately omitted: it lives at kiloparsec scales,
+  // far outside the SMBH's ~parsec sphere of influence, so it does not dynamically
+  // interact with the hole the way these do.
+  const SMBH_STRUCTURES = [
+    { key: 'quasar',  glyph: '✦', label_en: 'Quasar',       label_zh: '類星體',
+      desc_en: 'Actively accreting SMBH — luminous accretion disc + relativistic jet (an AGN).',
+      desc_zh: '活躍吸積的超大質量黑洞 — 明亮吸積盤 + 相對論性噴流(活躍星系核)。' },
+    { key: 'cluster', glyph: '✸', label_en: 'Star cluster', label_zh: '星團',
+      desc_en: 'Nuclear star cluster — stars on tight orbits, tidally disrupted and fed to the SMBH.',
+      desc_zh: '核星團 — 恆星在緊密軌道上,被潮汐瓦解並餵入超大質量黑洞。' },
+    { key: 'smbh',    glyph: '●', label_en: 'SMBH',         label_zh: '超大黑洞',
+      desc_en: 'Quiescent supermassive black hole (e.g. Sgr A*).',
+      desc_zh: '寧靜的超大質量黑洞(如人馬座 A*)。' },
+  ];
+
   // Real-universe mass limits per evolutionary stage (M⊙). Hydrogen-fusing and
   // post-main-sequence stars share an upper mass limit near ~150 M⊙ (the stellar
   // upper-mass limit; the heaviest known stars, e.g. R136a1, sit a little above
@@ -933,7 +956,7 @@
     ceOutcome, novaIgnitionMass, gasStreamPaths,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
     uiCategory, remnantType, typeForStage, MASS_RANGES, VIEW_SCALES,
-    BH_REGIMES, BH_REGIME_ORDER, bhRegimeForMass, fmtSolarMass,
+    BH_REGIMES, BH_REGIME_ORDER, SMBH_STRUCTURES, bhRegimeForMass, fmtSolarMass,
     STAGE_MASS_LIMITS, stageRegimeRange, stageLockedAtRegime,
     bhObservables, EHT_RES_UAS,
     M_CHANDRASEKHAR, M_TOV, CE_ALPHA, CE_LAMBDA, NOVA_RETAIN, MT_K,
