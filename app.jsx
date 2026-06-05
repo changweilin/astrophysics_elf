@@ -325,10 +325,11 @@ function App() {
           return;
         }
       }
-      // Otherwise the nearest orbiting body
+      // Otherwise the nearest orbiting body (cloud particles are a population, not
+      // individually circularizable).
       let best = null, bestD = 22;
       for (const b of SIM.bodies) {
-        if (b.state !== 'orbit') continue;
+        if (b.state !== 'orbit' || b._cloud) continue;
         const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, b.x, b.y);
         const d = Math.hypot(bx - sx, by - sy);
         if (d < bestD) { bestD = d; best = b; }

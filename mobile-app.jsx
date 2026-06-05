@@ -182,7 +182,7 @@ function MobileApp() {
       }
       let best = null, bestD = 28;
       for (const b of MSIM.bodies) {
-        if (b.state !== 'orbit') continue;
+        if (b.state !== 'orbit' || b._cloud) continue;
         const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, b.x, b.y);
         const d = Math.hypot(bx - sx, by - sy);
         if (d < bestD) { bestD = d; best = b; }
@@ -490,10 +490,10 @@ function MobileApp() {
       // Pan end — if no real movement, treat as tap (selection)
       if (pan) {
         if (!movedSinceDown && !suppressTap) {
-          // tap to select nearest body
+          // tap to select nearest body (cloud particles aren't individually selectable)
           let best = null, bestD = 28;
           for (const b of MSIM.bodies) {
-            if (b.state !== 'orbit') continue;
+            if (b.state !== 'orbit' || b._cloud) continue;
             const [bx, by] = window.KNSim.worldToScreen(MSIM, w, h, b.x, b.y);
             const d = Math.hypot(bx - sx, by - sy);
             if (d < bestD) { bestD = d; best = b; }

@@ -399,7 +399,11 @@
       rho += 0.12 * Mt / sphere(Math.max(2, rNow));
       const Mdf = Math.max(M1, M2);                       // dominant perturber
       const bothCluster = sim.smbhStructure === 'cluster' && bin.smbhStructure === 'cluster';
-      const DF_RATE = bothCluster ? 130 : 90;             // per-structure time boost
+      // Per-structure time boost, calibrated so the pair spirals through several
+      // orbits (preserving the orbital angular momentum visually, like the stellar GW
+      // inspiral) rather than plunging radially. Cluster pairs sink a touch faster.
+      // bin.dfRate (default unset) is a user-tunable override, analogous to inspiralRate.
+      const DF_RATE = (bin.dfRate != null ? bin.dfRate : (bothCluster ? 0.65 : 0.5));
       const aDF = phys.dynamicalFriction(Vx, Vy, Mdf, rho, sigma, 4);
       const vrelNow = Math.max(1e-4, Math.hypot(Vx, Vy));
       // Fractional decay rate = |a_DF| / v  (the drag-timescale inverse).
@@ -1080,6 +1084,17 @@
 
       const r = Math.hypot(b.x, b.y);
 
+      // ── Cloud particle left the structure's reach ──────
+      // A galaxy/cluster star that wanders far beyond its host core has been stripped
+      // or ejected — it is no longer part of the system, so mark it lost (pruned after
+      // the loop → the population N drops). Measured from the host core (central at the
+      // origin / bin.x1, companion at bin.x2), so it tracks a moving structure.
+      if (b._cloud) {
+        const hx = (b._cloudRole === 'companion' && binOn) ? bin.x2 : c1x;
+        const hy = (b._cloudRole === 'companion' && binOn) ? bin.y2 : c1y;
+        if (Math.hypot(b.x - hx, b.y - hy) > 95) { b.state = 'escaped'; b.consumedAt = sim.t; continue; }
+      }
+
       // ── Binary-mode capture & tidal checks ──────────────
       if (bin && bin.enabled) {
         const r1 = Math.hypot(b.x - bin.x1, b.y - bin.y1);
@@ -1091,14 +1106,14 @@
         if (b.stress > b.stressPeak) b.stressPeak = b.stress;
         if (b.kind !== 'probe' && b.kind !== 'ship' && b.stress > 1.15) {
           b.state = 'spaghettified'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', trp('{name} — spaghettified between binary pair', { name: b.name }));
+          if (!b._cloud) logEv(sim, 'warn', trp('{name} — spaghettified between binary pair', { name: b.name }));
           continue;
         }
         // Primary capture / surface impact
         if (cType === 'bh') {
           if (!naked && r1 < (isFinite(rplus) ? rplus : M)) {
             b.state = 'captured'; b.consumedAt = sim.t;
-            logEv(sim, 'warn', trp('{name} — captured by primary BH', { name: b.name }));
+            if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by primary BH', { name: b.name }));
             continue;
           }
         } else {
@@ -1106,7 +1121,7 @@
           if (r1 < Rs1) {
             b.state = 'captured'; b.consumedAt = sim.t;
             const label = surfaceLabel(cType);
-            logEv(sim, 'warn', trp('{name} — impacted primary {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
+            if (!b._cloud) logEv(sim, 'warn', trp('{name} — impacted primary {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
             continue;
           }
         }
@@ -1114,7 +1129,7 @@
         if (sType === 'bh') {
           if (!compH.naked && r2 < (isFinite(compH.rplus) ? compH.rplus : bin.M2)) {
             b.state = 'captured'; b.consumedAt = sim.t;
-            logEv(sim, 'warn', trp('{name} — captured by companion BH', { name: b.name }));
+            if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by companion BH', { name: b.name }));
             continue;
           }
         } else {
@@ -1122,7 +1137,7 @@
           if (r2 < Rs2) {
             b.state = 'captured'; b.consumedAt = sim.t;
             const label = surfaceLabel(sType);
-            logEv(sim, 'warn', trp('{name} — impacted companion {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
+            if (!b._cloud) logEv(sim, 'warn', trp('{name} — impacted companion {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
             continue;
           }
         }
@@ -1139,7 +1154,7 @@
       if (tidal > b.stressPeak) b.stressPeak = tidal;
       if (b.kind !== 'probe' && b.kind !== 'ship' && tidal > 1.15) {
         b.state = 'spaghettified'; b.consumedAt = sim.t;
-        logEv(sim, 'warn', trp('{name} — spaghettified at r = {r} M', { name: b.name, r: r.toFixed(2) }));
+        if (!b._cloud) logEv(sim, 'warn', trp('{name} — spaghettified at r = {r} M', { name: b.name, r: r.toFixed(2) }));
         continue;
       }
       // Surface impact for stellar centrals
@@ -1148,18 +1163,18 @@
         if (r < Rs) {
           b.state = 'captured'; b.consumedAt = sim.t;
           const label = surfaceLabel(cType);
-          logEv(sim, 'warn', trp('{name} — impacted {surface} at r = {r} M', { name: b.name, surface: tr(label.en, label.zh), r: r.toFixed(2) }));
+          if (!b._cloud) logEv(sim, 'warn', trp('{name} — impacted {surface} at r = {r} M', { name: b.name, surface: tr(label.en, label.zh), r: r.toFixed(2) }));
           continue;
         }
       } else {
         if (!naked && r < rplus) {
           b.state = 'captured'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', trp('{name} — crossed r₊, mass added to BH', { name: b.name }));
+          if (!b._cloud) logEv(sim, 'warn', trp('{name} — crossed r₊, mass added to BH', { name: b.name }));
           continue;
         }
         if (naked && r < 0.4) {
           b.state = 'captured'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', trp('{name} — annihilated at naked singularity', { name: b.name }));
+          if (!b._cloud) logEv(sim, 'warn', trp('{name} — annihilated at naked singularity', { name: b.name }));
           continue;
         }
       }
@@ -1167,6 +1182,13 @@
         b.state = 'escaped'; b.consumedAt = sim.t;
         if (!b._cloud) logEv(sim, 'amber', trp('{name} — escaped beyond detector range', { name: b.name }));
       }
+    }
+
+    // Prune cloud particles that left the structure or were consumed — the population
+    // N shrinks as a galaxy/cluster loses stars (tidal stripping, ejection, or feeding
+    // to a central BH). User-placed bodies are kept (they stay listed as captured/etc.).
+    if (sim.bodies.some((b) => b._cloud && b.state !== 'orbit')) {
+      sim.bodies = sim.bodies.filter((b) => !(b._cloud && b.state !== 'orbit'));
     }
   }
 
@@ -1426,7 +1448,16 @@
     const dir = Math.sign(sim.params.a || 1);
     const Vx = -dy / d * vrel * dir;
     const Vy =  dx / d * vrel * dir;
+    // Carry each structure's cloud with its host: a galaxy/cluster swarm shares its
+    // core's bulk motion, so when the cores are re-set to the circular orbit, shift
+    // each cloud particle by its host's velocity change (its internal orbit is kept).
+    const ov1x = bin.vx1, ov1y = bin.vy1, ov2x = bin.vx2, ov2y = bin.vy2;
     splitTwoBody(bin, M1, M2, Vx, Vy);
+    for (const cb of sim.bodies) {
+      if (!cb._cloud) continue;
+      if (cb._cloudRole === 'companion') { cb.vx += bin.vx2 - ov2x; cb.vy += bin.vy2 - ov2y; }
+      else                               { cb.vx += bin.vx1 - ov1x; cb.vy += bin.vy1 - ov1y; }
+    }
     bin.trail1.length = 0;
     bin.trail2.length = 0;
     return Math.hypot(bin.vx2, bin.vy2);
