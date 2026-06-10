@@ -432,6 +432,26 @@ function MBodyEditor({ sim, force, role }) {
           <span className="sn-v">N = {sim._cloudN2 || 0}</span>
         </div>
       )}
+      {/* Tidal-stream census + conservation ledger (mirrors panel-left). */}
+      {(sim._streamN || 0) > 0 && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('tidal stream stars', '潮汐流恆星')}</span>
+          <span className="sn-v">N = {sim._streamN}</span>
+        </div>
+      )}
+      {sim._conserve && sim._conserve0 && (sim._cloudN1 > 0 || sim._cloudN2 > 0) && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('ΣM · Δp (conserved)', '總質量 · 動量漂移')}</span>
+          <span className="sn-v">
+            {(sim._conserve.M / Math.max(1e-9, sim._conserve0.M) * 100).toFixed(1)}%
+            {/* Δp shown only while the pair interacts (a lone central is the frame anchor). */}
+            {sim.binary && sim.binary.enabled
+              ? ` · ${(Math.hypot(sim._conserve.px - sim._conserve0.px, sim._conserve.py - sim._conserve0.py)
+                  / sim._conserve0.pref * 100).toFixed(1)}%`
+              : ''}
+          </span>
+        </div>
+      )}
       {bin && bin.enabled && (
         <button className="swap-bodies"
           onClick={() => { window.KNSim.swapCentralCompanion(sim); force(); }}>

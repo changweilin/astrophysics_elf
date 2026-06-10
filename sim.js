@@ -266,6 +266,7 @@
     // the freshly placed position — N2 stars, scaled by its mass. The structure may have
     // been chosen BEFORE placement (when the binary wasn't enabled yet, so the earlier
     // seed bailed), so seeding here guarantees the swarm appears wherever the companion lands.
+    resetConservationBaseline(sim);   // a fresh placement is a new initial condition
     if (isCloudStruct(bin.smbhStructure)) {
       seedStructureCloud(sim, bin.smbhStructure, 'companion');
       recordCloudCounts(sim);
@@ -361,27 +362,23 @@
 
     // ── Structure back-reaction on the cores (momentum conservation) ──
     // The swarm feels the cores + binding halos, so by Newton's third law the cores must
-    // feel the swarm. The swarm's mass is its binding halo, so each core feels the halo
-    // fields (its own ≈ 0 — a uniform halo centred on the core exerts no force at its
-    // centre — and the OTHER structure's as a real inter-structure pull). We apply this
-    // to the pair's BARYCENTRE only: the net halo force translates the binary's centre of
-    // mass toward a tugged swarm, so the (cores + cloud) momentum is conserved instead of
-    // the barycentre staying artificially pinned. The RELATIVE (inspiral) coordinate is
+    // feel the swarm. The integrator accumulates the EXACT per-member reaction forces
+    // (sim._react1/_react2: −Σ m·a for each member's core + halo terms, the halo's
+    // reaction anchored to its host core) — so the books balance star-for-star rather
+    // than approximately via the halo field sampled at the cores. We apply the net force
+    // to the pair's BARYCENTRE only: it translates the binary's centre of mass toward a
+    // tugged swarm, so the (cores + cloud) momentum is conserved instead of the
+    // barycentre staying artificially pinned. The RELATIVE (inspiral) coordinate is
     // left to the dynamical-friction model below, which already represents the extended
     // mass's drag — adding the conservative pull there too would double-drive the merger.
     // Gated to scenes that actually carry a halo (normal stellar binaries are untouched).
     let vcx = 0, vcy = 0, AcomX = 0, AcomY = 0;
     const haloBR = !!(sim._halo1 || sim._halo2);
     if (haloBR) {
-      const com1 = sim._com1, com2 = sim._com2;
-      const coreHaloAcc = (cxp, cyp) => {
-        let ax = 0, ay = 0;
-        if (sim._halo1 && com1) { const h = phys.haloAccel(cxp - com1.x, cyp - com1.y, sim._halo1.M, sim._halo1.R); ax += h.ax; ay += h.ay; }
-        if (sim._halo2 && com2) { const h = phys.haloAccel(cxp - com2.x, cyp - com2.y, sim._halo2.M, sim._halo2.R); ax += h.ax; ay += h.ay; }
-        return { ax, ay };
-      };
-      const a1 = coreHaloAcc(bin.x1, bin.y1), a2 = coreHaloAcc(bin.x2, bin.y2);
-      AcomX = (M1 * a1.ax + M2 * a2.ax) / Mt; AcomY = (M1 * a1.ay + M2 * a2.ay) / Mt;
+      const rf1 = sim._react1, rf2 = sim._react2;
+      const Fx = (rf1 ? rf1.fx : 0) + (rf2 ? rf2.fx : 0);
+      const Fy = (rf1 ? rf1.fy : 0) + (rf2 ? rf2.fy : 0);
+      AcomX = Fx / Mt; AcomY = Fy / Mt;
       // Re-derive the live barycentre position + velocity from the absolute core state so
       // the COM motion accumulates (the pinned-COM split-back below would otherwise reset it).
       bin.cx = (M1 * bin.x1 + M2 * bin.x2) / Mt; bin.cy = (M1 * bin.y1 + M2 * bin.y2) / Mt;
@@ -1138,6 +1135,18 @@
     if (struct) struct.accreted = (struct.accreted || 0) + (b._m || 0);
   }
 
+  // Bank a slingshot-ejected member's mass / momentum / angular momentum (about the
+  // world origin) so the conservation ledger stays flat: the ejecta carry these
+  // quantities clean out of the scene — they are removed from the live population but
+  // never destroyed. (See recordCloudCounts, which folds the banks into the totals.)
+  function bankEscapedMember(sim, b) {
+    const m = b._m || 0;
+    sim._escapedM  = (sim._escapedM  || 0) + m;
+    sim._escapedPx = (sim._escapedPx || 0) + m * b.vx;
+    sim._escapedPy = (sim._escapedPy || 0) + m * b.vy;
+    sim._escapedL  = (sim._escapedL  || 0) + m * (b.x * b.vy - b.y * b.vx);
+  }
+
   // Loss cone of a real horizon at rDest: Lcrit = sqrt(2 G Mc rDest) is the angular momentum
   // of a parabolic orbit grazing rDest (G = 1). |Δr × Δv| ≤ Lcrit ⇒ pericentre inside the
   // horizon ⇒ genuinely plunging ⇒ captured; otherwise it grazes past and survives.
@@ -1176,26 +1185,71 @@
       if (halo1) { const h = phys.haloAccel(px - h1c.x, py - h1c.y, halo1.M, halo1.R); acc.ax += h.ax; acc.ay += h.ay; }
       if (halo2 && binOn) { const h = phys.haloAccel(px - h2c.x, py - h2c.y, halo2.M, halo2.R); acc.ax += h.ax; acc.ay += h.ay; }
     };
+    // ── Cloud-member field: Plummer-softened cores + halos ──
+    // A structure's core is an EXTENDED mass to its member stars (a galactic bulge / a
+    // cluster's stellar core), not a point: the raw point-mass field diverges as r→0, and
+    // a collisionless member grazing straight through the centre picks up an unphysical
+    // energy-pumping slingshot the integrator step cannot resolve (breaking the momentum
+    // ledger with v ≫ c ejecta). So members feel the cores through a Plummer-softened
+    // Newtonian field (ε = 1.5 M, small next to every structure's inner radius) plus the
+    // smooth halos. Real-horizon capture is untouched — it is a geometric check on r,
+    // gated by the loss cone, not on the field. User-placed bodies keep the exact
+    // original (pseudo-GR) field.
+    const EPS2 = 2.25;
+    // Newton's-third-law reaction of the swarm on the cores, accumulated per member from
+    // its core + halo forces (a halo's reaction is anchored to its host core — the halo
+    // IS the structure's bound member mass riding that core). stepBinary translates the
+    // pair's barycentre with the net force, so (cores + cloud) momentum is conserved by
+    // construction instead of approximately via the halo field sampled at the cores.
+    let r1fx = 0, r1fy = 0, r2fx = 0, r2fy = 0;
+    const cloudAccel = (px, py, m, collect) => {
+      const acc = { ax: 0, ay: 0 };
+      const d1x = px - c1x, d1y = py - c1y;
+      const w1 = -M / Math.pow(d1x * d1x + d1y * d1y + EPS2, 1.5);
+      let a1x = w1 * d1x, a1y = w1 * d1y;
+      if (halo1) { const hf = phys.haloAccel(px - h1c.x, py - h1c.y, halo1.M, halo1.R); a1x += hf.ax; a1y += hf.ay; }
+      acc.ax += a1x; acc.ay += a1y;
+      if (collect) { r1fx -= m * a1x; r1fy -= m * a1y; }
+      if (binOn) {
+        const d2x = px - bin.x2, d2y = py - bin.y2;
+        const w2 = -bin.M2 / Math.pow(d2x * d2x + d2y * d2y + EPS2, 1.5);
+        let a2x = w2 * d2x, a2y = w2 * d2y;
+        if (halo2) { const hf = phys.haloAccel(px - h2c.x, py - h2c.y, halo2.M, halo2.R); a2x += hf.ax; a2y += hf.ay; }
+        acc.ax += a2x; acc.ay += a2y;
+        if (collect) { r2fx -= m * a2x; r2fy -= m * a2y; }
+      }
+      return acc;
+    };
     for (const b of sim.bodies) {
       if (b.state !== 'orbit') continue;
       if (b.held) { b.trail.length = 0; continue; } // frozen while user repositions
-      const a1 = phys.acceleration(b.x, b.y, b.vx, b.vy, M, Q, a, b.charge || 0, bin);
-      addHalo(a1, b.x, b.y);
+      const cloud = !!b._cloud;
+      const a1 = cloud ? cloudAccel(b.x, b.y, 0, false)
+                       : phys.acceleration(b.x, b.y, b.vx, b.vy, M, Q, a, b.charge || 0, bin);
+      if (!cloud) addHalo(a1, b.x, b.y);
       const mx = b.x + b.vx * dt * 0.5;
       const my = b.y + b.vy * dt * 0.5;
       const mvx = b.vx + a1.ax * dt * 0.5;
       const mvy = b.vy + a1.ay * dt * 0.5;
-      const a2 = phys.acceleration(mx, my, mvx, mvy, M, Q, a, b.charge || 0, bin);
-      addHalo(a2, mx, my);
+      // The midpoint stage is the one whose acceleration actually advances the star, so
+      // the third-law reaction is collected here (×m, banked onto the cores).
+      const a2 = cloud ? cloudAccel(mx, my, b._m || 0, true)
+                       : phys.acceleration(mx, my, mvx, mvy, M, Q, a, b.charge || 0, bin);
+      if (!cloud) addHalo(a2, mx, my);
       b.vx += a2.ax * dt;
       b.vy += a2.ay * dt;
       b.x  += b.vx * dt;
       b.y  += b.vy * dt;
 
-      // trail (skipped for cloud particles — there are hundreds; keeps memory bounded)
+      // trail (skipped for cloud particles — there are hundreds; keeps memory bounded).
+      // EXCEPT stripped stream stars: a short, bounded trail (≤60 points each) is what
+      // makes the tidal tails / stellar streams readable as coherent arcs on the canvas.
       if (!b._cloud) {
         b.trail.push(b.x, b.y);
         if (b.trail.length > 1200) b.trail.splice(0, b.trail.length - 1200);
+      } else if (b._stream) {
+        b.trail.push(b.x, b.y);
+        if (b.trail.length > 120) b.trail.splice(0, b.trail.length - 120);
       }
 
       const r = Math.hypot(b.x, b.y);
@@ -1266,7 +1320,11 @@
         }
         if (r > (b._cloud ? 240 : 50)) {
           b.state = 'escaped'; b.consumedAt = sim.t;
-          if (!b._cloud) logEv(sim, 'amber', trp('{name} — ejected by binary', { name: b.name }));
+          // Slingshot-ejected member: it leaves the scene but its mass / momentum /
+          // angular momentum are banked so the conservation ledger stays flat (the
+          // ejecta carry them off, nothing is destroyed).
+          if (b._cloud) bankEscapedMember(sim, b);
+          else logEv(sim, 'amber', trp('{name} — ejected by binary', { name: b.name }));
         }
         continue;  // skip single-BH checks below
       }
@@ -1304,6 +1362,7 @@
         }
         if (naked && r < 0.4) {
           if (b._cloud && !coreCanSwallow(sim.smbhStructure)) continue;
+          if (b._cloud) accreteMember(sim._struct1, b);   // mass banked on the core (conserved)
           b.state = 'captured'; b.consumedAt = sim.t;
           if (!b._cloud) logEv(sim, 'warn', trp('{name} — annihilated at naked singularity', { name: b.name }));
           continue;
@@ -1311,9 +1370,15 @@
       }
       if (r > (b._cloud ? 240 : 50)) {
         b.state = 'escaped'; b.consumedAt = sim.t;
-        if (!b._cloud) logEv(sim, 'amber', trp('{name} — escaped beyond detector range', { name: b.name }));
+        // Banked for the conservation ledger — the ejecta leave the scene, not the books.
+        if (b._cloud) bankEscapedMember(sim, b);
+        else logEv(sim, 'amber', trp('{name} — escaped beyond detector range', { name: b.name }));
       }
     }
+
+    // Bank this step's swarm→core reaction forces for stepBinary's barycentre update.
+    sim._react1 = { fx: r1fx, fy: r1fy };
+    sim._react2 = { fx: r2fx, fy: r2fy };
 
     // Prune cloud particles that left the structure or were consumed — the population
     // N shrinks as a galaxy/cluster loses stars (tidal stripping, ejection, or feeding
@@ -1519,6 +1584,8 @@
   function recordCloudCounts(sim) {
     let n1 = 0, n2 = 0, m1 = 0, m2 = 0;
     let sx1 = 0, sy1 = 0, sx2 = 0, sy2 = 0;   // mass-weighted member positions
+    let nS = 0, mS = 0;                       // stripped tidal-stream stars (role null)
+    let cpx = 0, cpy = 0, cL = 0, cAbs = 0;   // cloud momentum / ang-momentum (ledger)
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
       const m = b._m || 0;
@@ -1526,9 +1593,14 @@
       // sit in the central's field; 'companion' rides the secondary.
       if (b._cloudRole === 'companion') { n2++; m2 += m; sx2 += m * b.x; sy2 += m * b.y; }
       else                              { n1++; m1 += m; sx1 += m * b.x; sy1 += m * b.y; }
+      if (b._stream) { nS++; mS += m; }
+      cpx += m * b.vx; cpy += m * b.vy;
+      cL  += m * (b.x * b.vy - b.y * b.vx);
+      cAbs += m * Math.hypot(b.vx, b.vy);
     }
     sim._cloudN1 = n1; sim._cloudN2 = n2;
     sim._cloudM1 = m1; sim._cloudM2 = m2;
+    sim._streamN = nS; sim._streamM = mS;
     // Centre of mass of each structure = (core point mass + its member stars). The core
     // is the frozen SMBH point (central params.M at the origin/bin.x1; companion bin.M2 at
     // bin.x2); the members carry the conserved bound mass. Used as the binding halo's
@@ -1543,7 +1615,51 @@
     } else {
       sim._com2 = null;
     }
+
+    // ── Conservation ledger ───────────────────────────────────
+    // Total gravitating mass / linear momentum / angular momentum (about the world
+    // origin) of the structure scene: the cores plus every cloud star's mass quantum
+    // (bound members AND stripped stream stars — stripping moves mass, it never destroys
+    // it), plus mass the cores have swallowed (struct.accreted) and mass carried clean
+    // out of the scene by slingshot ejecta (sim._escapedM). Exposed as sim._conserve
+    // against the baseline sim._conserve0 — reset on any user perturbation (placement,
+    // launch, re-seed) — so the panels can SHOW the merger conserving M and p rather
+    // than asserting it. (Orbital L bleeds to the DF wake / GW by design; it is tracked
+    // here for completeness but is not expected to stay flat during an inspiral.)
+    // A binary turning on/off is a discrete model event (a core merges away, or a new
+    // pair forms): the books legitimately change, so re-base — whatever path ended it
+    // (member depletion, core-contact coalescence, escape, manual removal).
+    if (sim._consBinOn !== binOn) { sim._conserve0 = null; sim._consBinOn = binOn; }
+    if (n1 + n2 + nS > 0 || sim._conserve) {
+      // m1 already includes the untagged stream strays (they ride the 'central' bucket
+      // in the loop above), so the cloud total is just m1 + m2 — mS is display-only.
+      let mT = M1 + m1 + m2
+             + ((sim._struct1 && sim._struct1.accreted) || 0)
+             + ((sim._struct2 && sim._struct2.accreted) || 0)
+             + (sim._escapedM || 0);
+      let pxT = cpx + (sim._escapedPx || 0) + M1 * (binOn ? bin.vx1 : 0);
+      let pyT = cpy + (sim._escapedPy || 0) + M1 * (binOn ? bin.vy1 : 0);
+      let LT  = cL + (sim._escapedL || 0) + (binOn ? M1 * (bin.x1 * bin.vy1 - bin.y1 * bin.vx1) : 0);
+      let pAbs = cAbs + M1 * (binOn ? Math.hypot(bin.vx1, bin.vy1) : 0);
+      if (binOn) {
+        mT += bin.M2;
+        pxT += bin.M2 * bin.vx2; pyT += bin.M2 * bin.vy2;
+        LT  += bin.M2 * (bin.x2 * bin.vy2 - bin.y2 * bin.vx2);
+        pAbs += bin.M2 * Math.hypot(bin.vx2, bin.vy2);
+      }
+      sim._conserve = { M: mT, px: pxT, py: pyT, L: LT };
+      // Baseline: captured on the first pass after seeding / a user perturbation. pref
+      // is the momentum scale Σ|m·v| used to normalise the displayed drift percentage.
+      if (!sim._conserve0) sim._conserve0 = { M: mT, px: pxT, py: pyT, L: LT, pref: Math.max(1e-6, pAbs) };
+    } else {
+      sim._conserve = null; sim._conserve0 = null;
+    }
   }
+
+  // Drop the conservation baseline so the next recordCloudCounts pass re-captures it.
+  // Called whenever the USER changes the system's momentum (placement, launch, re-seed,
+  // mass-slider edit) — those are new initial conditions, not conservation violations.
+  function resetConservationBaseline(sim) { sim._conserve0 = null; }
 
   // ── Camera reference-frame lock ───────────────────────────
   // Returns the world point the camera should pin to screen centre for the
@@ -1665,6 +1781,7 @@
       circularizeCloud(sim, 'central', bin.x1, bin.y1, bin.vx1, bin.vy1, M1, sim._halo1,
                        Math.sign(sim.params.a || 1) || 1);
     }
+    resetConservationBaseline(sim);   // circularisation rewrites the velocities
     bin.trail1.length = 0;
     bin.trail2.length = 0;
     return Math.hypot(bin.vx2, bin.vy2);
@@ -1679,6 +1796,7 @@
     bin.classical = false;   // a freshly thrown pair free-inspirals again
     // v₂ = (M1/Mt)·V  ⇒  relative velocity V = v₂·Mt/M1
     splitTwoBody(bin, M1, M2, vx2 * Mt / M1, vy2 * Mt / M1);
+    resetConservationBaseline(sim);   // user launch = new initial momentum
     bin.trail1.length = 0;
     bin.trail2.length = 0;
   }
@@ -1961,6 +2079,7 @@
 
   function seedStructureCloud(sim, key, role = 'central') {
     clearStructureCloud(sim, role);
+    resetConservationBaseline(sim);   // new swarm = new initial condition for the ledger
     if (!isCloudStruct(key)) return;
     const host = resolveHost(sim, role);
     if (!host) return;
@@ -2040,6 +2159,7 @@
     struct.RvisBase = geom.rOut; struct.haloRbase = geom.rOut * 1.8;
     struct.haloBase = newHaloM;
     if (halo) { halo.M = newHaloM; halo.R = geom.rOut * 1.8; }
+    resetConservationBaseline(sim);   // deliberate mass edit — re-base the ledger
     recordCloudCounts(sim);
     updateStructureMass(sim);
   }
@@ -2134,6 +2254,18 @@
             b._pullTimer = Math.max(0, (b._pullTimer || 0) - dt);
           }
         }
+      }
+      // ── Tidal-tail / stellar-stream bookkeeping ──
+      // A member that drops out of every structure's reach was tidally STRIPPED: it keeps
+      // its mass quantum and keeps orbiting in the combined field, now tracing the tidal
+      // tail / stellar stream (it grows a short trail in integrate; the renderer draws
+      // stream stars + their arcs distinctly). A stream star a structure re-captures
+      // stops streaming and its tail trail is dropped.
+      if (role == null && cur != null) {
+        b._stream = true; b._streamAt = sim.t;
+      } else if (role != null && b._stream) {
+        b._stream = false;
+        if (b.trail) b.trail.length = 0;
       }
       b._cloudRole = role;
     }
@@ -2231,6 +2363,7 @@
     }
     sim.primary.x = 0; sim.primary.y = 0; sim.primary.vx = 0; sim.primary.vy = 0;
     sim.view.ox = 0; sim.view.oy = 0;          // survivor now sits at the origin
+    resetConservationBaseline(sim);            // Galilean boost — re-base p/L
     recordCloudCounts(sim);                    // refresh member COMs / halo centres
   }
 
@@ -2286,6 +2419,12 @@
     // Reset the central's displayed mass to its seed value (the user's "M reverts to the
     // value originally set" rule). The geometric core (params.M = 1) is unchanged.
     if (sim._struct1 && sim._struct1.massBase) sim.params.Msun = sim._struct1.massBase;
+    // Re-base the conservation ledger AFTER the binary is gone: the absorbed companion's
+    // core point mass leaves the books here (it merges into the survivor — a discrete
+    // model event, not a leak), so the baseline must be recaptured from the post-merger
+    // scene. (recenterSceneToCore above reset it too, but while the binary was still on.)
+    resetConservationBaseline(sim);
+    recordCloudCounts(sim);
     logEv(sim, 'good', tr('structure merger complete — companion absorbed into the central',
                           '結構合併完成 — 伴星系/星團已併入主體'));
   }
@@ -2325,6 +2464,9 @@
     // turns off, so its members do not jump as it becomes the lone central body.
     recenterSceneToCore(sim, bin.x2, bin.y2, bin.vx2 || 0, bin.vy2 || 0);
     bin.merged = true; bin.mergerFlash = 1.6; bin.enabled = false;
+    // Re-base the ledger from the post-succession scene (the depleted primary's core has
+    // merged away and the survivor was renormalised to geometric M = 1 — a unit change).
+    resetConservationBaseline(sim);
     recordCloudCounts(sim);
     logEv(sim, 'good', tr('primary depleted — companion succeeds as the new central',
                           '主星耗盡 — 伴星接替成為新的主體'));
@@ -2504,6 +2646,7 @@
 
     // The donor/accretor indices are now inverted — re-evaluate transfer cleanly.
     resetMassTransfer(bin);
+    resetConservationBaseline(sim);   // geometric renormalisation rescales velocities
     if (sim.selectedId != null) sim.selectedId = null;
 
     logEv(sim, 'good', tr('central ⇄ companion roles swapped', '主天體 ⇄ 伴星 角色已互換'));

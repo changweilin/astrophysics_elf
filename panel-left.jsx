@@ -525,6 +525,29 @@ function BodyEditor({ sim, force, role }) {
           <span className="sn-v">N = {sim._cloudN2 || 0}</span>
         </div>
       )}
+      {/* Tidal-stream census + conservation ledger: stripped stars tracing tails /
+          streams, and the live total-mass / momentum drift against the seed baseline
+          (sim._conserve vs _conserve0) — shows the merger CONSERVING M and p. */}
+      {(sim._streamN || 0) > 0 && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('tidal stream stars', '潮汐流恆星')}</span>
+          <span className="sn-v">N = {sim._streamN}</span>
+        </div>
+      )}
+      {sim._conserve && sim._conserve0 && (sim._cloudN1 > 0 || sim._cloudN2 > 0) && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('ΣM · Δp (conserved)', '總質量 · 動量漂移')}</span>
+          <span className="sn-v">
+            {(sim._conserve.M / Math.max(1e-9, sim._conserve0.M) * 100).toFixed(1)}%
+            {/* Δp is meaningful while the pair interacts; a lone central is the frame
+                anchor (its rest frame), where swarm momentum is not a conserved charge. */}
+            {sim.binary && sim.binary.enabled
+              ? ` · ${(Math.hypot(sim._conserve.px - sim._conserve0.px, sim._conserve.py - sim._conserve0.py)
+                  / sim._conserve0.pref * 100).toFixed(1)}%`
+              : ''}
+          </span>
+        </div>
+      )}
 
       {accessors.category === 'remnant' && !smbhStructures && !companionStructures && !inOpenCluster && (
         <div className="remnant-stage" role="status">

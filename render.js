@@ -796,11 +796,28 @@
       // dots and skip the per-body trail / label / tidal-stretch overlays (perf).
       if (b._cloud) {
         if (b.state !== 'orbit') continue;
+        // Stripped stream stars carry a short bounded trail (sim.js) — draw it first as
+        // a faint arc: these arcs ARE the visible tidal tails / stellar streams. Muted
+        // warm tint, gentle alpha (never neon, per the project's visual rule).
+        if (b._stream && b.trail && b.trail.length > 4 && sim.flags.showOrbits) {
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'oklch(0.78 0.05 70 / 0.25)';
+          ctx.beginPath();
+          const [tx0, ty0] = worldToScreenInto(sim, w, h, b.trail[0], b.trail[1]);
+          ctx.moveTo(tx0, ty0);
+          for (let i = 2; i < b.trail.length; i += 2) {
+            const [tx, ty] = worldToScreenInto(sim, w, h, b.trail[i], b.trail[i + 1]);
+            ctx.lineTo(tx, ty);
+          }
+          ctx.stroke();
+        }
         const [px, py] = worldToScreen(sim, w, h, b.x, b.y);
         const bf = b._cloudRole === 'companion' ? briCompanion
                  : b._cloudRole === 'central'   ? briCentral : 0.85;
         const a = Math.min(1, (b.kind === 'gas' ? 0.55 : 0.85) * bf);
-        ctx.fillStyle = colorOf(b, a);
+        // A stream star reads slightly warmer than the bound members so the tails /
+        // streams separate visually from the structures shedding them.
+        ctx.fillStyle = b._stream ? `oklch(0.84 0.07 70 / ${a})` : colorOf(b, a);
         ctx.beginPath();
         ctx.arc(px, py, b.kind === 'gas' ? 1.1 : 1.5, 0, Math.PI * 2);
         ctx.fill();
