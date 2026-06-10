@@ -571,6 +571,12 @@
     // initial separation so a widely-placed (large-star) binary — which must start
     // far apart just to clear its Roche lobe — is not mistaken for an escape.
     if (bin.d > Math.max(200, 3 * (bin.d0 || 20))) {
+      // Structure scenes: shift into the surviving primary core's rest frame before the
+      // binary turns off, so its swarm does not snap away from the re-centred primary
+      // (same jump-prevention as the coalescence / member-depletion merge paths).
+      if (sim.bodies.some((b) => b._cloud && b.state === 'orbit')) {
+        recenterSceneToCore(sim, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0);
+      }
       bin.enabled = false;
       logEv(sim, 'amber', tr('companion escaped binary system', '伴星逃離雙星系統'));
     }
@@ -669,6 +675,27 @@
     // Reframe the camera when the body changed size stage (e.g. two giants →
     // a compact remnant); leave a BH+BH coalescence framed as it was.
     if (!bothBH) sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(newType)];
+
+    // ── Structure scenes: keep the swarm centred on the remnant ──
+    // A core-contact coalescence can end a galaxy/cluster merger while member stars are
+    // still orbiting. Once the binary turns off the integrator re-centres the lone
+    // primary at the ORIGIN — but the swarm keeps its absolute positions around the old
+    // merger point, so its orbital centre would visibly snap away from the drawn remnant.
+    // Shift the whole scene into the remnant's rest frame FIRST (Galilean translation +
+    // boost — exact physics; every star's position/motion relative to the remnant is
+    // unchanged), and fold the absorbed companion structure's bookkeeping into the
+    // survivor, exactly as the member-depletion path (structureMergeComplete) does.
+    if (sim.bodies.some((b) => b._cloud && b.state === 'orbit')) {
+      const Mt = M1 + M2;
+      const ccx = (M1 * bin.x1 + M2 * bin.x2) / Mt, ccy = (M1 * bin.y1 + M2 * bin.y2) / Mt;
+      const cvx = (M1 * (bin.vx1 || 0) + M2 * (bin.vx2 || 0)) / Mt;
+      const cvy = (M1 * (bin.vy1 || 0) + M2 * (bin.vy2 || 0)) / Mt;
+      const product = mergedStructureType(sim.smbhStructure, bin.smbhStructure);
+      if (sim._struct1 && sim._struct2) sim._struct1.accreted = (sim._struct1.accreted || 0) + (sim._struct2.accreted || 0);
+      sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
+      if (product !== sim.smbhStructure) applyMergedCentralType(sim, product);
+      recenterSceneToCore(sim, ccx, ccy, cvx, cvy);
+    }
 
     bin.enabled = false;
     if (reason === 'ce') {
