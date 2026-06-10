@@ -656,10 +656,14 @@
     let ax = -G * M * px * inv_r3;
     let ay = -G * M * py * inv_r3;
 
-    // Effective potential correction (mimics ISCO instability) ~ -3 M L^2 / r^5
+    // Schwarzschild pseudo-GR correction ~ -3 M L^2 / r^4 — the extra radial
+    // term of the exact geodesic equation d²r/dτ² = -M/r² + L²/r³ - 3ML²/r⁴
+    // (the centrifugal L²/r³ arises naturally from the 2D integration). This
+    // reproduces the exact circular-orbit angular momentum L² = Mr²/(r-3M),
+    // the photon-sphere instability at r = 3M and the true ISCO at r = 6M.
     const tangential = (px * vy - py * vx) / r;
     const L2 = tangential * tangential * r2;
-    const corr = (3 * G * M * L2) / (r2 * r2 * r);
+    const corr = (3 * G * M * L2) / (r2 * r2);
     ax -= corr * px / r;
     ay -= corr * py / r;
 
@@ -1026,13 +1030,14 @@
   }
 
   // Circular-orbit speed for the single-BH effective potential (see acceleration).
-  // Balancing v²/r against the radial pull M/r² + 3M·(v·r)²/r⁵ for a circular
-  // orbit (where v_t = v) gives  v_circ² = (M/r) / (1 − 3M/r²).
+  // Balancing v²/r against the radial pull M/r² + 3ML²/r⁴ (L = v·r) for a circular
+  // orbit gives  v_circ² = (M/r) / (1 − 3M/r) — equivalent to the exact
+  // Schwarzschild L² = Mr²/(r − 3M), with the ISCO at r = 6M where dL/dr = 0.
   // Pure-Newtonian √(M/r) ignores the denominator, so it is too slow for the well
   // and a body set to it spirals in and merges. Returns 0 where no circular orbit
-  // exists (r ≤ √(3M), inside the effective photon sphere); callers fall back.
+  // exists (r ≤ 3M, at or inside the photon sphere); callers fall back.
   function circularSpeed(r, M) {
-    const denom = 1 - (3 * G * M) / (r * r);
+    const denom = 1 - (3 * G * M) / r;
     if (denom <= 1e-6) return 0;
     return Math.sqrt((G * M / r) / denom);
   }

@@ -258,6 +258,7 @@
     bin.classical = false;
     bin.merged = false;
     bin.mergerFlash = 0;
+    bin._coreMerge = false;   // fresh pair — never inherit a stale common-field phase
     bin.trail1.length = 0;
     bin.trail2.length = 0;
     sim.transient = null;
@@ -301,6 +302,7 @@
     bin.enabled = false;
     bin.merged = false;
     bin.mergerFlash = 0;
+    bin._coreMerge = false;
     bin.x2 = 0; bin.y2 = 0;
     bin.vx2 = 0; bin.vy2 = 0;
     bin.trail1.length = 0;
@@ -468,7 +470,34 @@
       const aDF = phys.dynamicalFriction(Vx, Vy, Mdf, rho, sigma, 4);
       const vrelNow = Math.max(1e-4, Math.hypot(Vx, Vy));
       // Fractional decay rate = |a_DF| / v  (the drag-timescale inverse).
-      const decay = (Math.hypot(aDF.ax, aDF.ay) / vrelNow) * DF_RATE * dt;
+      let decay = (Math.hypot(aDF.ax, aDF.ay) / vrelNow) * DF_RATE * dt;
+
+      // ── Progressive core coalescence (common-field regime) ──
+      // Chandrasekhar friction alone stalls once the cores orbit INSIDE a shared
+      // stellar envelope: the wake integral saturates and the pair can circle
+      // indefinitely. Physically the late stage is dominated by the common
+      // background — when the structures' spheres of influence overlap AND most
+      // member stars are pulled toward both cores in nearly the same direction
+      // (sim._coreAlign, tallied per frame in recordCloudCounts), the swarm sees
+      // ONE well, not two. Arm a progressive merge: an extra adiabatic
+      // contraction whose rate ramps with the alignment fraction, so the cores
+      // sink smoothly into each other (contact coalescence still finishes the
+      // job below) instead of freezing on a tight mutual orbit. Hysteresis
+      // (ON 0.6 / OFF 0.35) keeps a grazing pass from flickering the phase.
+      const reach1 = (sim._struct1 && sim._struct1.rOut) || (h1 && h1.R) || 30;
+      const reach2 = (sim._struct2 && sim._struct2.rOut) || (h2 && h2.R) || 30;
+      const align = sim._coreAlign || 0;
+      if (!bin._coreMerge && rNow < reach1 + reach2 && align >= CORE_MERGE_ON) {
+        bin._coreMerge = true;
+        logEv(sim, 'amber', tr('core influence spheres overlap — fields merging progressively',
+                               '雙核心勢力範圍重疊 — 引力場開始漸進融合'));
+      } else if (bin._coreMerge && align < CORE_MERGE_OFF) {
+        bin._coreMerge = false;   // slung back out of the common envelope — disengage
+      }
+      if (bin._coreMerge) {
+        const ramp = Math.min(1, (align - CORE_MERGE_OFF) / (CORE_MERGE_ON - CORE_MERGE_OFF));
+        decay += CORE_MERGE_RATE * ramp * dt;
+      }
       let scale = 1 - decay;
       if (scale < 0.5) scale = 0.5;                       // per-step clamp — no plunge
       Dx *= scale; Dy *= scale;
@@ -1177,24 +1206,44 @@
   // bodies are exempt: their tidal/capture fate stays deterministic (the single-body demo).
   function coreCanSwallow(key) { return !isStarSwarm(key); }   // a star swarm has no BH
 
+  // Cloud-member swallow radius, DECOUPLED from the core's geometric mass. A real
+  // SMBH horizon is ~9 orders of magnitude smaller than its galaxy, but the demo's
+  // geometric horizon (r+ ≈ 2·Mcore, and Mcore = the structures' mass RATIO for a
+  // companion) is only ~10× smaller than the swarm — capturing at r+ would let a
+  // core sweep up members wholesale as it ploughs through (worse for a heavy
+  // companion, whose r+ ≈ 2·M2 can exceed its own swarm's inner radius). Members
+  // are swallowed only inside this small fixed radius, with the loss cone evaluated
+  // at the same radius, restoring the intended "vanishingly few" capture rate.
+  const CLOUD_SWALLOW_R = 0.4;
+
+  // ── Progressive core-coalescence thresholds ──
+  // A member star counts as "commonly pulled" when its star→core1 / star→core2
+  // directions agree within ~20° (cos ≥ 0.94). When MOST bound members agree
+  // (≥ CORE_MERGE_ON) and the structures' spheres of influence overlap, the two
+  // cores share a single potential well and are driven to merge progressively;
+  // the phase disengages (hysteresis) only if the fraction falls back below
+  // CORE_MERGE_OFF. CORE_MERGE_RATE is the full-ramp fractional separation decay
+  // per sim-time unit — gentle enough to watch, fast enough to finish.
+  const CORE_ALIGN_COS  = 0.94;
+  const CORE_MERGE_ON   = 0.6;
+  const CORE_MERGE_OFF  = 0.35;
+  const CORE_MERGE_RATE = 0.2;
+
+  // Member-star swallows are rare loss-cone events; log them (rate-limited to one
+  // line per sim-second) so a star leaving the population is visible evidence in
+  // the event feed, never a silent disappearance.
+  function logMemberSwallow(sim, en, zh) {
+    if (sim.t - (sim._swallowLogT != null ? sim._swallowLogT : -9) < 1) return;
+    sim._swallowLogT = sim.t;
+    logEv(sim, 'warn', tr(en, zh));
+  }
+
   // Mass-energy conservation when a galaxy's central BH swallows a member: the star's mass
   // quantum leaves the member sum but is banked on the swallowing structure's core
   // (struct.accreted), which structureScale folds back into the binding mass. Total
   // gravitating mass is conserved — nothing is created or destroyed by the (rare) capture.
   function accreteMember(struct, b) {
     if (struct) struct.accreted = (struct.accreted || 0) + (b._m || 0);
-  }
-
-  // Bank a slingshot-ejected member's mass / momentum / angular momentum (about the
-  // world origin) so the conservation ledger stays flat: the ejecta carry these
-  // quantities clean out of the scene — they are removed from the live population but
-  // never destroyed. (See recordCloudCounts, which folds the banks into the totals.)
-  function bankEscapedMember(sim, b) {
-    const m = b._m || 0;
-    sim._escapedM  = (sim._escapedM  || 0) + m;
-    sim._escapedPx = (sim._escapedPx || 0) + m * b.vx;
-    sim._escapedPy = (sim._escapedPy || 0) + m * b.vy;
-    sim._escapedL  = (sim._escapedL  || 0) + m * (b.x * b.vy - b.y * b.vx);
   }
 
   // Loss cone of a real horizon at rDest: Lcrit = sqrt(2 G Mc rDest) is the angular momentum
@@ -1245,7 +1294,6 @@
     // smooth halos. Real-horizon capture is untouched — it is a geometric check on r,
     // gated by the loss cone, not on the field. User-placed bodies keep the exact
     // original (pseudo-GR) field.
-    const EPS2 = 2.25;
     // Central core mass as the SWARM feels it: the frozen unit plus any banked merger
     // mass (struct.coreBoost — the absorbed companion core, kept for field continuity).
     const Mc1 = M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
@@ -1333,10 +1381,15 @@
         if (cType === 'bh') {
           if (!naked && r1 < (isFinite(rplus) ? rplus : M)) {
             // A member is swallowed only by a REAL BH core (a galaxy/hole, not a star-swarm
-            // binding mass) and only if it threads the horizon's tiny loss cone.
+            // binding mass), only inside the tiny mass-decoupled swallow radius, and only
+            // if it threads that radius's loss cone.
             if (b._cloud && (!coreCanSwallow(sim.smbhStructure)
-                || !cloudInLossCone(b, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0, M, rplus))) continue;
-            if (b._cloud) accreteMember(sim._struct1, b);
+                || r1 > CLOUD_SWALLOW_R
+                || !cloudInLossCone(b, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0, M, CLOUD_SWALLOW_R))) continue;
+            if (b._cloud) {
+              accreteMember(sim._struct1, b);
+              logMemberSwallow(sim, 'member star swallowed by central BH (loss cone)', '成員星被中央黑洞吞噬（loss cone）');
+            }
             b.state = 'captured'; b.consumedAt = sim.t;
             if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by primary BH', { name: b.name }));
             continue;
@@ -1355,8 +1408,12 @@
         if (sType === 'bh') {
           if (!compH.naked && r2 < (isFinite(compH.rplus) ? compH.rplus : bin.M2)) {
             if (b._cloud && (!coreCanSwallow(bin.smbhStructure)
-                || !cloudInLossCone(b, bin.x2, bin.y2, bin.vx2 || 0, bin.vy2 || 0, bin.M2, compH.rplus))) continue;
-            if (b._cloud) accreteMember(sim._struct2, b);
+                || r2 > CLOUD_SWALLOW_R
+                || !cloudInLossCone(b, bin.x2, bin.y2, bin.vx2 || 0, bin.vy2 || 0, bin.M2, CLOUD_SWALLOW_R))) continue;
+            if (b._cloud) {
+              accreteMember(sim._struct2, b);
+              logMemberSwallow(sim, 'member star swallowed by companion BH (loss cone)', '成員星被伴星黑洞吞噬（loss cone）');
+            }
             b.state = 'captured'; b.consumedAt = sim.t;
             if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by companion BH', { name: b.name }));
             continue;
@@ -1371,13 +1428,14 @@
             continue;
           }
         }
-        if (r > (b._cloud ? 240 : 50)) {
+        // Cloud members are NEVER distance-culled: a star slung far from both
+        // structures simply drops its membership tag (updateMembership) — it stops
+        // supplying binding mass to either halo but keeps orbiting in the pair's
+        // combined field, exactly like a real stripped star. Only user bodies keep
+        // the demo's detector-range cutoff.
+        if (!b._cloud && r > 50) {
           b.state = 'escaped'; b.consumedAt = sim.t;
-          // Slingshot-ejected member: it leaves the scene but its mass / momentum /
-          // angular momentum are banked so the conservation ledger stays flat (the
-          // ejecta carry them off, nothing is destroyed).
-          if (b._cloud) bankEscapedMember(sim, b);
-          else logEv(sim, 'amber', trp('{name} — ejected by binary', { name: b.name }));
+          logEv(sim, 'amber', trp('{name} — ejected by binary', { name: b.name }));
         }
         continue;  // skip single-BH checks below
       }
@@ -1405,27 +1463,34 @@
         }
       } else {
         if (!naked && r < rplus) {
-          // Member swallowed only by a REAL BH core, only through the horizon's tiny loss cone.
+          // Member swallowed only by a REAL BH core, only inside the tiny mass-decoupled
+          // swallow radius, through that radius's loss cone.
           if (b._cloud && (!coreCanSwallow(sim.smbhStructure)
-              || !cloudInLossCone(b, 0, 0, 0, 0, M, rplus))) continue;
-          if (b._cloud) accreteMember(sim._struct1, b);
+              || r > CLOUD_SWALLOW_R
+              || !cloudInLossCone(b, 0, 0, 0, 0, M, CLOUD_SWALLOW_R))) continue;
+          if (b._cloud) {
+            accreteMember(sim._struct1, b);
+            logMemberSwallow(sim, 'member star swallowed by central BH (loss cone)', '成員星被中央黑洞吞噬（loss cone）');
+          }
           b.state = 'captured'; b.consumedAt = sim.t;
           if (!b._cloud) logEv(sim, 'warn', trp('{name} — crossed r₊, mass added to BH', { name: b.name }));
           continue;
         }
         if (naked && r < 0.4) {
           if (b._cloud && !coreCanSwallow(sim.smbhStructure)) continue;
-          if (b._cloud) accreteMember(sim._struct1, b);   // mass banked on the core (conserved)
+          if (b._cloud) {
+            accreteMember(sim._struct1, b);   // mass banked on the core (conserved)
+            logMemberSwallow(sim, 'member star annihilated at naked singularity', '成員星於裸奇異點湮滅');
+          }
           b.state = 'captured'; b.consumedAt = sim.t;
           if (!b._cloud) logEv(sim, 'warn', trp('{name} — annihilated at naked singularity', { name: b.name }));
           continue;
         }
       }
-      if (r > (b._cloud ? 240 : 50)) {
+      // Cloud members are never distance-culled (see the binary branch above).
+      if (!b._cloud && r > 50) {
         b.state = 'escaped'; b.consumedAt = sim.t;
-        // Banked for the conservation ledger — the ejecta leave the scene, not the books.
-        if (b._cloud) bankEscapedMember(sim, b);
-        else logEv(sim, 'amber', trp('{name} — escaped beyond detector range', { name: b.name }));
+        logEv(sim, 'amber', trp('{name} — escaped beyond detector range', { name: b.name }));
       }
     }
 
@@ -1639,18 +1704,39 @@
     let sx1 = 0, sy1 = 0, sx2 = 0, sy2 = 0;   // mass-weighted member positions
     let nS = 0, mS = 0;                       // stripped tidal-stream stars (role null)
     let cpx = 0, cpy = 0, cL = 0, cAbs = 0;   // cloud momentum / ang-momentum (ledger)
+    const bin = sim.binary, binOn = !!(bin && bin.enabled);
+    const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
+    // Field-alignment tally: of the BOUND members, how many are pulled toward the
+    // two cores in nearly the same direction (the angle between the star→core1 and
+    // star→core2 unit vectors within ~20°)? This fraction only approaches 1 when
+    // the cores sit deep inside a COMMON stellar envelope — the swarm can no longer
+    // resolve them as separate attractors — and is what arms the progressive core
+    // coalescence in stepBinary.
+    let nAligned = 0, nAlignTot = 0;
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
       const m = b._m || 0;
-      // role 'central' covers both the central structure and untagged stars that still
-      // sit in the central's field; 'companion' rides the secondary.
-      if (b._cloudRole === 'companion') { n2++; m2 += m; sx2 += m * b.x; sy2 += m * b.y; }
-      else                              { n1++; m1 += m; sx1 += m * b.x; sy1 += m * b.y; }
-      if (b._stream) { nS++; mS += m; }
+      // Only BOUND members supply a structure's binding mass. An untagged (role null,
+      // tidally stripped) star is counted as stream mass instead: it stops deepening
+      // either halo — the potential well shallows as stars are stripped — but keeps
+      // moving in the pair's combined field and stays on the total-mass ledger.
+      if (b._cloudRole === 'companion')    { n2++; m2 += m; sx2 += m * b.x; sy2 += m * b.y; }
+      else if (b._cloudRole === 'central') { n1++; m1 += m; sx1 += m * b.x; sy1 += m * b.y; }
+      else                                 { nS++; mS += m; }
+      if (binOn && (b._cloudRole === 'central' || b._cloudRole === 'companion')) {
+        const ux = c1x - b.x, uy = c1y - b.y;          // star → central core
+        const wx = bin.x2 - b.x, wy = bin.y2 - b.y;    // star → companion core
+        const den = Math.hypot(ux, uy) * Math.hypot(wx, wy);
+        if (den > 1e-9) {
+          nAlignTot++;
+          if ((ux * wx + uy * wy) / den >= CORE_ALIGN_COS) nAligned++;
+        }
+      }
       cpx += m * b.vx; cpy += m * b.vy;
       cL  += m * (b.x * b.vy - b.y * b.vx);
       cAbs += m * Math.hypot(b.vx, b.vy);
     }
+    sim._coreAlign = binOn && nAlignTot > 0 ? nAligned / nAlignTot : 0;
     sim._cloudN1 = n1; sim._cloudN2 = n2;
     sim._cloudM1 = m1; sim._cloudM2 = m2;
     sim._streamN = nS; sim._streamM = mS;
@@ -1658,8 +1744,6 @@
     // is the frozen SMBH point (central params.M at the origin/bin.x1; companion bin.M2 at
     // bin.x2); the members carry the conserved bound mass. Used as the binding halo's
     // centre so the field tracks the real mass distribution as it is perturbed.
-    const bin = sim.binary, binOn = !!(bin && bin.enabled);
-    const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
     const M1 = sim.params.M, W1 = M1 + m1;
     sim._com1 = W1 > 0 ? { x: (M1 * c1x + sx1) / W1, y: (M1 * c1y + sy1) / W1 } : { x: c1x, y: c1y };
     if (binOn) {
@@ -1673,8 +1757,8 @@
     // Total gravitating mass / linear momentum / angular momentum (about the world
     // origin) of the structure scene: the cores plus every cloud star's mass quantum
     // (bound members AND stripped stream stars — stripping moves mass, it never destroys
-    // it), plus mass the cores have swallowed (struct.accreted) and mass carried clean
-    // out of the scene by slingshot ejecta (sim._escapedM). Exposed as sim._conserve
+    // it; ejected stars are never culled, they stay on the books as untagged strays),
+    // plus mass the cores have swallowed (struct.accreted). Exposed as sim._conserve
     // against the baseline sim._conserve0 — reset on any user perturbation (placement,
     // launch, re-seed) — so the panels can SHOW the merger conserving M and p rather
     // than asserting it. (Orbital L bleeds to the DF wake / GW by design; it is tracked
@@ -1684,18 +1768,19 @@
     // (member depletion, core-contact coalescence, escape, manual removal).
     if (sim._consBinOn !== binOn) { sim._conserve0 = null; sim._consBinOn = binOn; }
     if (n1 + n2 + nS > 0 || sim._conserve) {
-      // m1 already includes the untagged stream strays (they ride the 'central' bucket
-      // in the loop above), so the cloud total is just m1 + m2 — mS is display-only.
-      // The central core carries the frozen unit PLUS any banked merger mass
-      // (struct.coreBoost) — absorbed companion cores stay on the books.
+      // Cloud total = bound members of both structures PLUS the untagged stream strays
+      // (mS): stripped stars left the halos but never the scene, so the ledger still
+      // carries them (their momentum/L are already in cpx/cpy/cL — the loop sums every
+      // live cloud star regardless of role). The central core carries the frozen unit
+      // PLUS any banked merger mass (struct.coreBoost) — absorbed companion cores stay
+      // on the books.
       const M1c = M1 + ((sim._struct1 && sim._struct1.coreBoost) || 0);
-      let mT = M1c + m1 + m2
+      let mT = M1c + m1 + m2 + mS
              + ((sim._struct1 && sim._struct1.accreted) || 0)
-             + ((sim._struct2 && sim._struct2.accreted) || 0)
-             + (sim._escapedM || 0);
-      let pxT = cpx + (sim._escapedPx || 0) + M1c * (binOn ? bin.vx1 : 0);
-      let pyT = cpy + (sim._escapedPy || 0) + M1c * (binOn ? bin.vy1 : 0);
-      let LT  = cL + (sim._escapedL || 0) + (binOn ? M1c * (bin.x1 * bin.vy1 - bin.y1 * bin.vx1) : 0);
+             + ((sim._struct2 && sim._struct2.accreted) || 0);
+      let pxT = cpx + M1c * (binOn ? bin.vx1 : 0);
+      let pyT = cpy + M1c * (binOn ? bin.vy1 : 0);
+      let LT  = cL + (binOn ? M1c * (bin.x1 * bin.vy1 - bin.y1 * bin.vx1) : 0);
       let pAbs = cAbs + M1c * (binOn ? Math.hypot(bin.vx1, bin.vy1) : 0);
       if (binOn) {
         mT += bin.M2;
@@ -1782,7 +1867,7 @@
       const rx = cb.x - hx, ry = cb.y - hy;
       const r = Math.hypot(rx, ry);
       if (r < 1e-3) { cb.vx = hvx; cb.vy = hvy; continue; }
-      let vc2 = (phys.circularSpeed(r, Mcore) || Math.sqrt(Mcore / r)) ** 2;
+      let vc2 = cloudCircularSpeed2(r, Mcore);
       if (halo && halo.M > 0) {
         const ha = phys.haloAccel(rx, ry, halo.M, halo.R);
         vc2 += Math.hypot(ha.ax, ha.ay) * r;
@@ -2020,6 +2105,17 @@
   function isCloudStruct(key) {
     return key === 'galaxy' || key === 'cluster' || key === 'opencluster';
   }
+  // Plummer softening (ε² = 2.25, ε = 1.5 M) of the core field as the cloud members
+  // feel it — shared by the integrator (cloudAccel) and the circular-speed seeds.
+  const EPS2 = 2.25;
+  // Squared circular speed of a cloud member at radius r in the field it ACTUALLY
+  // feels: the Plummer-softened Newtonian core, v² = a(r)·r = M r² / (r²+ε²)^(3/2).
+  // (NOT the pseudo-GR circularSpeed — that is the field of user-placed bodies; a
+  // member seeded with it would not be on a circular orbit of the softened field.)
+  function cloudCircularSpeed2(r, Mcore) {
+    const s = r * r + EPS2;
+    return (Mcore * r * r) / (s * Math.sqrt(s));
+  }
   // Gas-poor self-bound star swarms (cluster / open cluster) — no central SMBH, no gas.
   function isStarSwarm(key) { return key === 'cluster' || key === 'opencluster'; }
 
@@ -2084,9 +2180,9 @@
     const r = geom.rIn + (geom.rOut - geom.rIn) * u * u;
     const th = Math.random() * Math.PI * 2;
     const x = hx + r * Math.cos(th), y = hy + r * Math.sin(th);
-    // Circular speed about the core, plus the halo's contribution (flattens the
-    // rotation curve for a galaxy). v_halo^2 = a_halo·r.
-    let vc2 = (phys.circularSpeed(r, Mcore) || Math.sqrt(Mcore / r)) ** 2;
+    // Circular speed about the core (softened field the member feels), plus the
+    // halo's contribution (flattens the rotation curve for a galaxy). v_halo^2 = a_halo·r.
+    let vc2 = cloudCircularSpeed2(r, Mcore);
     if (halo) {
       const ha = phys.haloAccel(r, 0, halo.M, halo.R);
       vc2 += Math.abs(ha.ax) * r;
