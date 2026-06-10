@@ -691,8 +691,31 @@
       const cvx = (M1 * (bin.vx1 || 0) + M2 * (bin.vx2 || 0)) / Mt;
       const cvy = (M1 * (bin.vy1 || 0) + M2 * (bin.vy2 || 0)) / Mt;
       const product = mergedStructureType(sim.smbhStructure, bin.smbhStructure);
-      if (sim._struct1 && sim._struct2) sim._struct1.accreted = (sim._struct1.accreted || 0) + (sim._struct2.accreted || 0);
+      if (!sim._struct1 && sim._struct2) {
+        // Bare-hole central swallowed a structure companion: the survivor inherits the
+        // companion's structure record + swarm wholesale (re-homed to the central role).
+        sim._struct1 = sim._struct2; sim._halo1 = sim._halo2;
+        for (const b of sim.bodies) {
+          if (b._cloud && (b._cloudRole === 'companion' || b._cloudOrigin === 'companion')) {
+            b._cloudRole = 'central'; b._cloudOrigin = 'central';
+          }
+        }
+      } else if (sim._struct1 && sim._struct2) {
+        sim._struct1.accreted = (sim._struct1.accreted || 0) + (sim._struct2.accreted || 0);
+      }
       sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
+      // ── Gravitational-field continuity (no instant "weightlessness") ──
+      // The remnant's true geometric mass is MfGeo = M1+M2−E_GW, but the demo's frozen
+      // unit resets params.M to 1, which would VANISH the companion core's gravity from
+      // the swarm's field in one frame — the stars would suddenly find themselves
+      // half-unbound and puff apart, a potential discontinuity that never happens in
+      // nature (a structure's core is bound mass, not a removable point). Bank the
+      // excess (MfGeo − 1) on the surviving structure as coreBoost: the member field,
+      // membership pull and conservation ledger all add it to the central core, so two
+      // touching softened points smoothly become ONE softened point of the same total
+      // mass at their barycentre. Only the genuinely radiated E_GW leaves the books.
+      // (User-placed bodies keep the unit-M convention exactly as before.)
+      if (sim._struct1) sim._struct1.coreBoost = (sim._struct1.coreBoost || 0) + Math.max(0, MfGeo - 1);
       if (product !== sim.smbhStructure) applyMergedCentralType(sim, product);
       recenterSceneToCore(sim, ccx, ccy, cvx, cvy);
     }
@@ -1223,6 +1246,9 @@
     // gated by the loss cone, not on the field. User-placed bodies keep the exact
     // original (pseudo-GR) field.
     const EPS2 = 2.25;
+    // Central core mass as the SWARM feels it: the frozen unit plus any banked merger
+    // mass (struct.coreBoost — the absorbed companion core, kept for field continuity).
+    const Mc1 = M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
     // Newton's-third-law reaction of the swarm on the cores, accumulated per member from
     // its core + halo forces (a halo's reaction is anchored to its host core — the halo
     // IS the structure's bound member mass riding that core). stepBinary translates the
@@ -1232,7 +1258,7 @@
     const cloudAccel = (px, py, m, collect) => {
       const acc = { ax: 0, ay: 0 };
       const d1x = px - c1x, d1y = py - c1y;
-      const w1 = -M / Math.pow(d1x * d1x + d1y * d1y + EPS2, 1.5);
+      const w1 = -Mc1 / Math.pow(d1x * d1x + d1y * d1y + EPS2, 1.5);
       let a1x = w1 * d1x, a1y = w1 * d1y;
       if (halo1) { const hf = phys.haloAccel(px - h1c.x, py - h1c.y, halo1.M, halo1.R); a1x += hf.ax; a1y += hf.ay; }
       acc.ax += a1x; acc.ay += a1y;
@@ -1660,14 +1686,17 @@
     if (n1 + n2 + nS > 0 || sim._conserve) {
       // m1 already includes the untagged stream strays (they ride the 'central' bucket
       // in the loop above), so the cloud total is just m1 + m2 — mS is display-only.
-      let mT = M1 + m1 + m2
+      // The central core carries the frozen unit PLUS any banked merger mass
+      // (struct.coreBoost) — absorbed companion cores stay on the books.
+      const M1c = M1 + ((sim._struct1 && sim._struct1.coreBoost) || 0);
+      let mT = M1c + m1 + m2
              + ((sim._struct1 && sim._struct1.accreted) || 0)
              + ((sim._struct2 && sim._struct2.accreted) || 0)
              + (sim._escapedM || 0);
-      let pxT = cpx + (sim._escapedPx || 0) + M1 * (binOn ? bin.vx1 : 0);
-      let pyT = cpy + (sim._escapedPy || 0) + M1 * (binOn ? bin.vy1 : 0);
-      let LT  = cL + (sim._escapedL || 0) + (binOn ? M1 * (bin.x1 * bin.vy1 - bin.y1 * bin.vx1) : 0);
-      let pAbs = cAbs + M1 * (binOn ? Math.hypot(bin.vx1, bin.vy1) : 0);
+      let pxT = cpx + (sim._escapedPx || 0) + M1c * (binOn ? bin.vx1 : 0);
+      let pyT = cpy + (sim._escapedPy || 0) + M1c * (binOn ? bin.vy1 : 0);
+      let LT  = cL + (sim._escapedL || 0) + (binOn ? M1c * (bin.x1 * bin.vy1 - bin.y1 * bin.vx1) : 0);
+      let pAbs = cAbs + M1c * (binOn ? Math.hypot(bin.vx1, bin.vy1) : 0);
       if (binOn) {
         mT += bin.M2;
         pxT += bin.M2 * bin.vx2; pyT += bin.M2 * bin.vy2;
@@ -1805,7 +1834,8 @@
                        Math.sign(bin.a2 || sim.params.a || 1) || 1);
     }
     if (has1) {
-      circularizeCloud(sim, 'central', bin.x1, bin.y1, bin.vx1, bin.vy1, M1, sim._halo1,
+      circularizeCloud(sim, 'central', bin.x1, bin.y1, bin.vx1, bin.vy1,
+                       M1 + ((sim._struct1 && sim._struct1.coreBoost) || 0), sim._halo1,
                        Math.sign(sim.params.a || 1) || 1);
     }
     resetConservationBaseline(sim);   // circularisation rewrites the velocities
@@ -2038,7 +2068,9 @@
     }
     return { hx: binOn ? bin.x1 : 0, hy: binOn ? bin.y1 : 0,
              hvx: binOn ? bin.vx1 : 0, hvy: binOn ? bin.vy1 : 0,
-             Mcore: sim.params.M, dir: Math.sign(sim.params.a || 1) || 1,
+             // Members orbit the core + any banked merger mass (field continuity).
+             Mcore: sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0),
+             dir: Math.sign(sim.params.a || 1) || 1,
              massSun: sim.params.Msun || 1 };
   }
 
@@ -2243,7 +2275,8 @@
     const has2 = binOn && isCloudStruct(bin.smbhStructure);
     const reach1 = (sim._struct1 && sim._struct1.reach) || 75;
     const reach2 = (sim._struct2 && sim._struct2.reach) || 55;
-    const M1core = sim.params.M, M2core = (bin && bin.M2) || 0.8;
+    const M1core = sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
+    const M2core = (bin && bin.M2) || 0.8;
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
       const dx1 = b.x - c1x, dy1 = b.y - c1y;
@@ -2441,6 +2474,10 @@
     // The companion's members are already re-tagged to the central, so their mass is in
     // sim._cloudM1 (and the central halo) — the remnant keeps the full combined bound
     // mass. Only the now-empty companion bookkeeping is cleared.
+    // The companion's CORE point mass would otherwise vanish from the swarm's field the
+    // moment the binary turns off — bank it on the survivor (field continuity, same as
+    // the coalescence path; geometric units unchanged since the primary keeps its M).
+    if (sim._struct1) sim._struct1.coreBoost = (sim._struct1.coreBoost || 0) + (bin.M2 || 0);
     sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
     if (product !== sim.smbhStructure) applyMergedCentralType(sim, product);
     // Reset the central's displayed mass to its seed value (the user's "M reverts to the
@@ -2469,6 +2506,15 @@
     const product = mergedStructureType(sim.smbhStructure, newKey);
     const struct2 = sim._struct2, halo2 = sim._halo2;
     if (struct2 && sim._struct1) struct2.accreted = (struct2.accreted || 0) + (sim._struct1.accreted || 0);
+    // The depleted central's CORE (frozen unit + any banked merger mass) would vanish
+    // from the swarm's field on promotion — bank it on the survivor for field
+    // continuity. Promotion renormalises the geometric unit to the companion's Msun,
+    // so the old core mass is converted by the solar-mass ratio first.
+    if (struct2) {
+      const oldCore = (sim.params.M || 1) + ((sim._struct1 && sim._struct1.coreBoost) || 0);
+      const unitRatio = (sim.params.Msun || 1) / Math.max(1e-9, bin.M2sun || sim.params.Msun || 1);
+      struct2.coreBoost = (struct2.coreBoost || 0) + oldCore * unitRatio;
+    }
     const keepScale = sim.view.scale;             // keep the swarm framed across promotion
     promoteCompanionToCentral(sim, bin);          // copy the companion's full param set up
     sim.view.scale = keepScale;
