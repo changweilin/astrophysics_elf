@@ -472,31 +472,33 @@
       // Fractional decay rate = |a_DF| / v  (the drag-timescale inverse).
       let decay = (Math.hypot(aDF.ax, aDF.ay) / vrelNow) * DF_RATE * dt;
 
-      // ── Progressive core coalescence (common-field regime) ──
-      // Chandrasekhar friction alone stalls once the cores orbit INSIDE a shared
-      // stellar envelope: the wake integral saturates and the pair can circle
-      // indefinitely. Physically the late stage is dominated by the common
+      // ── Common-field acceleration of the friction inspiral ──
+      // Chandrasekhar friction alone weakens once the cores orbit INSIDE a shared
+      // stellar envelope: the wake integral saturates and the pair can circle for
+      // a long time. Physically the late stage is dominated by the common
       // background — when the structures' spheres of influence overlap AND most
       // member stars are pulled toward both cores in nearly the same direction
       // (sim._coreAlign, tallied per frame in recordCloudCounts), the swarm sees
-      // ONE well, not two. Arm a progressive merge: an extra adiabatic
-      // contraction whose rate ramps with the alignment fraction, so the cores
-      // sink smoothly into each other (contact coalescence still finishes the
-      // job below) instead of freezing on a tight mutual orbit. Hysteresis
-      // (ON 0.6 / OFF 0.35) keeps a grazing pass from flickering the phase.
+      // ONE well, not two. Model this by smoothly AMPLIFYING the same DF decay
+      // (up to ×(1+CORE_MERGE_BOOST)) — the inspiral keeps its quasi-circular
+      // Chandrasekhar character, just on a faster clock. Both ramps are
+      // smoothstepped (C¹), so the drive varies continuously and differentiably
+      // with the orbital state — no engagement threshold ever snaps the orbit.
       const reach1 = (sim._struct1 && sim._struct1.rOut) || (h1 && h1.R) || 30;
       const reach2 = (sim._struct2 && sim._struct2.rOut) || (h2 && h2.R) || 30;
-      const align = sim._coreAlign || 0;
-      if (!bin._coreMerge && rNow < reach1 + reach2 && align >= CORE_MERGE_ON) {
+      const sstep = (t) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
+      const reach = reach1 + reach2;
+      const overlap = sstep((reach - rNow) / (0.25 * reach));   // fades in past first contact
+      const common = sstep(((sim._coreAlign || 0) - CORE_ALIGN_LO) / (CORE_ALIGN_HI - CORE_ALIGN_LO));
+      const boost = common * overlap;                            // 0 → 1, C¹ everywhere
+      decay *= 1 + CORE_MERGE_BOOST * boost;
+      // One-time event-log marker (display only — the dynamics never switch).
+      if (!bin._coreMerge && boost > 0.5) {
         bin._coreMerge = true;
         logEv(sim, 'amber', tr('core influence spheres overlap — fields merging progressively',
-                               '雙核心勢力範圍重疊 — 引力場開始漸進融合'));
-      } else if (bin._coreMerge && align < CORE_MERGE_OFF) {
-        bin._coreMerge = false;   // slung back out of the common envelope — disengage
-      }
-      if (bin._coreMerge) {
-        const ramp = Math.min(1, (align - CORE_MERGE_OFF) / (CORE_MERGE_ON - CORE_MERGE_OFF));
-        decay += CORE_MERGE_RATE * ramp * dt;
+                               '雙核心勢力範圍重疊 — 引力場漸進融合中'));
+      } else if (bin._coreMerge && boost < 0.2) {
+        bin._coreMerge = false;
       }
       let scale = 1 - decay;
       if (scale < 0.5) scale = 0.5;                       // per-step clamp — no plunge
@@ -624,6 +626,12 @@
     const sType = bin.type || 'bh';
     const bothBH = cType === 'bh' && sType === 'bh';
 
+    // Structure (galaxy/cluster) mergers are quiet, extended events: the visible
+    // outcome is the survivor GROWING as it absorbs the companion's stars
+    // (structureScale's R ∝ M^(1/3)), not a point-like burst — so they get no
+    // merger flash and no EM transient overlay (user preference: muted, no glare).
+    const structMerge = isCloudStruct(sim.smbhStructure) || isCloudStruct(bin.smbhStructure);
+
     // Arm the multi-phase EM/GW transient for this coalescence (tidal-tail
     // ejecta, short-GRB jet, kilonova, r-process cloud, or a luminous red nova).
     // A clean black-hole pair / clean NS-BH plunge has no rich transient — the
@@ -631,7 +639,7 @@
     // types unless a channel was already classified by the caller.
     const ch = channel || phys.compactMergerChannel(
       cType, starMsun(sim, bin, 1), sType, starMsun(sim, bin, 2));
-    armTransient(sim, bin, ch);
+    if (!structMerge) armTransient(sim, bin, ch);
 
     // Remnant mass, spin and radiated energy from the NR-fit (mass ratio +
     // both progenitor spins). Equal-mass non-spinning → ~5.5% of Mt radiated
@@ -682,7 +690,7 @@
     if (Math.abs(af) > room) af = Math.sign(af || 1) * room;
 
     bin.merged = true;
-    bin.mergerFlash = 1.6;
+    bin.mergerFlash = structMerge ? 0 : 1.6;
     bin.eMergerGW = eMergerGW;     // GW energy in the merger/ringdown burst
     bin.eGW = (bin.eGW || 0) + eMergerGW;
     sim.params.M = 1;
@@ -719,6 +727,28 @@
       const ccx = (M1 * bin.x1 + M2 * bin.x2) / Mt, ccy = (M1 * bin.y1 + M2 * bin.y2) / Mt;
       const cvx = (M1 * (bin.vx1 || 0) + M2 * (bin.vx2 || 0)) / Mt;
       const cvy = (M1 * (bin.vy1 || 0) + M2 * (bin.vy2 || 0)) / Mt;
+      // ── Post-coalescence field morph (C¹ handover) ──
+      // Capture the swarm-felt source configuration AT contact, in remnant-relative
+      // coordinates (the remnant is recentred to the origin below): the central
+      // source M1+coreBoost at its offset from the barycentre, the companion M2 at
+      // its own. integrate() keeps feeding the swarm these TWO softened points for
+      // CORE_MORPH_T, shrinking the offsets with a smoothstep (zero end slopes) while
+      // rotating them at the signed contact angular rate — so the dominant tangential
+      // source motion is also continuous — and bleeding the radiated E_GW out of the
+      // companion's share along the same ramp. At the window's end both points sit at
+      // the origin and their masses sum to exactly Mc1 = M + coreBoost, so the switch
+      // back to the single-point field is identically zero — the member field is C¹
+      // through the whole merger, not just mass-conserving.
+      const preBoost = (sim._struct1 && sim._struct1.coreBoost) || 0;
+      const relx = bin.x2 - bin.x1, rely = bin.y2 - bin.y1;
+      const relvx = (bin.vx2 || 0) - (bin.vx1 || 0), relvy = (bin.vy2 || 0) - (bin.vy1 || 0);
+      sim._coreMorph = {
+        t: 0, T: CORE_MORPH_T,
+        om: (relx * relvy - rely * relvx) / Math.max(1e-6, relx * relx + rely * rely),
+        ax0: bin.x1 - ccx, ay0: bin.y1 - ccy,
+        bx0: bin.x2 - ccx, by0: bin.y2 - ccy,
+        mA: M1 + preBoost, mB: M2, eGW: eMergerGW,
+      };
       const product = mergedStructureType(sim.smbhStructure, bin.smbhStructure);
       if (!sim._struct1 && sim._struct2) {
         // Bare-hole central swallowed a structure companion: the survivor inherits the
@@ -1216,18 +1246,24 @@
   // at the same radius, restoring the intended "vanishingly few" capture rate.
   const CLOUD_SWALLOW_R = 0.4;
 
-  // ── Progressive core-coalescence thresholds ──
+  // ── Common-field friction boost (progressive core coalescence) ──
   // A member star counts as "commonly pulled" when its star→core1 / star→core2
-  // directions agree within ~20° (cos ≥ 0.94). When MOST bound members agree
-  // (≥ CORE_MERGE_ON) and the structures' spheres of influence overlap, the two
-  // cores share a single potential well and are driven to merge progressively;
-  // the phase disengages (hysteresis) only if the fraction falls back below
-  // CORE_MERGE_OFF. CORE_MERGE_RATE is the full-ramp fractional separation decay
-  // per sim-time unit — gentle enough to watch, fast enough to finish.
+  // directions agree within ~20° (cos ≥ 0.94). As that fraction rises across
+  // [CORE_ALIGN_LO, CORE_ALIGN_HI] the swarm increasingly sees ONE potential
+  // well, and the Chandrasekhar inspiral is smoothly ACCELERATED — the same DF
+  // decay law, multiplied by up to (1 + CORE_MERGE_BOOST) — rather than driven
+  // by a separate contraction channel. Both the alignment ramp and the
+  // sphere-of-influence overlap gate are smoothstepped, so the drive is a C¹
+  // function of the orbital state: no thresholds snap, no hysteresis kinks.
   const CORE_ALIGN_COS  = 0.94;
-  const CORE_MERGE_ON   = 0.6;
-  const CORE_MERGE_OFF  = 0.35;
-  const CORE_MERGE_RATE = 0.2;
+  const CORE_ALIGN_LO   = 0.35;
+  const CORE_ALIGN_HI   = 0.85;
+  const CORE_MERGE_BOOST = 5;
+  // Post-coalescence field-morph window (sim-time units): the two softened core
+  // sources persist after contact and are blended into the single remnant point
+  // over this window (smoothstep shrink + contact-rate rotation), so the swarm's
+  // field stays C¹ through the merger instead of reconfiguring in one frame.
+  const CORE_MORPH_T = 2.0;
 
   // Member-star swallows are rare loss-cone events; log them (rate-limited to one
   // line per sim-second) so a star leaving the population is visible evidence in
@@ -1297,6 +1333,31 @@
     // Central core mass as the SWARM feels it: the frozen unit plus any banked merger
     // mass (struct.coreBoost — the absorbed companion core, kept for field continuity).
     const Mc1 = M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
+    // ── Post-coalescence field morph (see coalesce) ──
+    // While the window is open the central source is REPLACED by the two contact-
+    // frozen progenitor points, smoothstep-shrunk onto the remnant and rotating at
+    // the contact rate. Advanced here because integrate() is the field's only
+    // consumer (one clock tick per sub-step). When it closes, both points coincide
+    // with the origin and sum to Mc1, so the fall-through to the single-point
+    // field below is an exact, jump-free handover.
+    let mo = null;
+    const morph = sim._coreMorph;
+    if (morph) {
+      morph.t += dt;
+      if (morph.t >= morph.T) {
+        sim._coreMorph = null;
+      } else {
+        const u = morph.t / morph.T;
+        const s = u * u * (3 - 2 * u);                  // smoothstep: zero end slopes
+        const k = 1 - s;
+        const cs = Math.cos(morph.om * morph.t), sn = Math.sin(morph.om * morph.t);
+        mo = {
+          ax: (morph.ax0 * cs - morph.ay0 * sn) * k, ay: (morph.ax0 * sn + morph.ay0 * cs) * k,
+          bx: (morph.bx0 * cs - morph.by0 * sn) * k, by: (morph.bx0 * sn + morph.by0 * cs) * k,
+          mA: morph.mA, mB: Math.max(0, morph.mB - morph.eGW * s),
+        };
+      }
+    }
     // Newton's-third-law reaction of the swarm on the cores, accumulated per member from
     // its core + halo forces (a halo's reaction is anchored to its host core — the halo
     // IS the structure's bound member mass riding that core). stepBinary translates the
@@ -1305,9 +1366,19 @@
     let r1fx = 0, r1fy = 0, r2fx = 0, r2fy = 0;
     const cloudAccel = (px, py, m, collect) => {
       const acc = { ax: 0, ay: 0 };
-      const d1x = px - c1x, d1y = py - c1y;
-      const w1 = -Mc1 / Math.pow(d1x * d1x + d1y * d1y + EPS2, 1.5);
-      let a1x = w1 * d1x, a1y = w1 * d1y;
+      let a1x, a1y;
+      if (mo) {
+        // Morph window: the central well is still the TWO progenitor points.
+        const dAx = px - mo.ax, dAy = py - mo.ay;
+        const wA = -mo.mA / Math.pow(dAx * dAx + dAy * dAy + EPS2, 1.5);
+        const dBx = px - mo.bx, dBy = py - mo.by;
+        const wB = -mo.mB / Math.pow(dBx * dBx + dBy * dBy + EPS2, 1.5);
+        a1x = wA * dAx + wB * dBx; a1y = wA * dAy + wB * dBy;
+      } else {
+        const d1x = px - c1x, d1y = py - c1y;
+        const w1 = -Mc1 / Math.pow(d1x * d1x + d1y * d1y + EPS2, 1.5);
+        a1x = w1 * d1x; a1y = w1 * d1y;
+      }
       if (halo1) { const hf = phys.haloAccel(px - h1c.x, py - h1c.y, halo1.M, halo1.R); a1x += hf.ax; a1y += hf.ay; }
       acc.ax += a1x; acc.ay += a1y;
       if (collect) { r1fx -= m * a1x; r1fy -= m * a1y; }
@@ -1988,6 +2059,7 @@
     sim._halo2 = cloneState(s.halo2) || null;
     sim._struct1 = cloneState(s.struct1) || null;
     sim._struct2 = cloneState(s.struct2) || null;
+    sim._coreMorph = null;   // morphs are transient — never restored mid-window
     // Never reuse an id the restored scene already holds (the seq counter is global).
     if (s.seq) sim.seq = Math.max(sim.seq || 1, s.seq);
   }
@@ -2007,6 +2079,7 @@
     sim.smbhStructure = 'smbh';     // a fresh supermassive scene starts as a bare hole
     sim._halo1 = null; sim._halo2 = null;   // no galaxy halos in a fresh scene
     sim._struct1 = null; sim._struct2 = null;
+    sim._coreMorph = null;                  // no in-flight post-merger field morph
     // A fresh scene is its own sandbox — start with discs off (a galaxy's AGN turns
     // them back on); the previous scale's disc state is kept in its own snapshot.
     if (sim.disc)  { sim.disc.enabled = false;  sim.disc.particles.length = 0; }
@@ -2235,6 +2308,7 @@
   function seedStructureCloud(sim, key, role = 'central') {
     clearStructureCloud(sim, role);
     resetConservationBaseline(sim);   // new swarm = new initial condition for the ledger
+    if (role === 'central') sim._coreMorph = null;   // a re-seeded centre owns no stale morph
     if (!isCloudStruct(key)) return;
     const host = resolveHost(sim, role);
     if (!host) return;
@@ -2555,7 +2629,7 @@
     const bin = sim.binary;
     if (!bin) return;
     bin.merged = true;
-    bin.mergerFlash = 1.6;
+    bin.mergerFlash = 0;   // structure mergers are quiet — the survivor grows, no flash
     // Shift into the surviving central core's rest frame BEFORE the binary turns off, so the
     // members do not jump when the integrator re-centres the lone survivor at the origin.
     recenterSceneToCore(sim, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0);
@@ -2632,7 +2706,7 @@
     // Shift into the surviving companion core's rest frame at the origin before the binary
     // turns off, so its members do not jump as it becomes the lone central body.
     recenterSceneToCore(sim, bin.x2, bin.y2, bin.vx2 || 0, bin.vy2 || 0);
-    bin.merged = true; bin.mergerFlash = 1.6; bin.enabled = false;
+    bin.merged = true; bin.mergerFlash = 0; bin.enabled = false;   // quiet structure merger
     // Re-base the ledger from the post-succession scene (the depleted primary's core has
     // merged away and the survivor was renormalised to geometric M = 1 — a unit change).
     resetConservationBaseline(sim);
