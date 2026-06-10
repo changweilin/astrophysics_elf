@@ -77,6 +77,13 @@
       // refreshed each step + on seeding. Shrinks as a galaxy/cluster loses stars.
       _cloudN1: 0,
       _cloudN2: 0,
+      // Live bound-mass of each structure = Σ of its current members' fixed mass quanta
+      // (b._m). This is the structure's gravitating "core mass" the user model demands:
+      // it tracks the member stars exactly, so a star re-tagged from one structure to the
+      // other moves its mass with it (mass-energy conserved — one side +, the other −).
+      // Drives the binding halo's mass each step (updateStructureMass). See recordCloudCounts.
+      _cloudM1: 0,
+      _cloudM2: 0,
       // Derived per-structure scale, refreshed each step from the live member count
       // (frac = N / Nbase). Consumed by render.js for swarm/halo brightness and by the
       // panels. _Rvis = visible structure radius (R ~ N^(1/3)); _density = member
@@ -1404,12 +1411,17 @@
   // leave or are consumed get pruned in integrate() — so this count shrinks over a
   // merger. Surfaced in the body panels.
   function recordCloudCounts(sim) {
-    let n1 = 0, n2 = 0;
+    let n1 = 0, n2 = 0, m1 = 0, m2 = 0;
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
-      if (b._cloudRole === 'companion') n2++; else n1++;
+      const m = b._m || 0;
+      // role 'central' covers both the central structure and untagged stars that still
+      // sit in the central's field; 'companion' rides the secondary.
+      if (b._cloudRole === 'companion') { n2++; m2 += m; }
+      else                              { n1++; m1 += m; }
     }
     sim._cloudN1 = n1; sim._cloudN2 = n2;
+    sim._cloudM1 = m1; sim._cloudM2 = m2;
   }
 
   // ── Camera reference-frame lock ───────────────────────────
@@ -1750,7 +1762,9 @@
 
   // Spawn one cloud particle on a circular (+dispersion) orbit about its host core,
   // sampled within [rIn,rOut] with the central concentration r = rIn+(rOut-rIn)·u².
-  function spawnCloudParticle(sim, key, role, host, geom, halo, gas) {
+  // `m` is the star's fixed mass quantum: the structure's bound mass shared over its
+  // members, so Σ members' m = the structure's gravitating mass (conserved on transfer).
+  function spawnCloudParticle(sim, key, role, host, geom, halo, gas, m = 0) {
     const { hx, hy, hvx, hvy, Mcore, dir } = host;
     const u = Math.random();
     const r = geom.rIn + (geom.rOut - geom.rIn) * u * u;
@@ -1773,8 +1787,9 @@
       vx: hvx - Math.sin(th) * vc * dir + jx,
       vy: hvy + Math.cos(th) * vc * dir + jy,
       // _cloud: the tracer key; _cloudOrigin: immutable seed group (for clearing);
-      // _cloudRole: DYNAMIC membership (which structure owns it now; null = none).
-      _cloud: key, _cloudOrigin: role, _cloudRole: role,
+      // _cloudRole: DYNAMIC membership (which structure owns it now; null = none);
+      // _m: fixed mass quantum that follows the star across membership transfers.
+      _cloud: key, _cloudOrigin: role, _cloudRole: role, _m: m,
     });
   }
 
@@ -1808,25 +1823,30 @@
     const geom = structureGeom(key, host.massSun);
     const N = structureN(host.massSun);
     const nGas = Math.round(N * geom.gasFrac);             // clusters are gas-poor
-    // Galaxy halo (uniform-density dark matter); none for a cluster.
-    const halo = (key === 'galaxy')
-      ? { M: host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION)), R: geom.rOut * 1.8 }
-      : null;
-    // Per-structure metadata: base star count + base mass + base halo mass (for the
-    // M<->N coupling) and the membership reach (the far backstop past which a star
-    // belongs to no structure). The *_base fields are the seed values that the live
-    // count scales against (frac = N/Nbase) to drive the structure's visible radius,
-    // halo extent and brightness. See updateMembership / updateStructureMass.
+    // Binding halo (uniform-density sphere) = the structure's gravitating bound mass —
+    // dark matter for a galaxy, the self-bound star+DM mass for a cluster. BOTH get one
+    // now: a cluster with no binding field is held only by the bare core point mass, so
+    // its members fly apart in a merger (mass not conserved). The halo MASS is driven by
+    // the live member sum each step (updateStructureMass), so it deepens as the structure
+    // absorbs stars and lightens as it sheds them — conserving total mass across a transfer.
+    const halo = { M: host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION)), R: geom.rOut * 1.8 };
+    // Per-star mass quantum: the bound mass shared over the seed population, so the live
+    // sum Σ b._m reproduces the halo mass and follows the members one-for-one.
+    const mPer = N > 0 ? halo.M / N : 0;
+    // Per-structure metadata: base star count + base mass + base halo mass and the
+    // membership reach (the far backstop past which a star belongs to no structure). The
+    // *_base fields are the seed values the live count scales against (frac = N/Nbase) to
+    // drive the structure's visible radius, halo extent and brightness.
     const struct = {
-      key, Nbase: N, massBase: host.massSun, haloBase: halo ? halo.M : 0,
+      key, Nbase: N, massBase: host.massSun, haloBase: halo.M, mPer,
       reach: geom.rOut * 2.2,            // membership backstop (fixed; avoids strip runaway)
       rOut: geom.rOut, reachBase: geom.rOut * 2.2,
-      RvisBase: geom.rOut, haloRbase: halo ? halo.R : 0,
+      RvisBase: geom.rOut, haloRbase: halo.R,
     };
     if (role === 'companion') { sim._halo2 = halo; sim._struct2 = struct; }
     else                      { sim._halo1 = halo; sim._struct1 = struct; }
 
-    for (let i = 0; i < N; i++) spawnCloudParticle(sim, key, role, host, geom, halo, i < nGas);
+    for (let i = 0; i < N; i++) spawnCloudParticle(sim, key, role, host, geom, halo, i < nGas, mPer);
   }
 
   // ── User mass-slider response (M -> N -> R/brightness) ─────
@@ -1845,12 +1865,15 @@
     const geom = structureGeom(key, host.massSun);
     const halo = role === 'companion' ? sim._halo2 : sim._halo1;
     const target = structureN(host.massSun);
+    // New bound mass for the new slider mass, shared over the target population.
+    const newHaloM = host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION));
+    const mPer = target > 0 ? newHaloM / target : 0;
     // Current live members of this seed group.
     const mine = sim.bodies.filter((b) => b._cloud && b._cloudOrigin === role && b.state === 'orbit');
     let delta = target - mine.length;
     if (delta > 0) {
       const nGas = Math.round(delta * geom.gasFrac);
-      for (let i = 0; i < delta; i++) spawnCloudParticle(sim, key, role, host, geom, halo, i < nGas);
+      for (let i = 0; i < delta; i++) spawnCloudParticle(sim, key, role, host, geom, halo, i < nGas, mPer);
     } else if (delta < 0) {
       // Strip the outermost stars first.
       mine.sort((a, b) => Math.hypot(b.x - host.hx, b.y - host.hy) - Math.hypot(a.x - host.hx, a.y - host.hy));
@@ -1859,17 +1882,20 @@
     }
     // Re-base to the new mass: N target is the fresh full count, mass = current host
     // mass, and the geometry (outer edge → RvisBase / reach / halo extent) follows the
-    // mass–size relation so the structure's RADIUS visibly tracks its mass.
+    // mass–size relation so the structure's RADIUS visibly tracks its mass. The per-star
+    // quantum is redistributed across the (post-edit) seed group so Σ b._m = the new
+    // bound mass — a deliberate user mass change, not a conserved transfer.
+    for (const b of sim.bodies) {
+      if (b._cloud && b._cloudOrigin === role && b.state === 'orbit') b._m = mPer;
+    }
     struct.Nbase = target;
     struct.massBase = host.massSun;
+    struct.mPer = mPer;
     struct.rOut = geom.rOut;
     struct.reach = geom.rOut * 2.2; struct.reachBase = geom.rOut * 2.2;
-    struct.RvisBase = geom.rOut; struct.haloRbase = halo ? geom.rOut * 1.8 : 0;
-    if (halo) {
-      halo.M = host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION));
-      halo.R = geom.rOut * 1.8;
-      struct.haloBase = halo.M;
-    }
+    struct.RvisBase = geom.rOut; struct.haloRbase = geom.rOut * 1.8;
+    struct.haloBase = newHaloM;
+    if (halo) { halo.M = newHaloM; halo.R = geom.rOut * 1.8; }
     recordCloudCounts(sim);
     updateStructureMass(sim);
   }
@@ -1985,11 +2011,16 @@
   // When the companion's members reach zero it has been fully absorbed -> merge.
   // Scale a halo's mass/extent to the live fraction and return {Rvis, density} for the
   // structure's N member stars (used to drive the render-side brightness).
-  function structureScale(struct, frac, N, halo) {
+  // `Mmembers` is the structure's live bound mass = Σ of its current members' quanta
+  // (sim._cloudM*). The binding halo's mass is set to EXACTLY that, so it deepens as the
+  // structure gains stars and lightens as it loses them, and a transfer between the two
+  // structures conserves the total (one +, one −) — the user's mass-energy rule. The
+  // visible radius / surface density still follow the member fraction (count vs seed).
+  function structureScale(struct, frac, N, Mmembers, halo) {
     const f = Math.max(0, frac);
     const Rvis = Math.max(1, (struct.RvisBase || 1) * Math.cbrt(Math.max(1e-3, f)));
-    if (halo && struct.haloBase) {
-      halo.M = struct.haloBase * f;
+    if (halo) {
+      halo.M = Math.max(0, Mmembers);
       if (struct.haloRbase) halo.R = Math.max(1, struct.haloRbase * Math.cbrt(Math.max(1e-3, f)));
     }
     return { Rvis, density: f > 0 ? N / (Math.PI * Rvis * Rvis) : 0 };
@@ -1999,7 +2030,7 @@
     const bin = sim.binary;
     if ((sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') && sim._struct1 && sim._struct1.Nbase > 0) {
       const frac = Math.max(0, sim._cloudN1 / sim._struct1.Nbase);
-      const sc = structureScale(sim._struct1, frac, sim._cloudN1, sim._halo1);
+      const sc = structureScale(sim._struct1, frac, sim._cloudN1, sim._cloudM1, sim._halo1);
       sim._cloudFrac1 = frac; sim._Rvis1 = sc.Rvis; sim._density1 = sc.density;
     } else { sim._cloudFrac1 = 0; sim._Rvis1 = 0; sim._density1 = 0; }
     if (bin && bin.enabled && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster')
@@ -2009,7 +2040,7 @@
         bin.M2sun = Math.max(1, sim._struct2.massBase * frac);
         bin.M2 = Math.max(0.001, bin.M2sun / Math.max(1, sim.params.Msun || 1));
       }
-      const sc = structureScale(sim._struct2, frac, sim._cloudN2, sim._halo2);
+      const sc = structureScale(sim._struct2, frac, sim._cloudN2, sim._cloudM2, sim._halo2);
       sim._cloudFrac2 = frac; sim._Rvis2 = sc.Rvis; sim._density2 = sc.density;
       if (sim._cloudN2 <= 0 && !bin.merged) structureMergeComplete(sim);
     } else { sim._cloudFrac2 = 0; sim._Rvis2 = 0; sim._density2 = 0; }
@@ -2023,7 +2054,10 @@
     bin.merged = true;
     bin.mergerFlash = 1.6;
     bin.enabled = false;
-    sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0;
+    // The companion's members are already re-tagged to the central, so their mass is in
+    // sim._cloudM1 (and the central halo) — the remnant keeps the full combined bound
+    // mass. Only the now-empty companion bookkeeping is cleared.
+    sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
     logEv(sim, 'good', tr('structure merger complete — companion absorbed into the central',
                           '結構合併完成 — 伴星系/星團已併入主體'));
   }
