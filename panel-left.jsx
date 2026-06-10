@@ -180,6 +180,12 @@ function BodyEditor({ sim, force, role }) {
   // and is locked out of the tab row below.
   const regime = sim.bhRegime || 'stellar';
   const sr = phys.stageRegimeRange(category, regime);
+  // The intermediate scale replaces the Giant stage with an Open cluster *structure* (a
+  // live star swarm, like the supermassive galaxy/cluster). Track whether this role is in
+  // that structure mode so the tab row, the stage switch and the N read-out branch on it.
+  const structRole = isCentral ? 'central' : 'companion';
+  const activeStructKey = isCentral ? sim.smbhStructure : (bin && bin.smbhStructure);
+  const inOpenCluster = regime === 'intermediate' && activeStructKey === 'opencluster';
   const mMin = sr ? sr.min : range.min;
   const mMax = sr ? sr.max : range.max;
   const accessors = isCentral ? {
@@ -323,7 +329,7 @@ function BodyEditor({ sim, force, role }) {
     // companion tracks the binary's structure.
     const role = isCentral ? 'central' : 'companion';
     const struct = isCentral ? sim.smbhStructure : (bin && bin.smbhStructure);
-    if ((struct === 'galaxy' || struct === 'cluster') && window.KNSim.rescaleStructureCloud) {
+    if ((struct === 'galaxy' || struct === 'cluster' || struct === 'opencluster') && window.KNSim.rescaleStructureCloud) {
       window.KNSim.rescaleStructureCloud(sim, role);
     }
     force();   // R★/T★ re-derived from the new mass by KNSim.syncStellar
@@ -334,7 +340,15 @@ function BodyEditor({ sim, force, role }) {
   // and camera zoom: leaving a stage stashes it, returning restores it verbatim.
   // A never-visited stage falls back to defaults + that stage's framing zoom.
   function switchCategory(cat) {
-    if (cat === accessors.category) return;
+    // Leaving the intermediate open-cluster structure for a stellar stage: tear the swarm
+    // down first (a structure is not an evolutionary stage). Fall through even when the
+    // chosen stage's category matches the current (bh) type, since we are exiting a
+    // structure, not switching between stages.
+    if (inOpenCluster) {
+      window.KNSim.clearStructure(sim, structRole);
+    } else if (cat === accessors.category) {
+      return;
+    }
     // No real body of this stage exists at the current mass scale → tab is locked.
     if (phys.stageLockedAtRegime(cat, regime)) return;
     const band = phys.stageRegimeRange(cat, regime) || phys.MASS_RANGES[cat];
@@ -462,14 +476,31 @@ function BodyEditor({ sim, force, role }) {
       <div className="type-pick" role="tablist">
         {[
           { k: 'star',    label: tr('Main sequence', '主序星'), glyph: '✱' },
-          { k: 'giant',   label: tr('Giant', '巨星'),           glyph: '✸' },
+          // Intermediate scale swaps the Giant stage for an Open cluster structure.
+          regime === 'intermediate'
+            ? { k: 'opencluster', label: tr('Open cluster', '疏散星團'), glyph: '✸', structure: true }
+            : { k: 'giant', label: tr('Giant', '巨星'), glyph: '✸' },
           { k: 'remnant', label: tr('Compact object', '緻密天體'), glyph: '●' },
         ].map((t) => {
+          if (t.structure) {
+            // Open cluster is a live star-swarm structure, not a stellar stage — selecting
+            // it seeds the swarm (central or companion) via applySMBHStructure.
+            return (
+            <button key={t.k}
+              className={`type-tab ${inOpenCluster ? 'on' : ''}`}
+              title={tr('Open cluster — a loose, self-bound swarm of N stars; merges by dynamical friction',
+                        '疏散星團 — 鬆散自束縛的 N 顆恆星群;靠動力摩擦合併')}
+              onClick={() => { window.KNSim.applySMBHStructure(sim, 'opencluster', structRole); force(); }}>
+              <span className="g">{t.glyph}</span>
+              <span className="l">{t.label}</span>
+            </button>
+            );
+          }
           const locked = phys.stageLockedAtRegime(t.k, regime);
           const regLabel = tr(phys.BH_REGIMES[regime].label_en, phys.BH_REGIMES[regime].label_zh);
           return (
           <button key={t.k} disabled={locked}
-            className={`type-tab ${accessors.category === t.k ? 'on' : ''} ${locked ? 'locked' : ''}`}
+            className={`type-tab ${(!inOpenCluster && accessors.category === t.k) ? 'on' : ''} ${locked ? 'locked' : ''}`}
             title={locked ? trp('no {label}-scale {stage} exists in the real universe', { label: regLabel, stage: t.label }) : undefined}
             onClick={() => switchCategory(t.k)}>
             <span className="g">{locked ? '⊘' : t.glyph}</span>
@@ -482,20 +513,20 @@ function BodyEditor({ sim, force, role }) {
 
       {/* Live in-range star count for the active structure cloud (shrinks as a
           galaxy/cluster loses stars to stripping / ejection / the central BH). */}
-      {smbhStructures && (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') && (
+      {((smbhStructures && (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster')) || (isCentral && inOpenCluster)) && (
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN1 || 0}</span>
         </div>
       )}
-      {companionStructures && (companionStructure === 'galaxy' || companionStructure === 'cluster') && (
+      {((companionStructures && (companionStructure === 'galaxy' || companionStructure === 'cluster')) || (!isCentral && inOpenCluster)) && (
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN2 || 0}</span>
         </div>
       )}
 
-      {accessors.category === 'remnant' && !smbhStructures && !companionStructures && (
+      {accessors.category === 'remnant' && !smbhStructures && !companionStructures && !inOpenCluster && (
         <div className="remnant-stage" role="status">
           <span className="rs-head">{tr('mass selects remnant', '質量決定緻密天體')}</span>
           {[
@@ -525,19 +556,9 @@ function BodyEditor({ sim, force, role }) {
              onChange={(v) => setField('a', v)}
              scaleLabels={[tr('retro', '逆行'), tr('non-rot', '不轉'), tr('prograde', '順行')]} />
 
-      {!isCentral && (
-        <Param sym="B₂" name={tr('Magnetic field', '磁場')} val={accessors.B} unit="B₀"
-               min={0} max={1} step={0.01}
-               color="magenta" fmt={(v) => v.toFixed(2)}
-               onChange={(v) => setField('B', v)}
-               scaleLabels={[tr('off', '關'), tr('BZ jet', 'BZ 噴流'), tr('magnetar', '磁星')]} />
-      )}
-      {!isCentral && sim.disc2 && (
-        <button className={`disc-toggle ${sim.disc2.enabled ? 'on' : ''}`}
-          onClick={() => { sim.disc2.enabled = !sim.disc2.enabled; force(); }}>
-          {sim.disc2.enabled ? tr('COMPANION DISC · active', '伴星吸積盤 · 啟用') : tr('Spin up companion disc', '啟動伴星吸積盤')}
-        </button>
-      )}
+      {/* Magnetic field B and the accretion-disc toggle live in the §05 Disc & MHD
+          panel, which follows the active body — so the companion shares the same single
+          set of controls as the central body (no duplicate B / disc toggle here). */}
 
       <div className="stellar-sub">
         <div className="sub-head">
@@ -678,6 +699,15 @@ function LeftPanel({ sim, force }) {
   const ext = (aN * aN + qN * qN).toFixed(3);
   const collapseHint = !isBH && phys.wouldCollapse(p.M, p.Q, p.a, p.R_star);
 
+  // The §05 Disc & MHD panel follows the active body, so each body has exactly ONE disc
+  // toggle and ONE magnetic-field slider (central → sim.disc / params.B; companion →
+  // sim.disc2 / bin.B2). This keeps the central and companion controls identical and
+  // fully swappable rather than duplicated across panels.
+  const onComp = activeBody === 'companion';
+  const aDisc = (onComp ? sim.disc2 : sim.disc) || sim.disc;
+  const aB = onComp ? ((bin && bin.B2) || 0) : (p.B || 0);
+  const setAB = (v) => { if (onComp && bin) bin.B2 = v; else sim.params.B = v; force(); };
+
   const companionPlacing = sim.placement && sim.placement.item && sim.placement.item.isCompanion;
   const companionAiming  = sim.aiming && sim.aiming.kind === 'companion';
   const companionArmed   = companionPlacing || companionAiming;
@@ -736,7 +766,7 @@ function LeftPanel({ sim, force }) {
                 title={tr('Black-hole mass scale — click to cycle (stellar → intermediate → supermassive); rescales both bodies and the object library. Key: B',
                           '黑洞質量尺度 — 點擊循環（恆星級 → 中等 → 超大）；同時調整主天體/伴星與天體庫。按鍵：B')}>
                 <span className="g">◍</span>
-                <span className="l">{tr('SCALE', '尺度')}<br/>{tr(reg.label_en, reg.label_zh)}</span>
+                <span className="l">{tr(reg.label_en, reg.label_zh)}</span>
               </button>
             );
           })()}
@@ -901,43 +931,43 @@ function LeftPanel({ sim, force }) {
 
       <div className="section">
         <div className="section-head">
-          <h3>{tr('Disc & MHD', '吸積盤與 MHD')}</h3>
+          <h3>{onComp ? tr('Disc & MHD · companion', '吸積盤與 MHD · 伴星') : tr('Disc & MHD · central', '吸積盤與 MHD · 主天體')}</h3>
           <span className="idx">§05</span>
         </div>
-        <button className={`disc-toggle ${sim.disc.enabled ? 'on' : ''}`}
-          onClick={() => { sim.disc.enabled = !sim.disc.enabled; force(); }}>
+        <button className={`disc-toggle ${aDisc.enabled ? 'on' : ''}`}
+          onClick={() => { aDisc.enabled = !aDisc.enabled; force(); }}>
           <span className="dt-dot" />
-          {sim.disc.enabled ? tr('ACCRETION DISC · active', '吸積盤 · 啟用') : tr('Spin up accretion disc', '啟動吸積盤')}
+          {aDisc.enabled ? tr('ACCRETION DISC · active', '吸積盤 · 啟用') : tr('Spin up accretion disc', '啟動吸積盤')}
         </button>
-        <Param sym="B" name={tr('Magnetic field', '磁場')} val={p.B} unit="B₀" min={0} max={1} step={0.01}
-               color="magenta" fmt={(v) => v.toFixed(2)} onChange={(v) => { sim.params.B = v; force(); }}
+        <Param sym={onComp ? 'B₂' : 'B'} name={tr('Magnetic field', '磁場')} val={aB} unit="B₀" min={0} max={1} step={0.01}
+               color="magenta" fmt={(v) => v.toFixed(2)} onChange={setAB}
                scaleLabels={[tr("off", "關"), "0.5", tr("magnetar", "磁星")]} />
-        <Param sym="α" name={tr('Viscosity', '黏滯度')} val={sim.disc.alpha} unit="" min={0} max={0.5} step={0.01}
+        <Param sym="α" name={tr('Viscosity', '黏滯度')} val={aDisc.alpha} unit="" min={0} max={0.5} step={0.01}
                color="cyan" fmt={(v) => v.toFixed(2)}
-               onChange={(v) => { sim.disc.alpha = v; force(); }}
+               onChange={(v) => { aDisc.alpha = v; force(); }}
                scaleLabels={[tr("inviscid", "無黏滯"), "α=0.25", tr("thick", "厚盤")]} />
-        <Param sym="Ṅ" name={tr('Emission rate', '發射率')} val={sim.disc.emissionRate} unit="/M" min={0} max={20} step={0.5}
+        <Param sym="Ṅ" name={tr('Emission rate', '發射率')} val={aDisc.emissionRate} unit="/M" min={0} max={20} step={0.5}
                fmt={(v) => v.toFixed(1)}
-               onChange={(v) => { sim.disc.emissionRate = v; force(); }}
+               onChange={(v) => { aDisc.emissionRate = v; force(); }}
                scaleLabels={["—", "10/M", tr("dense", "密集")]} />
         <div className="derived" style={{marginTop: 12}}>
           <div className="cell">
             <span className="k">{tr('Ṁ accretion', 'Ṁ 吸積率')}</span>
-            <span className="v">{sim.disc.mDot.toFixed(2)}<small>/M</small></span>
+            <span className="v">{(aDisc.mDot || 0).toFixed(2)}<small>/M</small></span>
           </div>
           <div className="cell">
             <span className="k">{tr('N particles', 'N 粒子數')}</span>
-            <span className="v">{sim.disc.particles.length}<small>/{sim.disc.maxParticles}</small></span>
+            <span className="v">{aDisc.particles.length}<small>/{aDisc.maxParticles}</small></span>
           </div>
           <div className="cell">
             <span className="k">{tr('MRI active', 'MRI 啟用')}</span>
-            <span className="v" style={{color: (p.B > 0.05 && sim.disc.enabled) ? 'var(--cyan)' : 'var(--fg-3)'}}>
-              {(p.B > 0.05 && sim.disc.enabled) ? tr('✓ ON', '✓ 開') : '—'}
+            <span className="v" style={{color: (aB > 0.05 && aDisc.enabled) ? 'var(--cyan)' : 'var(--fg-3)'}}>
+              {(aB > 0.05 && aDisc.enabled) ? tr('✓ ON', '✓ 開') : '—'}
             </span>
           </div>
           <div className="cell">
             <span className="k">{tr('Σ swallowed', 'Σ 吞噬量')}</span>
-            <span className="v">{sim.disc.totalAccreted}</span>
+            <span className="v">{aDisc.totalAccreted}</span>
           </div>
         </div>
       </div>

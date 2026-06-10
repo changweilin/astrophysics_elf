@@ -893,11 +893,12 @@
       ctx.fillStyle = grd;
       ctx.beginPath(); ctx.arc(px, py, R, 0, Math.PI * 2); ctx.fill();
     };
-    if (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') {
+    const isCloud = (k) => k === 'galaxy' || k === 'cluster' || k === 'opencluster';
+    if (isCloud(sim.smbhStructure)) {
       const cx = binOn ? bin.x1 : 0, cy = binOn ? bin.y1 : 0;
       draw(sim.smbhStructure, sim._Rvis1, sim._cloudFrac1, cx, cy, sim.smbhStructure === 'galaxy');
     }
-    if (binOn && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster')) {
+    if (binOn && isCloud(bin.smbhStructure)) {
       draw(bin.smbhStructure, sim._Rvis2, sim._cloudFrac2, bin.x2, bin.y2, bin.smbhStructure === 'galaxy');
     }
   }

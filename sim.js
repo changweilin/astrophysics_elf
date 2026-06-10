@@ -262,11 +262,11 @@
     bin.trail2.length = 0;
     sim.transient = null;
     resetMassTransfer(bin);
-    // If this companion is a galaxy/cluster, (re)seed its star cloud around the freshly
-    // placed position — N2 stars, scaled by its mass. The structure may have been chosen
-    // BEFORE placement (when the binary wasn't enabled yet, so the earlier seed bailed),
-    // so seeding here guarantees the swarm appears wherever the companion lands.
-    if (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster') {
+    // If this companion is a galaxy/cluster/open cluster, (re)seed its star cloud around
+    // the freshly placed position — N2 stars, scaled by its mass. The structure may have
+    // been chosen BEFORE placement (when the binary wasn't enabled yet, so the earlier
+    // seed bailed), so seeding here guarantees the swarm appears wherever the companion lands.
+    if (isCloudStruct(bin.smbhStructure)) {
       seedStructureCloud(sim, bin.smbhStructure, 'companion');
       recordCloudCounts(sim);
       updateStructureMass(sim);   // populate Rvis/density/frac so the glow shows pre-step
@@ -425,8 +425,7 @@
     // not by point-mass GW radiation — so the GW reaction is skipped for them and
     // replaced by the Chandrasekhar drag block below. (At the stellar scale, where
     // smbhStructure is just 'smbh', dfMerger is false and GW behaves exactly as before.)
-    const isExtStruct = (s) => s === 'galaxy' || s === 'cluster';
-    const dfMerger = isExtStruct(sim.smbhStructure) || isExtStruct(bin.smbhStructure);
+    const dfMerger = isCloudStruct(sim.smbhStructure) || isCloudStruct(bin.smbhStructure);
 
     const mtActive = !!(bin.mt && bin.mt.active);
     if (!bin.classical && !mtActive && !dfMerger) {
@@ -463,7 +462,7 @@
       if (h2 && rNow < h2.R) rho += h2.M / sphere(h2.R);
       rho += 0.12 * Mt / sphere(Math.max(2, rNow));
       const Mdf = Math.max(M1, M2);                       // dominant perturber
-      const bothCluster = sim.smbhStructure === 'cluster' && bin.smbhStructure === 'cluster';
+      const bothCluster = isStarSwarm(sim.smbhStructure) && isStarSwarm(bin.smbhStructure);
       // Per-structure time boost, calibrated so the pair spirals through several
       // orbits (preserving the orbital angular momentum visually, like the stellar GW
       // inspiral) rather than plunging radially. Cluster pairs sink a touch faster.
@@ -1598,8 +1597,8 @@
     // (role null) belongs to neither and is left alone. This is the internal analogue of
     // the barycentric circularisation above: the pair AND every member star end on a
     // momentum/angular-momentum-conserving closed orbit.
-    const has1 = (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster');
-    const has2 = (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster');
+    const has1 = isCloudStruct(sim.smbhStructure);
+    const has2 = isCloudStruct(bin.smbhStructure);
     if (has2) {
       circularizeCloud(sim, 'companion', bin.x2, bin.y2, bin.vx2, bin.vy2, M2, sim._halo2,
                        Math.sign(bin.a2 || sim.params.a || 1) || 1);
@@ -1780,6 +1779,17 @@
     return setBHRegime(sim, next);
   }
 
+  // A structure key that is simulated as a live swarm of member stars (a particle
+  // cloud + binding halo): the supermassive galaxy / star cluster, and the
+  // intermediate-scale open cluster. Every cloud gate (seeding, membership, mass
+  // bookkeeping, render glow) keys off this so a new swarm type only has to be added
+  // here. 'smbh' (a bare hole) and the single-star stages are NOT clouds.
+  function isCloudStruct(key) {
+    return key === 'galaxy' || key === 'cluster' || key === 'opencluster';
+  }
+  // Gas-poor self-bound star swarms (cluster / open cluster) — no central SMBH, no gas.
+  function isStarSwarm(key) { return key === 'cluster' || key === 'opencluster'; }
+
   // ── Galactic-structure tracer clouds ──────────────────────
   // A galaxy or cluster is simulated as a swarm of TEST PARTICLES (stars + gas) in the
   // smooth field of its core + dark-matter halo (the collisionless / mean-field method;
@@ -1792,8 +1802,13 @@
   // PHYSICAL solar mass across the supermassive band (1e5..1e10 M⊙) so BOTH the central
   // (whose geometric M is frozen at 1) and the companion respond to their own mass
   // slider. Mapped log-linearly onto a perf-friendly particle band [18,120].
-  function structureN(massSun) {
-    const lm = Math.log10(Math.max(1, massSun || 1));     // ~5..10 over the supermassive range
+  function structureN(massSun, key) {
+    const lm = Math.log10(Math.max(1, massSun || 1));
+    // The intermediate-scale open cluster lives in the 1e2..1e5 M⊙ band (lm ~2..5): a
+    // few dozen member stars, fewer than a supermassive swarm but still rich enough to
+    // show stripping / succession. The galaxy / supermassive cluster use the 1e5..1e10
+    // band (lm ~5..10) mapped onto the perf-friendly [18,120] particle budget.
+    if (key === 'opencluster') return Math.max(12, Math.min(80, Math.round(12 + 19 * (lm - 2))));
     return Math.max(18, Math.min(120, Math.round(18 + 20.4 * (lm - 5))));
   }
 
@@ -1863,8 +1878,13 @@
   // it is compressed log-linearly into a gentle, bounded band [0.65, 1.8]. This is what
   // makes a structure's RADIUS visibly grow/shrink with its mass slider (the outer edge
   // moves; the inner edge stays put, outside the ISCO, for orbital stability).
-  function structureSizeMul(massSun) {
-    const lm = Math.log10(Math.max(1, massSun || 1));      // ~5..10 over the supermassive range
+  function structureSizeMul(massSun, key) {
+    const lm = Math.log10(Math.max(1, massSun || 1));
+    // The open cluster's mass–size relation is read over its own (intermediate) band,
+    // 1e2..1e5 M⊙ (lm ~2..5), compressed into a compact [0.5, 1.1] viewport range — an
+    // open cluster is physically smaller than a galaxy/globular swarm. The supermassive
+    // structures read the 1e5..1e10 band (lm ~5..10) into [0.65, 1.8].
+    if (key === 'opencluster') return Math.max(0.5, Math.min(1.1, 0.5 + (1.1 - 0.5) * (lm - 2) / 3));
     return Math.max(0.65, Math.min(1.8, 0.65 + (1.8 - 0.65) * (lm - 5) / 5));
   }
 
@@ -1873,19 +1893,21 @@
   // ISCO so the swarm orbits stably instead of promptly plunging into the core BH.
   function structureGeom(key, massSun = 4e6) {
     const isGalaxy = key === 'galaxy';
-    const mul = structureSizeMul(massSun);
-    const rIn = isGalaxy ? 7 : 5;
-    const rOut = Math.max(rIn + 4, (isGalaxy ? 34 : 22) * mul);
+    const isOpen = key === 'opencluster';
+    const mul = structureSizeMul(massSun, key);
+    const rIn = isGalaxy ? 7 : (isOpen ? 4 : 5);
+    const base = isGalaxy ? 34 : (isOpen ? 16 : 22);
+    const rOut = Math.max(rIn + 4, base * mul);
     return { rIn, rOut, gasFrac: isGalaxy ? 0.35 : 0 };
   }
 
   function seedStructureCloud(sim, key, role = 'central') {
     clearStructureCloud(sim, role);
-    if (key !== 'galaxy' && key !== 'cluster') return;
+    if (!isCloudStruct(key)) return;
     const host = resolveHost(sim, role);
     if (!host) return;
     const geom = structureGeom(key, host.massSun);
-    const N = structureN(host.massSun);
+    const N = structureN(host.massSun, key);
     const nGas = Math.round(N * geom.gasFrac);             // clusters are gas-poor
     // Binding halo (uniform-density sphere) = the structure's gravitating bound mass —
     // dark matter for a galaxy, the self-bound star+DM mass for a cluster. BOTH get one
@@ -1928,7 +1950,7 @@
     const key = struct.key;
     const geom = structureGeom(key, host.massSun);
     const halo = role === 'companion' ? sim._halo2 : sim._halo1;
-    const target = structureN(host.massSun);
+    const target = structureN(host.massSun, key);
     // New bound mass for the new slider mass, shared over the target population.
     const newHaloM = host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION));
     const mPer = target > 0 ? newHaloM / target : 0;
@@ -1968,10 +1990,10 @@
   // reload, which restores the structure choice + masses but not the swarm itself).
   function reseedStructureClouds(sim) {
     const bin = sim.binary;
-    if (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') {
+    if (isCloudStruct(sim.smbhStructure)) {
       seedStructureCloud(sim, sim.smbhStructure, 'central');
     }
-    if (bin && bin.enabled && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster')) {
+    if (bin && bin.enabled && isCloudStruct(bin.smbhStructure)) {
       seedStructureCloud(sim, bin.smbhStructure, 'companion');
     }
     recordCloudCounts(sim);
@@ -2012,8 +2034,8 @@
     const bin = sim.binary;
     const binOn = !!(bin && bin.enabled);
     const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
-    const has1 = (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster');
-    const has2 = binOn && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster');
+    const has1 = isCloudStruct(sim.smbhStructure);
+    const has2 = binOn && isCloudStruct(bin.smbhStructure);
     const reach1 = (sim._struct1 && sim._struct1.reach) || 75;
     const reach2 = (sim._struct2 && sim._struct2.reach) || 55;
     const M1core = sim.params.M, M2core = (bin && bin.M2) || 0.8;
@@ -2094,27 +2116,46 @@
 
   function updateStructureMass(sim) {
     const bin = sim.binary;
-    if ((sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') && sim._struct1 && sim._struct1.Nbase > 0) {
+    const binOn = !!(bin && bin.enabled);
+    const has1 = isCloudStruct(sim.smbhStructure) && sim._struct1 && sim._struct1.Nbase > 0;
+    const has2 = binOn && isCloudStruct(bin.smbhStructure) && sim._struct2 && sim._struct2.Nbase > 0;
+    if (has1) {
       const frac = Math.max(0, sim._cloudN1 / sim._struct1.Nbase);
       const sc = structureScale(sim._struct1, frac, sim._cloudN1, sim._cloudM1, sim._halo1);
       sim._cloudFrac1 = frac; sim._Rvis1 = sc.Rvis; sim._density1 = sc.density;
     } else { sim._cloudFrac1 = 0; sim._Rvis1 = 0; sim._density1 = 0; }
-    if (bin && bin.enabled && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster')
-        && sim._struct2 && sim._struct2.Nbase > 0) {
+    if (has2) {
       const frac = Math.max(0, sim._cloudN2 / sim._struct2.Nbase);
       // NOTE: the companion's gravitating member mass is carried ENTIRELY by its binding
       // halo (Σ member _m, conserved on transfer). The core point mass bin.M2 is the fixed
       // central SMBH and is deliberately NOT scaled by the member count here — doing both
       // would count the stellar mass twice (once in the point core the cloud feels via
-      // KNphysics.acceleration, once in the halo). The merge still triggers on N2 → 0.
+      // KNphysics.acceleration, once in the halo).
       const sc = structureScale(sim._struct2, frac, sim._cloudN2, sim._cloudM2, sim._halo2);
       sim._cloudFrac2 = frac; sim._Rvis2 = sc.Rvis; sim._density2 = sc.density;
-      if (sim._cloudN2 <= 0 && !bin.merged) structureMergeComplete(sim);
     } else { sim._cloudFrac2 = 0; sim._Rvis2 = 0; sim._density2 = 0; }
+
+    // ── Member-loss consequences (the user's N→0 rules) ──
+    // A structure that loses every member star is gone; its mass is conserved into
+    // whatever survives, and the surviving primary's mass LABEL (Msun) snaps back to the
+    // value it was built with (struct.massBase) instead of the inflated post-merge sum.
+    //   · companion emptied (N2→0): the central absorbs it (structureMergeComplete).
+    //   · primary emptied (N1→0)  : the companion SUCCEEDS as the new primary.
+    //   · lone primary emptied    : nothing succeeds it — just snap M back, once.
+    if (has2 && sim._cloudN2 <= 0 && !bin.merged) {
+      structureMergeComplete(sim);
+    } else if (has1 && sim._cloudN1 <= 0) {
+      if (has2 && sim._cloudN2 > 0 && !bin.merged) structurePrimaryLost(sim);
+      else if (!sim._struct1._emptied) {
+        sim._struct1._emptied = true;
+        if (sim._struct1.massBase) sim.params.Msun = sim._struct1.massBase;
+      }
+    }
   }
 
   // The companion structure has lost all its member stars to the central — the merger
-  // is complete. End the binary; its (already re-tagged) stars stay with the central.
+  // is complete. End the binary; its (already re-tagged) stars stay with the central, and
+  // the surviving central's mass label snaps back to the value it was built with.
   function structureMergeComplete(sim) {
     const bin = sim.binary;
     if (!bin) return;
@@ -2125,8 +2166,44 @@
     // sim._cloudM1 (and the central halo) — the remnant keeps the full combined bound
     // mass. Only the now-empty companion bookkeeping is cleared.
     sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
+    // Reset the central's displayed mass to its seed value (the user's "M reverts to the
+    // value originally set" rule). The geometric core (params.M = 1) is unchanged.
+    if (sim._struct1 && sim._struct1.massBase) sim.params.Msun = sim._struct1.massBase;
     logEv(sim, 'good', tr('structure merger complete — companion absorbed into the central',
                           '結構合併完成 — 伴星系/星團已併入主體'));
+  }
+
+  // The PRIMARY (central) structure has lost all its member stars to a more massive
+  // companion — the companion succeeds it as the new central body. Promote the companion's
+  // parameters into the central slot, re-home its surviving swarm + binding halo to the
+  // central role, and reset the new primary's mass label to the value it was built with.
+  function structurePrimaryLost(sim) {
+    const bin = sim.binary;
+    if (!bin) return;
+    const newKey = bin.smbhStructure;
+    const struct2 = sim._struct2, halo2 = sim._halo2;
+    const keepScale = sim.view.scale;             // keep the swarm framed across promotion
+    promoteCompanionToCentral(sim, bin);          // copy the companion's full param set up
+    sim.view.scale = keepScale;
+    sim.smbhStructure = newKey;
+    // Re-tag every one of the companion's surviving members to the central role/origin so
+    // they keep orbiting the (now promoted) primary and a later clear wipes them.
+    for (const b of sim.bodies) {
+      if (b._cloud && (b._cloudRole === 'companion' || b._cloudOrigin === 'companion')) {
+        b._cloudRole = 'central'; b._cloudOrigin = 'central';
+      }
+    }
+    sim._halo1 = halo2; sim._struct1 = struct2;
+    sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
+    // The promoted primary lights its accretion disc only if it is an active galaxy.
+    if (sim.disc) sim.disc.enabled = (newKey === 'galaxy');
+    if (sim.disc2) sim.disc2.enabled = false;
+    // Snap the new primary's mass label back to its seed value (the "M reverts" rule).
+    if (struct2 && struct2.massBase) sim.params.Msun = struct2.massBase;
+    bin.merged = true; bin.mergerFlash = 1.6; bin.enabled = false;
+    recordCloudCounts(sim);
+    logEv(sim, 'good', tr('primary depleted — companion succeeds as the new central',
+                          '主星耗盡 — 伴星接替成為新的主體'));
   }
 
   // Back-compat alias (older call sites). A nuclear star cluster is the cluster cloud.
@@ -2158,6 +2235,11 @@
         seedStructureCloud(sim, 'cluster', 'companion');
         logEv(sim, 'good', tr('Companion star cluster — self-bound star swarm (no central SMBH)',
                               '伴星團 — 自身束縛的恆星群(無中央黑洞)'));
+      } else if (key === 'opencluster') {
+        if (sim.disc2) sim.disc2.enabled = false;
+        seedStructureCloud(sim, 'opencluster', 'companion');
+        logEv(sim, 'good', tr('Companion open cluster — loose self-bound star swarm',
+                              '伴疏散星團 — 鬆散的自束縛恆星群'));
       } else {
         if (sim.disc2) sim.disc2.enabled = false;
         clearStructureCloud(sim, 'companion'); sim._halo2 = null;
@@ -2180,6 +2262,11 @@
       seedStructureCloud(sim, 'cluster', 'central');
       logEv(sim, 'good', tr('Star cluster — self-bound star swarm (no central SMBH)',
                             '星團 — 自身束縛的恆星群(無中央黑洞)'));
+    } else if (key === 'opencluster') {
+      if (sim.disc) sim.disc.enabled = false;
+      seedStructureCloud(sim, 'opencluster', 'central');
+      logEv(sim, 'good', tr('Open cluster — loose self-bound star swarm',
+                            '疏散星團 — 鬆散的自束縛恆星群'));
     } else {
       if (sim.disc) sim.disc.enabled = false;
       clearStructureCloud(sim, 'central'); sim._halo1 = null;
@@ -2188,6 +2275,25 @@
     recordCloudCounts(sim);
     updateStructureMass(sim);   // populate Rvis/density/frac so the glow shows pre-step
     return key;
+  }
+
+  // Tear down a role's structure swarm and return it to a plain (non-cloud) body. Used by
+  // the intermediate-scale UI when the user leaves the open-cluster tab for a stellar
+  // stage — the open cluster is a structure, not an evolutionary stage, so its swarm must
+  // be removed before the body becomes a single star/remnant. Silent (no event log).
+  function clearStructure(sim, role = 'central') {
+    clearStructureCloud(sim, role);
+    if (role === 'companion') {
+      if (sim.binary) sim.binary.smbhStructure = 'smbh';
+      if (sim.disc2) sim.disc2.enabled = false;
+      sim._cloudN2 = 0; sim._cloudM2 = 0;
+    } else {
+      sim.smbhStructure = 'smbh';
+      if (sim.disc) sim.disc.enabled = false;
+      sim._cloudN1 = 0; sim._cloudM1 = 0;
+    }
+    recordCloudCounts(sim);
+    updateStructureMass(sim);
   }
 
   // ── Swap central ⇄ companion ──────────────────────────────
@@ -2266,10 +2372,11 @@
     // companion keeps its disc/jet (sim.disc is the primary's, sim.disc2 the companion's).
     if (sim.disc && sim.disc2) { const d = sim.disc; sim.disc = sim.disc2; sim.disc2 = d; }
     // The new central's structure: an enabled disc means an active galactic nucleus;
-    // otherwise keep a non-AGN structure (cluster stays a cluster, else a bare hole).
+    // otherwise keep a non-AGN star swarm (cluster / open cluster stay themselves, else
+    // a bare hole).
     sim.smbhStructure = (sim.disc && sim.disc.enabled)
       ? 'galaxy'
-      : (sim.smbhStructure === 'cluster' ? 'cluster' : 'smbh');
+      : (isStarSwarm(sim.smbhStructure) ? sim.smbhStructure : 'smbh');
 
     // The donor/accretor indices are now inverted — re-evaluate transfer cleanly.
     resetMassTransfer(bin);
@@ -2338,7 +2445,7 @@
 
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
-                   setBHRegime, cycleBHRegime, applySMBHStructure, swapCentralCompanion,
+                   setBHRegime, cycleBHRegime, applySMBHStructure, clearStructure, swapCentralCompanion,
                    reseedStructureClouds, rescaleStructureCloud,
                    fitView, worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };

@@ -25,6 +25,9 @@
       cepheid: !!b.cepheid, cepheidAmp: b.cepheidAmp,
       _stellarTouched: !!b._stellarTouched,
       enabled: !!b.enabled,
+      // Companion dynamics knobs (the §01 Dynamics sliders/toggles) — persisted so an
+      // inspiral/mass-transfer setup is restored exactly on reload.
+      inspiralRate: b.inspiralRate, mtEnabled: !!b.mtEnabled, transferRate: b.transferRate,
       merged: !!b.merged, eMergerGW: b.eMergerGW || 0,
     } : null;
     // A placed companion also stores its live orbital state so it resumes mid-orbit.
@@ -148,6 +151,10 @@
       if (isNum(b.d)) { B.d = b.d; B.d0 = b.d; }
       B.age2 = isNum(b.age2) ? b.age2 : 0;
       B.Z2 = isNum(b.Z2) ? b.Z2 : 0.5;
+      // Companion dynamics knobs (default to the initBinary values when absent / legacy).
+      if (isNum(b.inspiralRate)) B.inspiralRate = b.inspiralRate;
+      if (typeof b.mtEnabled === 'boolean') B.mtEnabled = b.mtEnabled;
+      if (isNum(b.transferRate)) B.transferRate = b.transferRate;
       if (typeof b.smbhStructure === 'string') B.smbhStructure = b.smbhStructure;
       B.cepheid = !!b.cepheid;
       B.cepheidAmp = isNum(b.cepheidAmp) ? b.cepheidAmp : 0.07;

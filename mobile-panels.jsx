@@ -132,6 +132,11 @@ function MBodyEditor({ sim, force, role }) {
   const sr = phys.stageRegimeRange(category, regime);
   const mMin = sr ? sr.min : range.min;
   const mMax = sr ? sr.max : range.max;
+  // Intermediate scale swaps the Giant stage for an Open cluster structure (a live star
+  // swarm). Track whether this role is in that structure mode.
+  const structRole = isCentral ? 'central' : 'companion';
+  const activeStructKey = isCentral ? sim.smbhStructure : (bin && bin.smbhStructure);
+  const inOpenCluster = regime === 'intermediate' && activeStructKey === 'opencluster';
   const A = isCentral ? {
     type, category,
     Mgeo: sim.params.M,
@@ -254,7 +259,7 @@ function MBodyEditor({ sim, force, role }) {
     // radius + brightness) toward the new mass. See KNSim.rescaleStructureCloud.
     const role = isCentral ? 'central' : 'companion';
     const struct = isCentral ? sim.smbhStructure : (bin && bin.smbhStructure);
-    if ((struct === 'galaxy' || struct === 'cluster') && window.KNSim.rescaleStructureCloud) {
+    if ((struct === 'galaxy' || struct === 'cluster' || struct === 'opencluster') && window.KNSim.rescaleStructureCloud) {
       window.KNSim.rescaleStructureCloud(sim, role);
     }
     force();   // R★/T★ re-derived from the new mass by KNSim.syncStellar
@@ -263,7 +268,14 @@ function MBodyEditor({ sim, force, role }) {
   // Each stage remembers its own settings + camera zoom (sizes differ enormously);
   // leaving stashes, returning restores; an unvisited stage gets defaults + zoom.
   function switchCategory(cat) {
-    if (cat === A.category) return;
+    // Leaving the intermediate open-cluster structure for a stellar stage tears the swarm
+    // down first (a structure is not an evolutionary stage); fall through even if the
+    // chosen stage matches the current bh type.
+    if (inOpenCluster) {
+      window.KNSim.clearStructure(sim, structRole);
+    } else if (cat === A.category) {
+      return;
+    }
     if (phys.stageLockedAtRegime(cat, regime)) return;   // no such body at this scale
     const band = phys.stageRegimeRange(cat, regime) || phys.MASS_RANGES[cat];
     const clampMass = (m) => Math.min(band.max, Math.max(band.min, (m >= band.min && m <= band.max) ? m : band.def));
@@ -380,13 +392,26 @@ function MBodyEditor({ sim, force, role }) {
       <div className="type-pick">
         {[
           { k: 'star',    label: tr('MS', '主序'),    glyph: '✱' },
-          { k: 'giant',   label: tr('Giant', '巨星'), glyph: '✸' },
+          // Intermediate scale swaps the Giant stage for an Open cluster structure.
+          regime === 'intermediate'
+            ? { k: 'opencluster', label: tr('Open cl.', '疏散'), glyph: '✸', structure: true }
+            : { k: 'giant', label: tr('Giant', '巨星'), glyph: '✸' },
           { k: 'remnant', label: tr('Compact', '緻密'),  glyph: '●' },
         ].map((t) => {
+          if (t.structure) {
+            return (
+            <button key={t.k}
+              className={`type-tab ${inOpenCluster ? 'on' : ''}`}
+              onClick={() => { window.KNSim.applySMBHStructure(sim, 'opencluster', structRole); force(); }}>
+              <span className="g">{t.glyph}</span>
+              <span className="l">{t.label}</span>
+            </button>
+            );
+          }
           const locked = phys.stageLockedAtRegime(t.k, regime);
           return (
           <button key={t.k} disabled={locked}
-            className={`type-tab ${A.category === t.k ? 'on' : ''} ${locked ? 'locked' : ''}`}
+            className={`type-tab ${(!inOpenCluster && A.category === t.k) ? 'on' : ''} ${locked ? 'locked' : ''}`}
             onClick={() => switchCategory(t.k)}>
             <span className="g">{locked ? '⊘' : t.glyph}</span>
             <span className="l">{t.label}</span>
@@ -395,13 +420,13 @@ function MBodyEditor({ sim, force, role }) {
         })}
       </div>
       )}
-      {smbhStructures && (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') && (
+      {((smbhStructures && (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster')) || (isCentral && inOpenCluster)) && (
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN1 || 0}</span>
         </div>
       )}
-      {companionStructures && (companionStructure === 'galaxy' || companionStructure === 'cluster') && (
+      {((companionStructures && (companionStructure === 'galaxy' || companionStructure === 'cluster')) || (!isCentral && inOpenCluster)) && (
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN2 || 0}</span>
@@ -413,7 +438,7 @@ function MBodyEditor({ sim, force, role }) {
           ⇄ {tr('Swap central ⇄ companion', '主天體 ⇄ 伴星 互換')}
         </button>
       )}
-      {A.category === 'remnant' && !smbhStructures && !companionStructures && (
+      {A.category === 'remnant' && !smbhStructures && !companionStructures && !inOpenCluster && (
         <div className="remnant-stage" role="status">
           {[
             { k: 'wd', g: '◐', label: tr('WD', '白矮') },
@@ -440,19 +465,8 @@ function MBodyEditor({ sim, force, role }) {
               color="cyan" fmt={(v) => (v >= 0 ? '+' : '') + v.toFixed(2)}
               onChange={(v) => setField('a', v)}
               scaleLabels={[tr('retro', '逆行'), tr('non-rot', '不轉'), tr('prograde', '順行')]} />
-      {!isCentral && (
-        <MParam sym="B₂" name={tr('Magnetic field', '磁場')} val={A.B} unit="B₀"
-                min={0} max={1} step={0.01}
-                color="magenta" fmt={(v) => v.toFixed(2)}
-                onChange={(v) => setField('B', v)}
-                scaleLabels={[tr('off', '關'), tr('BZ jet', 'BZ 噴流'), tr('magnetar', '磁星')]} />
-      )}
-      {!isCentral && sim.disc2 && (
-        <button className={`disc-toggle ${sim.disc2.enabled ? 'on' : ''}`}
-          onClick={() => { sim.disc2.enabled = !sim.disc2.enabled; force(); }}>
-          {sim.disc2.enabled ? tr('COMPANION DISC · active', '伴星吸積盤 · 啟用') : tr('Spin up companion disc', '啟動伴星吸積盤')}
-        </button>
-      )}
+      {/* B and the disc toggle live in the active-body Disc & MHD panel below, shared
+          identically by the central and companion (no duplicate controls here). */}
       <div className="stellar-sub">
         <div className="sub-head">
           <span>{tr('Surface state', '表面狀態')}</span>
@@ -638,7 +652,7 @@ function TabBlackHole({ sim, force }) {
                 title={tr('Mass scale — tap to cycle (stellar → intermediate → supermassive); rescales both bodies and the object library.',
                           '質量尺度 — 點擊循環（恆星級 → 中等 → 超大）；同時調整主天體/伴星與天體庫。')}>
                 <span className="g">◍</span>
-                <span className="l">{tr('SCALE', '尺度')}<br/>{tr(reg.label_en, reg.label_zh)}</span>
+                <span className="l">{tr(reg.label_en, reg.label_zh)}</span>
               </button>
             );
           })()}
@@ -1540,6 +1554,16 @@ function MAboutMe() {
 // ─── DISC tab ──────────────────────────────────────────────
 function TabDisc({ sim, force }) {
   const p = sim.params;
+  const bin = sim.binary;
+  const hasComp = !!(bin && bin.enabled);
+  // This tab carries BOTH bodies' disc + magnetic field, picked by the selector — so the
+  // central and companion share one identical, swappable set of controls (no duplicate
+  // disc toggle / B slider lives in the body editor).
+  const [which, setWhich] = useStateM('central');
+  const onComp = which === 'companion' && hasComp;
+  const aDisc = (onComp ? sim.disc2 : sim.disc) || sim.disc;
+  const aB = onComp ? ((bin && bin.B2) || 0) : (p.B || 0);
+  const setAB = (v) => { if (onComp && bin) bin.B2 = v; else sim.params.B = v; force(); };
   return (
     <>
       <div className="m-sec">
@@ -1547,48 +1571,58 @@ function TabDisc({ sim, force }) {
           <h3>{tr('Accretion Disc & MHD', '吸積盤與 MHD')}</h3>
           <span className="idx">§10</span>
         </div>
-        <button className={`m-disc-toggle ${sim.disc.enabled ? 'on' : ''}`}
-          onClick={() => { sim.disc.enabled = !sim.disc.enabled; force(); }}>
+        {hasComp && (
+          <div className="body-tabs" role="tablist" style={{marginBottom: 8}}>
+            <button className={`body-tab ${!onComp ? 'on' : ''}`} onClick={() => { setWhich('central'); force(); }}>
+              <span className="l">{tr('Central', '主天體')}</span>
+            </button>
+            <button className={`body-tab companion ${onComp ? 'on' : ''}`} onClick={() => { setWhich('companion'); force(); }}>
+              <span className="l">{tr('Companion', '伴星')}</span>
+            </button>
+          </div>
+        )}
+        <button className={`m-disc-toggle ${aDisc.enabled ? 'on' : ''}`}
+          onClick={() => { aDisc.enabled = !aDisc.enabled; force(); }}>
           <span className="dt-dot" />
-          {sim.disc.enabled ? tr('Disc · active', '吸積盤 · 啟用') : tr('Spin up accretion disc', '啟動吸積盤')}
+          {aDisc.enabled ? tr('Disc · active', '吸積盤 · 啟用') : tr('Spin up accretion disc', '啟動吸積盤')}
         </button>
-        <MParam sym="B" name={tr('Magnetic field', '磁場')} val={p.B} unit="B₀" min={0} max={1} step={0.01}
+        <MParam sym={onComp ? 'B₂' : 'B'} name={tr('Magnetic field', '磁場')} val={aB} unit="B₀" min={0} max={1} step={0.01}
                color="magenta" fmt={(v) => v.toFixed(2)}
-               onChange={(v) => { sim.params.B = v; force(); }}
+               onChange={setAB}
                scaleLabels={[tr("off", "關"), "0.5", tr("magnetar", "磁星")]} />
-        <MParam sym="α" name={tr('Viscosity', '黏滯度')} val={sim.disc.alpha} unit="" min={0} max={0.5} step={0.01}
+        <MParam sym="α" name={tr('Viscosity', '黏滯度')} val={aDisc.alpha} unit="" min={0} max={0.5} step={0.01}
                color="cyan" fmt={(v) => v.toFixed(2)}
-               onChange={(v) => { sim.disc.alpha = v; force(); }}
+               onChange={(v) => { aDisc.alpha = v; force(); }}
                scaleLabels={[tr("inviscid", "無黏滯"), "α=0.25", tr("thick", "厚盤")]} />
-        <MParam sym="Ṅ" name={tr('Emission rate', '發射率')} val={sim.disc.emissionRate} unit="/M" min={0} max={20} step={0.5}
+        <MParam sym="Ṅ" name={tr('Emission rate', '發射率')} val={aDisc.emissionRate} unit="/M" min={0} max={20} step={0.5}
                fmt={(v) => v.toFixed(1)}
-               onChange={(v) => { sim.disc.emissionRate = v; force(); }}
+               onChange={(v) => { aDisc.emissionRate = v; force(); }}
                scaleLabels={["—", "10/M", tr("dense", "密集")]} />
       </div>
 
       <div className="m-sec">
         <div className="m-sec-head">
-          <h3>{tr('Disc State', '吸積盤狀態')}</h3>
+          <h3>{onComp ? tr('Disc State · companion', '吸積盤狀態 · 伴星') : tr('Disc State · central', '吸積盤狀態 · 主天體')}</h3>
           <span className="idx">§11</span>
         </div>
         <div className="m-derived">
           <div className="cell">
             <span className="k">{tr('Ṁ accretion', 'Ṁ 吸積率')}</span>
-            <span className="v">{sim.disc.mDot.toFixed(2)}<small>/M</small></span>
+            <span className="v">{(aDisc.mDot || 0).toFixed(2)}<small>/M</small></span>
           </div>
           <div className="cell">
             <span className="k">{tr('N particles', 'N 粒子數')}</span>
-            <span className="v">{sim.disc.particles.length}<small>/{sim.disc.maxParticles}</small></span>
+            <span className="v">{aDisc.particles.length}<small>/{aDisc.maxParticles}</small></span>
           </div>
           <div className="cell">
             <span className="k">MRI</span>
-            <span className="v" style={{color: (p.B > 0.05 && sim.disc.enabled) ? 'var(--cyan)' : 'var(--fg-3)'}}>
-              {(p.B > 0.05 && sim.disc.enabled) ? tr('✓ ON', '✓ 開') : '—'}
+            <span className="v" style={{color: (aB > 0.05 && aDisc.enabled) ? 'var(--cyan)' : 'var(--fg-3)'}}>
+              {(aB > 0.05 && aDisc.enabled) ? tr('✓ ON', '✓ 開') : '—'}
             </span>
           </div>
           <div className="cell">
             <span className="k">{tr('Σ swallowed', 'Σ 吞噬量')}</span>
-            <span className="v">{sim.disc.totalAccreted}</span>
+            <span className="v">{aDisc.totalAccreted}</span>
           </div>
         </div>
       </div>
