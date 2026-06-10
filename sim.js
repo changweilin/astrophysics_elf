@@ -1266,6 +1266,23 @@
   // field stays C¹ through the merger instead of reconfiguring in one frame.
   const CORE_MORPH_T = 2.0;
 
+  // ── Starburst (perturbation-triggered star formation) ──
+  // A galaxy's gas members ARE its molecular clouds. When the companion's tidal
+  // field at a cloud rivals its host's hold — q = (M_opp/d_opp³)/(M_own/d_own³),
+  // the dimensionless perturbation ratio — clouds collide and compress, and a
+  // cloud collapses into SB_SPLIT newborn stars. The collapse conserves the
+  // books EXACTLY: the cloud's mass quantum is split evenly over its stars, the
+  // newborns' positions/velocity kicks are symmetric (zero net displacement and
+  // momentum), so ΣM and Σp are unchanged star-for-star. The birth RATE per
+  // cloud scales with the perturbation (·q), so the population-wide formation
+  // rate and the total stars formed both scale with the available molecular-
+  // cloud mass — richer gas reservoirs burst harder, as the user model demands.
+  const SB_SPLIT  = 3;      // stars born per collapsing cloud (even mass split)
+  const SB_RATE   = 0.06;   // collapse probability /cloud /sim-time at q = 1
+  const SB_QMIN   = 0.05;   // perturbation floor — quiescent discs do not burst
+  const SB_KICK   = 0.02;   // newborn velocity dispersion (symmetric, Σ = 0)
+  const SB_GLOW_T = 4;      // render-side newborn glow fade (sim-time units)
+
   // Member-star swallows are rare loss-cone events; log them (rate-limited to one
   // line per sim-second) so a star leaving the population is visible evidence in
   // the event feed, never a silent disappearance.
@@ -1283,6 +1300,66 @@
     if (struct) {
       struct.accreted = (struct.accreted || 0) + (b._m || 0);
       struct.accretedN = (struct.accretedN || 0) + 1;   // swallow census (panel readout)
+    }
+  }
+
+  // ── Starburst: collapse perturbed molecular clouds into newborn stars ──
+  // Runs once per frame (dt = sim-time advanced). Perturbation-driven only: it
+  // needs an active binary (the companion's tidal field is what compresses the
+  // clouds), and only 'gas' members — a galaxy's molecular clouds — collapse.
+  // See the SB_* constants for the conservation contract.
+  function stepStarburst(sim, dt) {
+    if (dt <= 0) return;
+    const bin = sim.binary;
+    if (!bin || !bin.enabled) return;
+    const Mc1 = sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
+    const M2 = bin.M2 || 0;
+    const spawns = [];
+    for (const b of sim.bodies) {
+      if (!b._cloud || b.state !== 'orbit' || b.kind !== 'gas') continue;
+      const role = b._cloudRole;
+      if (role !== 'central' && role !== 'companion') continue;  // stripped gas is too diffuse
+      const d1 = Math.max(1, Math.hypot(b.x - bin.x1, b.y - bin.y1));
+      const d2 = Math.max(1, Math.hypot(b.x - bin.x2, b.y - bin.y2));
+      const own = role === 'central' ? Mc1 / (d1 * d1 * d1) : M2 / (d2 * d2 * d2);
+      const opp = role === 'central' ? M2 / (d2 * d2 * d2) : Mc1 / (d1 * d1 * d1);
+      const q = opp / Math.max(1e-9, own);
+      if (q < SB_QMIN) continue;
+      if (Math.random() >= SB_RATE * Math.min(1.5, q) * dt) continue;
+      // Collapse: the cloud becomes SB_SPLIT stars. Mutate the cloud body into the
+      // first newborn (keeps array churn low) and queue the siblings. Offsets and
+      // velocity kicks point along SB_SPLIT evenly spaced directions, so they sum
+      // to zero EXACTLY — the cloud's centre of mass and momentum are untouched.
+      const ms = (b._m || 0) / SB_SPLIT;
+      const phi = Math.random() * Math.PI * 2;
+      const ox = b.x, oy = b.y, ovx = b.vx, ovy = b.vy;
+      for (let k = 0; k < SB_SPLIT; k++) {
+        const th = phi + (k * 2 * Math.PI) / SB_SPLIT;
+        const cx = Math.cos(th), cy = Math.sin(th);
+        if (k === 0) {
+          b.kind = 'star'; b.radius = 0.42; b._m = ms; b._bornAt = sim.t;
+          b.x = ox + 0.45 * cx; b.y = oy + 0.45 * cy;
+          b.vx = ovx + SB_KICK * cx; b.vy = ovy + SB_KICK * cy;
+        } else {
+          spawns.push({
+            name: '', kind: 'star', radius: 0.42, binding: 6, charge: 0,
+            x: ox + 0.45 * cx, y: oy + 0.45 * cy,
+            vx: ovx + SB_KICK * cx, vy: ovy + SB_KICK * cy,
+            _cloud: b._cloud, _cloudOrigin: b._cloudOrigin, _cloudRole: role,
+            _m: ms, _bornAt: sim.t,
+          });
+        }
+      }
+      const struct = role === 'companion' ? sim._struct2 : sim._struct1;
+      if (struct) struct.newborn = (struct.newborn || 0) + SB_SPLIT;
+      sim._sbPend = (sim._sbPend || 0) + SB_SPLIT;
+    }
+    for (const s of spawns) addBody(sim, s);
+    // Rate-limited starburst log: batch the births since the last line (≥1 sim-s)
+    // so a vigorous burst reads as a stream of counts, not hundreds of lines.
+    if ((sim._sbPend || 0) > 0 && sim.t - (sim._sbLogT != null ? sim._sbLogT : -9) >= 1) {
+      logEv(sim, 'good', trp('starburst · molecular clouds collapse → {n} new stars', { n: sim._sbPend }));
+      sim._sbLogT = sim.t; sim._sbPend = 0;
     }
   }
 
@@ -1765,6 +1842,7 @@
       advanced += dt;
       guard++;
     }
+    stepStarburst(sim, advanced);     // perturbed molecular clouds collapse into new stars
     updateMembership(sim, advanced);  // re-tag stars to whichever structure now owns them
     recordCloudCounts(sim);    // N1 / N2 from the fresh membership
     updateStructureMass(sim);  // mass tracks N; companion N->0 triggers the merge
@@ -1788,9 +1866,14 @@
     // resolve them as separate attractors — and is what arms the progressive core
     // coalescence in stepBinary.
     let nAligned = 0, nAlignTot = 0;
+    let gm1 = 0, gm2 = 0;   // molecular-cloud (gas member) mass per structure
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
       const m = b._m || 0;
+      if (b.kind === 'gas') {
+        if (b._cloudRole === 'companion') gm2 += m;
+        else if (b._cloudRole === 'central') gm1 += m;
+      }
       // Only BOUND members supply a structure's binding mass. An untagged (role null,
       // tidally stripped) star is counted as stream mass instead: it stops deepening
       // either halo — the potential well shallows as stars are stripped — but keeps
@@ -1812,6 +1895,7 @@
       cAbs += m * Math.hypot(b.vx, b.vy);
     }
     sim._coreAlign = binOn && nAlignTot > 0 ? nAligned / nAlignTot : 0;
+    sim._gasM1 = gm1; sim._gasM2 = gm2;
     sim._cloudN1 = n1; sim._cloudN2 = n2;
     sim._cloudM1 = m1; sim._cloudM2 = m2;
     sim._streamN = nS; sim._streamM = mS;
@@ -2309,6 +2393,44 @@
     return { rIn, rOut, gasFrac: isGalaxy ? 0.35 : 0 };
   }
 
+  // Effective molecular-cloud mass fraction for a structure: the user-set slider
+  // value (sim.params.gasFrac central / bin.gasFrac2 companion, set by
+  // setGasFraction) overrides the seed default from structureGeom. Only galaxies
+  // carry molecular clouds; star swarms stay gas-poor regardless of the slider.
+  function gasFracFor(sim, key, role, geom) {
+    if (key !== 'galaxy') return geom.gasFrac;
+    const v = role === 'companion' ? (sim.binary ? sim.binary.gasFrac2 : null) : sim.params.gasFrac;
+    return v != null ? Math.max(0, Math.min(0.8, v)) : geom.gasFrac;
+  }
+
+  // ── User slider: a galaxy's BH ↔ molecular-cloud make-up ──
+  // Sets what fraction of the structure's bound member mass rides in molecular
+  // clouds (gas members) vs stars, and re-balances the LIVE swarm in place by
+  // flipping member kinds (star ↔ gas). Mass quanta are untouched, so the
+  // conservation ledger is unaffected — composition changes, mass does not.
+  // The BH : cloud mass ratio readout follows from the live sums (sim._gasM*).
+  function setGasFraction(sim, role, frac) {
+    const f = Math.max(0, Math.min(0.8, frac || 0));
+    if (role === 'companion') { if (sim.binary) sim.binary.gasFrac2 = f; }
+    else sim.params.gasFrac = f;
+    const mine = sim.bodies.filter((b) => b._cloud && b.state === 'orbit' && b._cloudRole === role);
+    if (!mine.length) return;
+    const target = Math.round(f * mine.length);
+    const gas = mine.filter((b) => b.kind === 'gas');
+    const delta = target - gas.length;
+    if (delta > 0) {
+      const stars = mine.filter((b) => b.kind !== 'gas');
+      for (let i = 0; i < delta && i < stars.length; i++) {
+        stars[i].kind = 'gas'; stars[i].radius = 0.32; stars[i]._bornAt = null;
+      }
+    } else if (delta < 0) {
+      for (let i = 0; i < -delta && i < gas.length; i++) {
+        gas[i].kind = 'star'; gas[i].radius = 0.42;
+      }
+    }
+    recordCloudCounts(sim);   // refresh the gas-mass sums for the ratio readout
+  }
+
   function seedStructureCloud(sim, key, role = 'central') {
     clearStructureCloud(sim, role);
     resetConservationBaseline(sim);   // new swarm = new initial condition for the ledger
@@ -2318,7 +2440,7 @@
     if (!host) return;
     const geom = structureGeom(key, host.massSun);
     const N = structureN(host.massSun, key);
-    const nGas = Math.round(N * geom.gasFrac);             // clusters are gas-poor
+    const nGas = Math.round(N * gasFracFor(sim, key, role, geom));   // clusters are gas-poor
     // Binding halo (uniform-density sphere) = the structure's gravitating bound mass —
     // dark matter for a galaxy, the self-bound star+DM mass for a cluster. BOTH get one
     // now: a cluster with no binding field is held only by the bare core point mass, so
@@ -2368,7 +2490,7 @@
     const mine = sim.bodies.filter((b) => b._cloud && b._cloudOrigin === role && b.state === 'orbit');
     let delta = target - mine.length;
     if (delta > 0) {
-      const nGas = Math.round(delta * geom.gasFrac);
+      const nGas = Math.round(delta * gasFracFor(sim, key, role, geom));
       for (let i = 0; i < delta; i++) spawnCloudParticle(sim, key, role, host, geom, halo, i < nGas, mPer);
     } else if (delta < 0) {
       // Strip the outermost stars first.
@@ -2966,7 +3088,7 @@
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
                    setBHRegime, cycleBHRegime, applySMBHStructure, clearStructure, swapCentralCompanion,
-                   reseedStructureClouds, rescaleStructureCloud,
+                   reseedStructureClouds, rescaleStructureCloud, setGasFraction,
                    fitView, worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

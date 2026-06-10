@@ -446,6 +446,26 @@ function MBodyEditor({ sim, force, role }) {
             <span className="sn-l">{tr('stars swallowed', '吞噬恆星數')}</span>
             <span className="sn-v">N = {(sim._struct1 && sim._struct1.accretedN) || 0}</span>
           </div>
+          {/* BH : cloud mass ratio + starburst census + composition slider
+              (mirrors panel-left; setGasFraction flips kinds, mass conserved). */}
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('BH : molecular clouds', '黑洞 : 分子雲質量')}</span>
+            <span className="sn-v">
+              1 : {((sim._gasM1 || 0) / Math.max(1e-9, 1 + ((sim._struct1 && sim._struct1.accreted) || 0))).toFixed(2)}
+            </span>
+          </div>
+          {((sim._struct1 && sim._struct1.newborn) || 0) > 0 && (
+            <div className="struct-n" role="status">
+              <span className="sn-l">{tr('newborn stars (starburst)', '新生恆星（星暴）')}</span>
+              <span className="sn-v">N = {sim._struct1.newborn}</span>
+            </div>
+          )}
+          <MParam sym="f" name={tr('Molecular cloud fraction', '分子雲質量比例')} unit=""
+                  val={sim.params.gasFrac != null ? sim.params.gasFrac : 0.35}
+                  min={0} max={0.8} step={0.01}
+                  fmt={(v) => (v * 100).toFixed(0) + '%'}
+                  onChange={(v) => { window.KNSim.setGasFraction(sim, 'central', v); force(); }}
+                  scaleLabels={['0%', tr('of bound mass', '占束縛質量'), '80%']} />
           </React.Fragment>
         )}
         </React.Fragment>
@@ -474,6 +494,24 @@ function MBodyEditor({ sim, force, role }) {
             <span className="sn-l">{tr('stars swallowed', '吞噬恆星數')}</span>
             <span className="sn-v">N = {(sim._struct2 && sim._struct2.accretedN) || 0}</span>
           </div>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('BH : molecular clouds', '黑洞 : 分子雲質量')}</span>
+            <span className="sn-v">
+              1 : {((sim._gasM2 || 0) / Math.max(1e-9, ((sim.binary && sim.binary.M2) || 1) + ((sim._struct2 && sim._struct2.accreted) || 0))).toFixed(2)}
+            </span>
+          </div>
+          {((sim._struct2 && sim._struct2.newborn) || 0) > 0 && (
+            <div className="struct-n" role="status">
+              <span className="sn-l">{tr('newborn stars (starburst)', '新生恆星（星暴）')}</span>
+              <span className="sn-v">N = {sim._struct2.newborn}</span>
+            </div>
+          )}
+          <MParam sym="f" name={tr('Molecular cloud fraction', '分子雲質量比例')} unit=""
+                  val={sim.binary && sim.binary.gasFrac2 != null ? sim.binary.gasFrac2 : 0.35}
+                  min={0} max={0.8} step={0.01}
+                  fmt={(v) => (v * 100).toFixed(0) + '%'}
+                  onChange={(v) => { window.KNSim.setGasFraction(sim, 'companion', v); force(); }}
+                  scaleLabels={['0%', tr('of bound mass', '占束縛質量'), '80%']} />
           </React.Fragment>
         )}
         </React.Fragment>

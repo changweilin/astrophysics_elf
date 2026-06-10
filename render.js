@@ -815,11 +815,16 @@
         const bf = b._cloudRole === 'companion' ? briCompanion
                  : b._cloudRole === 'central'   ? briCentral : 0.85;
         const a = Math.min(1, (b.kind === 'gas' ? 0.55 : 0.85) * bf);
+        // Starburst newborns (b._bornAt, sim.js stepStarburst) read as young blue
+        // stars for a few time units — slightly larger, cool-tinted, fading gently
+        // back into the population (muted per the visual rule, never a flare).
+        const young = b._bornAt != null ? Math.max(0, 1 - (sim.t - b._bornAt) / 4) : 0;
         // A stream star reads slightly warmer than the bound members so the tails /
         // streams separate visually from the structures shedding them.
-        ctx.fillStyle = b._stream ? `oklch(0.84 0.07 70 / ${a})` : colorOf(b, a);
+        ctx.fillStyle = young > 0 ? `oklch(${0.84 + 0.06 * young} ${0.06 + 0.05 * young} 235 / ${Math.min(1, a + 0.12 * young)})`
+                      : b._stream ? `oklch(0.84 0.07 70 / ${a})` : colorOf(b, a);
         ctx.beginPath();
-        ctx.arc(px, py, b.kind === 'gas' ? 1.1 : 1.5, 0, Math.PI * 2);
+        ctx.arc(px, py, (b.kind === 'gas' ? 1.1 : 1.5) + 0.7 * young, 0, Math.PI * 2);
         ctx.fill();
         continue;
       }
