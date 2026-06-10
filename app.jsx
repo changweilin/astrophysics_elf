@@ -351,9 +351,11 @@ function App() {
     function onClick(e) {
       if (suppressClick || SIM.placement || SIM.aiming) return;
       const { sx, sy, w, h } = clientToCanvas(e);
+      // Skip cloud members: they are tracers of a structure, not individually selectable
+      // (operating the swarm is done by grabbing/double-clicking it as a whole).
       let best = null, bestD = 22;
       for (const b of SIM.bodies) {
-        if (b.state !== 'orbit') continue;
+        if (b.state !== 'orbit' || b._cloud) continue;
         const [bx, by] = window.KNSim.worldToScreen(SIM, w, h, b.x, b.y);
         const d = Math.hypot(bx - sx, by - sy);
         if (d < bestD) { bestD = d; best = b; }

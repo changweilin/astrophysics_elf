@@ -1112,6 +1112,35 @@
     logEv(sim, 'amber', tr('white dwarf disrupted · donor unbound', '白矮星瓦解 · 伴星脫離束縛'));
   }
 
+  // ── Member-star capture: only a real (and tiny) central BH swallows ──
+  // Galaxies and clusters are COLLISIONLESS: their stars are so sparsely spaced that in a
+  // merger the overwhelming majority simply graze straight through the cores on their
+  // gravitational trajectories. Crucially, the demo's "core" is a binding point mass, NOT
+  // necessarily a black hole:
+  //   · cluster / open cluster — the core is purely a simulated binding mass. There is no
+  //     central black hole, so it NEVER swallows or tidally shreds a member. Stars pass
+  //     clean through (they are merely deflected by its gravity).
+  //   · galaxy — has a real central SMBH, but in nature it is minuscule next to the galaxy
+  //     (horizon ~ AU vs a stellar swarm ~ kpc). So only a galaxy swallows, and only the
+  //     vanishingly few stars whose orbit threads the tiny loss cone of the true horizon.
+  // The old code spaghettified EVERY member that crossed the ~2.6 M single-star tidal radius,
+  // so a cluster sinking toward a hole was shredded almost whole — physically wrong on both
+  // counts. We now drop the tidal channel for members entirely and capture only at a real
+  // BH core, at its true (tiny) horizon, gated by the loss cone. Non-cloud (user-placed)
+  // bodies are exempt: their tidal/capture fate stays deterministic (the single-body demo).
+  function coreCanSwallow(key) { return !isStarSwarm(key); }   // a star swarm has no BH
+
+  // Loss cone of a real horizon at rDest: Lcrit = sqrt(2 G Mc rDest) is the angular momentum
+  // of a parabolic orbit grazing rDest (G = 1). |Δr × Δv| ≤ Lcrit ⇒ pericentre inside the
+  // horizon ⇒ genuinely plunging ⇒ captured; otherwise it grazes past and survives.
+  function cloudInLossCone(b, cx, cy, cvx, cvy, Mc, rDest) {
+    const dx = b.x - cx, dy = b.y - cy;
+    const dvx = b.vx - cvx, dvy = b.vy - cvy;
+    const L = Math.abs(dx * dvy - dy * dvx);          // specific angular momentum
+    const Lcrit = Math.sqrt(2 * Mc * Math.max(1e-3, rDest));
+    return L <= Lcrit;
+  }
+
   // RK2 midpoint step
   function integrate(sim, dt) {
     const { M, Q, a } = sim.params;
@@ -1178,13 +1207,20 @@
         b.stress = Math.max(t1, t2);
         if (b.stress > b.stressPeak) b.stressPeak = b.stress;
         if (b.kind !== 'probe' && b.kind !== 'ship' && b.stress > 1.15) {
+          // Members are collisionless: no tidal-shredding channel — they graze straight
+          // through (only a real horizon below can take them). User bodies still spaghettify.
+          if (b._cloud) continue;
           b.state = 'spaghettified'; b.consumedAt = sim.t;
-          if (!b._cloud) logEv(sim, 'warn', trp('{name} — spaghettified between binary pair', { name: b.name }));
+          logEv(sim, 'warn', trp('{name} — spaghettified between binary pair', { name: b.name }));
           continue;
         }
         // Primary capture / surface impact
         if (cType === 'bh') {
           if (!naked && r1 < (isFinite(rplus) ? rplus : M)) {
+            // A member is swallowed only by a REAL BH core (a galaxy/hole, not a star-swarm
+            // binding mass) and only if it threads the horizon's tiny loss cone.
+            if (b._cloud && (!coreCanSwallow(sim.smbhStructure)
+                || !cloudInLossCone(b, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0, M, rplus))) continue;
             b.state = 'captured'; b.consumedAt = sim.t;
             if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by primary BH', { name: b.name }));
             continue;
@@ -1192,15 +1228,18 @@
         } else {
           const Rs1 = sim.params.R_star || 3;
           if (r1 < Rs1) {
+            if (b._cloud) continue;   // members pass through a non-BH central, never impact
             b.state = 'captured'; b.consumedAt = sim.t;
             const label = surfaceLabel(cType);
-            if (!b._cloud) logEv(sim, 'warn', trp('{name} — impacted primary {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
+            logEv(sim, 'warn', trp('{name} — impacted primary {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
             continue;
           }
         }
         // Companion capture / surface impact
         if (sType === 'bh') {
           if (!compH.naked && r2 < (isFinite(compH.rplus) ? compH.rplus : bin.M2)) {
+            if (b._cloud && (!coreCanSwallow(bin.smbhStructure)
+                || !cloudInLossCone(b, bin.x2, bin.y2, bin.vx2 || 0, bin.vy2 || 0, bin.M2, compH.rplus))) continue;
             b.state = 'captured'; b.consumedAt = sim.t;
             if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by companion BH', { name: b.name }));
             continue;
@@ -1208,9 +1247,10 @@
         } else {
           const Rs2 = bin.R_star2 || 3;
           if (r2 < Rs2) {
+            if (b._cloud) continue;
             b.state = 'captured'; b.consumedAt = sim.t;
             const label = surfaceLabel(sType);
-            if (!b._cloud) logEv(sim, 'warn', trp('{name} — impacted companion {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
+            logEv(sim, 'warn', trp('{name} — impacted companion {surface}', { name: b.name, surface: tr(label.en, label.zh) }));
             continue;
           }
         }
@@ -1226,26 +1266,33 @@
       b.stress = tidal;
       if (tidal > b.stressPeak) b.stressPeak = tidal;
       if (b.kind !== 'probe' && b.kind !== 'ship' && tidal > 1.15) {
+        // Members are collisionless: no tidal-shredding channel — they graze straight through.
+        if (b._cloud) continue;
         b.state = 'spaghettified'; b.consumedAt = sim.t;
-        if (!b._cloud) logEv(sim, 'warn', trp('{name} — spaghettified at r = {r} M', { name: b.name, r: r.toFixed(2) }));
+        logEv(sim, 'warn', trp('{name} — spaghettified at r = {r} M', { name: b.name, r: r.toFixed(2) }));
         continue;
       }
       // Surface impact for stellar centrals
       if (cType !== 'bh') {
         const Rs = sim.params.R_star || 3;
         if (r < Rs) {
+          if (b._cloud) continue;   // members pass through a non-BH central
           b.state = 'captured'; b.consumedAt = sim.t;
           const label = surfaceLabel(cType);
-          if (!b._cloud) logEv(sim, 'warn', trp('{name} — impacted {surface} at r = {r} M', { name: b.name, surface: tr(label.en, label.zh), r: r.toFixed(2) }));
+          logEv(sim, 'warn', trp('{name} — impacted {surface} at r = {r} M', { name: b.name, surface: tr(label.en, label.zh), r: r.toFixed(2) }));
           continue;
         }
       } else {
         if (!naked && r < rplus) {
+          // Member swallowed only by a REAL BH core, only through the horizon's tiny loss cone.
+          if (b._cloud && (!coreCanSwallow(sim.smbhStructure)
+              || !cloudInLossCone(b, 0, 0, 0, 0, M, rplus))) continue;
           b.state = 'captured'; b.consumedAt = sim.t;
           if (!b._cloud) logEv(sim, 'warn', trp('{name} — crossed r₊, mass added to BH', { name: b.name }));
           continue;
         }
         if (naked && r < 0.4) {
+          if (b._cloud && !coreCanSwallow(sim.smbhStructure)) continue;
           b.state = 'captured'; b.consumedAt = sim.t;
           if (!b._cloud) logEv(sim, 'warn', trp('{name} — annihilated at naked singularity', { name: b.name }));
           continue;
@@ -2153,6 +2200,26 @@
     }
   }
 
+  // When a structure merge ends the binary, the integrator re-centres the lone survivor at
+  // the origin at rest (single-BH frame: c1x = 0, no bulk velocity). Without compensation,
+  // the member stars keep their old ABSOLUTE positions/velocities around the now-vanished
+  // binary core and visibly leap away from it. This rigidly shifts the whole scene into the
+  // survivor core's rest frame at the origin — a Galilean translation+boost, which is exact
+  // physics and leaves every star's position and motion RELATIVE to the survivor unchanged.
+  // Trails are shifted too so they don't smear; the camera follows because, with the binary
+  // gone, the COM frame re-anchors to the (origin) primary.
+  function recenterSceneToCore(sim, cx, cy, cvx, cvy) {
+    for (const b of sim.bodies) {
+      b.x -= cx; b.y -= cy;
+      b.vx -= cvx; b.vy -= cvy;
+      const tl = b.trail;
+      if (tl && tl.length) for (let i = 0; i < tl.length; i += 2) { tl[i] -= cx; tl[i + 1] -= cy; }
+    }
+    sim.primary.x = 0; sim.primary.y = 0; sim.primary.vx = 0; sim.primary.vy = 0;
+    sim.view.ox = 0; sim.view.oy = 0;          // survivor now sits at the origin
+    recordCloudCounts(sim);                    // refresh member COMs / halo centres
+  }
+
   // The companion structure has lost all its member stars to the central — the merger
   // is complete. End the binary; its (already re-tagged) stars stay with the central, and
   // the surviving central's mass label snaps back to the value it was built with.
@@ -2161,6 +2228,9 @@
     if (!bin) return;
     bin.merged = true;
     bin.mergerFlash = 1.6;
+    // Shift into the surviving central core's rest frame BEFORE the binary turns off, so the
+    // members do not jump when the integrator re-centres the lone survivor at the origin.
+    recenterSceneToCore(sim, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0);
     bin.enabled = false;
     // The companion's members are already re-tagged to the central, so their mass is in
     // sim._cloudM1 (and the central halo) — the remnant keeps the full combined bound
@@ -2200,6 +2270,9 @@
     if (sim.disc2) sim.disc2.enabled = false;
     // Snap the new primary's mass label back to its seed value (the "M reverts" rule).
     if (struct2 && struct2.massBase) sim.params.Msun = struct2.massBase;
+    // Shift into the surviving companion core's rest frame at the origin before the binary
+    // turns off, so its members do not jump as it becomes the lone central body.
+    recenterSceneToCore(sim, bin.x2, bin.y2, bin.vx2 || 0, bin.vy2 || 0);
     bin.merged = true; bin.mergerFlash = 1.6; bin.enabled = false;
     recordCloudCounts(sim);
     logEv(sim, 'good', tr('primary depleted — companion succeeds as the new central',

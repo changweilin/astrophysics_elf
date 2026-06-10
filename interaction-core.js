@@ -28,15 +28,31 @@
     var compFloor = opts.compFloor != null ? opts.compFloor : 14;
     var compPad  = opts.compPad  != null ? opts.compPad  : 4;
     var w2s = window.KNSim.worldToScreen;
+    // Single-body (user-placed) grabs take priority; a structure's member stars are
+    // tracked separately, because grabbing one should grab the WHOLE structure (operating
+    // a cluster/galaxy's stars == operating the cluster/galaxy itself), not pluck out a
+    // lone member that is really just a tracer of the swarm.
     var best = null, bestD = bodyR;
+    var cloud = null, cloudD = bodyR;
     for (var i = 0; i < sim.bodies.length; i++) {
       var b = sim.bodies[i];
       if (b.state !== 'orbit') continue;
       var p = w2s(sim, w, h, b.x, b.y);
       var d = Math.hypot(p[0] - sx, p[1] - sy);
-      if (d < bestD) { bestD = d; best = b; }
+      if (b._cloud) {
+        if (d < cloudD) { cloudD = d; cloud = b; }
+      } else if (d < bestD) { bestD = d; best = b; }
     }
     if (best) return { kind: 'body', bodyId: best.id, label: best.name };
+    // A member star resolves to its parent structure. A companion-side member maps to the
+    // companion grab (drag → re-aim / eject the whole swarm, long-press → reposition it);
+    // a central-side member belongs to the immovable primary, so it falls through to pan.
+    if (cloud) {
+      var role = cloud._cloudRole || cloud._cloudOrigin;
+      if (role === 'companion' && sim.binary && sim.binary.enabled) {
+        return { kind: 'companion', label: tr('companion', '伴星') };
+      }
+    }
     if (sim.binary && sim.binary.enabled) {
       var bin = sim.binary;
       var bp = w2s(sim, w, h, bin.x2, bin.y2);
