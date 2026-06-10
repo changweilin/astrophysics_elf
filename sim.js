@@ -91,6 +91,11 @@
       _cloudFrac1: 1, _cloudFrac2: 1,
       _Rvis1: 0, _Rvis2: 0,
       _density1: 0, _density2: 0,
+      // Live mass-weighted centre of each structure (its core point mass + member stars).
+      // The binding halo is centred HERE, not on the bare core, so that when the companion
+      // tugs a structure's swarm off-centre the binding field follows the stars (they keep
+      // orbiting their own centroid) instead of a stale core position. See recordCloudCounts.
+      _com1: { x: 0, y: 0 }, _com2: null,
       // Post-event transient animation (set by coalesce / a Type Ia detonation;
       // advanced by stepTransient, drawn by render.js). null when idle. Drives the
       // multi-phase merger choreography — tidal-tail ejecta, short-GRB jet,
@@ -354,6 +359,35 @@
     if (r < 1e-3) return;
     let Vx = bin.vx2 - bin.vx1, Vy = bin.vy2 - bin.vy1;
 
+    // ── Structure back-reaction on the cores (momentum conservation) ──
+    // The swarm feels the cores + binding halos, so by Newton's third law the cores must
+    // feel the swarm. The swarm's mass is its binding halo, so each core feels the halo
+    // fields (its own ≈ 0 — a uniform halo centred on the core exerts no force at its
+    // centre — and the OTHER structure's as a real inter-structure pull). We apply this
+    // to the pair's BARYCENTRE only: the net halo force translates the binary's centre of
+    // mass toward a tugged swarm, so the (cores + cloud) momentum is conserved instead of
+    // the barycentre staying artificially pinned. The RELATIVE (inspiral) coordinate is
+    // left to the dynamical-friction model below, which already represents the extended
+    // mass's drag — adding the conservative pull there too would double-drive the merger.
+    // Gated to scenes that actually carry a halo (normal stellar binaries are untouched).
+    let vcx = 0, vcy = 0, AcomX = 0, AcomY = 0;
+    const haloBR = !!(sim._halo1 || sim._halo2);
+    if (haloBR) {
+      const com1 = sim._com1, com2 = sim._com2;
+      const coreHaloAcc = (cxp, cyp) => {
+        let ax = 0, ay = 0;
+        if (sim._halo1 && com1) { const h = phys.haloAccel(cxp - com1.x, cyp - com1.y, sim._halo1.M, sim._halo1.R); ax += h.ax; ay += h.ay; }
+        if (sim._halo2 && com2) { const h = phys.haloAccel(cxp - com2.x, cyp - com2.y, sim._halo2.M, sim._halo2.R); ax += h.ax; ay += h.ay; }
+        return { ax, ay };
+      };
+      const a1 = coreHaloAcc(bin.x1, bin.y1), a2 = coreHaloAcc(bin.x2, bin.y2);
+      AcomX = (M1 * a1.ax + M2 * a2.ax) / Mt; AcomY = (M1 * a1.ay + M2 * a2.ay) / Mt;
+      // Re-derive the live barycentre position + velocity from the absolute core state so
+      // the COM motion accumulates (the pinned-COM split-back below would otherwise reset it).
+      bin.cx = (M1 * bin.x1 + M2 * bin.x2) / Mt; bin.cy = (M1 * bin.y1 + M2 * bin.y2) / Mt;
+      vcx = (M1 * bin.vx1 + M2 * bin.vx2) / Mt;   vcy = (M1 * bin.vy1 + M2 * bin.vy2) / Mt;
+    }
+
     const inv = 1 / (r * r2);
     let arx = -Mt * Dx * inv;
     let ary = -Mt * Dy * inv;
@@ -445,12 +479,20 @@
       Vx *= 1 / Math.sqrt(scale); Vy *= 1 / Math.sqrt(scale);   // stay quasi-circular
     }
 
-    // Split back onto the two stars about the conserved barycentre.
+    // Advance the barycentre under the swarm back-reaction (no-op when haloBR is false, so
+    // an ordinary binary keeps its pinned, momentum-conserving COM exactly as before).
+    if (haloBR) {
+      vcx += AcomX * dt; vcy += AcomY * dt;
+      bin.cx += vcx * dt; bin.cy += vcy * dt;
+    }
+
+    // Split back onto the two stars about the barycentre (now translating if the swarm
+    // pulls on the pair). The COM velocity vcx/vcy rides on top of the relative split.
     const f1 = M2 / Mt, f2 = M1 / Mt;
     bin.x1 = bin.cx - f1 * Dx; bin.y1 = bin.cy - f1 * Dy;
     bin.x2 = bin.cx + f2 * Dx; bin.y2 = bin.cy + f2 * Dy;
-    bin.vx1 = -f1 * Vx; bin.vy1 = -f1 * Vy;
-    bin.vx2 =  f2 * Vx; bin.vy2 =  f2 * Vy;
+    bin.vx1 = vcx - f1 * Vx; bin.vy1 = vcy - f1 * Vy;
+    bin.vx2 = vcx + f2 * Vx; bin.vy2 = vcy + f2 * Vy;
 
     // Bookkeeping
     bin.d     = Math.hypot(Dx, Dy);
@@ -1087,9 +1129,16 @@
     // core: central at origin (or bin.x1) and companion at bin.x2.
     const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
     const halo1 = sim._halo1, halo2 = sim._halo2;
+    // Centre each binding halo on its structure's live centre of mass (recordCloudCounts),
+    // falling back to the core. A halo centred on its own COM exerts no NET self-force on
+    // the swarm (momentum-consistent) while still binding the members about their drifting
+    // centroid — so a structure tugged by its companion translates as a whole instead of
+    // shedding stars that "orbit" a stale core position.
+    const h1c = sim._com1 || { x: c1x, y: c1y };
+    const h2c = sim._com2 || { x: binOn ? bin.x2 : 0, y: binOn ? bin.y2 : 0 };
     const addHalo = (acc, px, py) => {
-      if (halo1) { const h = phys.haloAccel(px - c1x, py - c1y, halo1.M, halo1.R); acc.ax += h.ax; acc.ay += h.ay; }
-      if (halo2 && binOn) { const h = phys.haloAccel(px - bin.x2, py - bin.y2, halo2.M, halo2.R); acc.ax += h.ax; acc.ay += h.ay; }
+      if (halo1) { const h = phys.haloAccel(px - h1c.x, py - h1c.y, halo1.M, halo1.R); acc.ax += h.ax; acc.ay += h.ay; }
+      if (halo2 && binOn) { const h = phys.haloAccel(px - h2c.x, py - h2c.y, halo2.M, halo2.R); acc.ax += h.ax; acc.ay += h.ay; }
     };
     for (const b of sim.bodies) {
       if (b.state !== 'orbit') continue;
@@ -1412,16 +1461,31 @@
   // merger. Surfaced in the body panels.
   function recordCloudCounts(sim) {
     let n1 = 0, n2 = 0, m1 = 0, m2 = 0;
+    let sx1 = 0, sy1 = 0, sx2 = 0, sy2 = 0;   // mass-weighted member positions
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
       const m = b._m || 0;
       // role 'central' covers both the central structure and untagged stars that still
       // sit in the central's field; 'companion' rides the secondary.
-      if (b._cloudRole === 'companion') { n2++; m2 += m; }
-      else                              { n1++; m1 += m; }
+      if (b._cloudRole === 'companion') { n2++; m2 += m; sx2 += m * b.x; sy2 += m * b.y; }
+      else                              { n1++; m1 += m; sx1 += m * b.x; sy1 += m * b.y; }
     }
     sim._cloudN1 = n1; sim._cloudN2 = n2;
     sim._cloudM1 = m1; sim._cloudM2 = m2;
+    // Centre of mass of each structure = (core point mass + its member stars). The core
+    // is the frozen SMBH point (central params.M at the origin/bin.x1; companion bin.M2 at
+    // bin.x2); the members carry the conserved bound mass. Used as the binding halo's
+    // centre so the field tracks the real mass distribution as it is perturbed.
+    const bin = sim.binary, binOn = !!(bin && bin.enabled);
+    const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
+    const M1 = sim.params.M, W1 = M1 + m1;
+    sim._com1 = W1 > 0 ? { x: (M1 * c1x + sx1) / W1, y: (M1 * c1y + sy1) / W1 } : { x: c1x, y: c1y };
+    if (binOn) {
+      const M2 = bin.M2, W2 = M2 + m2;
+      sim._com2 = W2 > 0 ? { x: (M2 * bin.x2 + sx2) / W2, y: (M2 * bin.y2 + sy2) / W2 } : { x: bin.x2, y: bin.y2 };
+    } else {
+      sim._com2 = null;
+    }
   }
 
   // ── Camera reference-frame lock ───────────────────────────
@@ -1995,11 +2059,13 @@
     }
   }
 
-  // ── M <-> N coupling + N=0 merge ──────────────────────────
-  // A structure's mass tracks its current member-star count (the user-set mass at seed
-  // = the base for N base stars; losing/gaining stars scales the mass proportionally).
-  // The companion's geometric + solar mass and both halos scale; the central core
-  // stays the frozen geometric unit (M=1), so only its extended halo mass scales.
+  // ── Member-mass binding + N=0 merge ───────────────────────
+  // A structure's GRAVITATING bound mass is carried by its binding halo, whose mass is
+  // the live sum of its member stars' quanta (sim._cloudM*, set in recordCloudCounts).
+  // It is therefore conserved on a transfer (one structure +Σm, the other −Σm) and the
+  // central deepens as it absorbs the companion's stars. The frozen core point masses
+  // (central params.M = 1; companion bin.M2 = its SMBH) are NOT member-scaled — the
+  // stellar mass would otherwise be counted twice (point core + halo).
   //
   // The same live fraction also drives the structure's VISIBLE SCALE (so a galaxy that
   // is gaining or shedding stars visibly grows / shrinks and brightens / dims):
@@ -2036,10 +2102,11 @@
     if (bin && bin.enabled && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster')
         && sim._struct2 && sim._struct2.Nbase > 0) {
       const frac = Math.max(0, sim._cloudN2 / sim._struct2.Nbase);
-      if (sim._struct2.massBase > 0) {
-        bin.M2sun = Math.max(1, sim._struct2.massBase * frac);
-        bin.M2 = Math.max(0.001, bin.M2sun / Math.max(1, sim.params.Msun || 1));
-      }
+      // NOTE: the companion's gravitating member mass is carried ENTIRELY by its binding
+      // halo (Σ member _m, conserved on transfer). The core point mass bin.M2 is the fixed
+      // central SMBH and is deliberately NOT scaled by the member count here — doing both
+      // would count the stellar mass twice (once in the point core the cloud feels via
+      // KNphysics.acceleration, once in the halo). The merge still triggers on N2 → 0.
       const sc = structureScale(sim._struct2, frac, sim._cloudN2, sim._cloudM2, sim._halo2);
       sim._cloudFrac2 = frac; sim._Rvis2 = sc.Rvis; sim._density2 = sc.density;
       if (sim._cloudN2 <= 0 && !bin.merged) structureMergeComplete(sim);
