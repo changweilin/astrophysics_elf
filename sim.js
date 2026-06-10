@@ -77,6 +77,13 @@
       // refreshed each step + on seeding. Shrinks as a galaxy/cluster loses stars.
       _cloudN1: 0,
       _cloudN2: 0,
+      // Derived per-structure scale, refreshed each step from the live member count
+      // (frac = N / Nbase). Consumed by render.js for swarm/halo brightness and by the
+      // panels. _Rvis = visible structure radius (R ~ N^(1/3)); _density = member
+      // surface density N / (pi R^2). See updateStructureMass.
+      _cloudFrac1: 1, _cloudFrac2: 1,
+      _Rvis1: 0, _Rvis2: 0,
+      _density1: 0, _density2: 0,
       // Post-event transient animation (set by coalesce / a Type Ia detonation;
       // advanced by stepTransient, drawn by render.js). null when idle. Drives the
       // multi-phase merger choreography — tidal-tail ejecta, short-GRB jet,
@@ -250,6 +257,7 @@
     if (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster') {
       seedStructureCloud(sim, bin.smbhStructure, 'companion');
       recordCloudCounts(sim);
+      updateStructureMass(sim);   // populate Rvis/density/frac so the glow shows pre-step
     }
   }
 
@@ -1372,6 +1380,7 @@
     // multipliers can't spiral the loop.
     const maxStep = 0.05, sub = 4, guardMax = 256;
     let remaining = Math.min(0.05, realDt) * sim.timescale;
+    let advanced = 0;          // total sim-time advanced this frame (drives the membership timer)
     let guard = 0;
     while (remaining > 1e-6 && guard < guardMax) {
       const dt = Math.min(maxStep, remaining);
@@ -1382,9 +1391,10 @@
       if (window.KNDisc) window.KNDisc.step(sim, dt);
       sim.t += dt;
       remaining -= dt;
+      advanced += dt;
       guard++;
     }
-    updateMembership(sim);     // re-tag stars to whichever structure now owns them
+    updateMembership(sim, advanced);  // re-tag stars to whichever structure now owns them
     recordCloudCounts(sim);    // N1 / N2 from the fresh membership
     updateStructureMass(sim);  // mass tracks N; companion N->0 triggers the merge
   }
@@ -1453,6 +1463,37 @@
     return vc;
   }
 
+  // Re-establish a clean classical stable orbit for each member star of a structure
+  // cloud about its host core, then ride the host's bulk motion. For a star at offset
+  // (rx,ry) and radius r the circular speed is √(v_c(r)² + a_halo·r) (the same balance
+  // the swarm is seeded with: core point-mass + dark-matter halo, so the rotation curve
+  // is flat for a galaxy). The star's CURRENT direction of revolution about the core is
+  // preserved (its angular-momentum sign), so the swarm keeps its spin while every orbit
+  // becomes a stable closed circle — the cloud analogue of circularizeBody. (hvx,hvy) is
+  // the host core's lab velocity, added so the whole swarm co-moves with its core.
+  function circularizeCloud(sim, role, hx, hy, hvx, hvy, Mcore, halo, dir) {
+    for (const cb of sim.bodies) {
+      if (!cb._cloud || cb.state !== 'orbit' || cb._cloudRole !== role) continue;
+      const rx = cb.x - hx, ry = cb.y - hy;
+      const r = Math.hypot(rx, ry);
+      if (r < 1e-3) { cb.vx = hvx; cb.vy = hvy; continue; }
+      let vc2 = (phys.circularSpeed(r, Mcore) || Math.sqrt(Mcore / r)) ** 2;
+      if (halo && halo.M > 0) {
+        const ha = phys.haloAccel(rx, ry, halo.M, halo.R);
+        vc2 += Math.hypot(ha.ax, ha.ay) * r;
+      }
+      const vc = Math.sqrt(Math.max(0, vc2));
+      // Keep the star's current sense of revolution (sign of r × v_rel); fall back to
+      // the host's spin direction if it is essentially at rest relative to the core.
+      const relvx = cb.vx - hvx, relvy = cb.vy - hvy;
+      let sgn = Math.sign(rx * relvy - ry * relvx) || dir || 1;
+      const tx = -ry / r, ty = rx / r;            // CCW tangent unit vector
+      cb.vx = hvx + tx * vc * sgn;
+      cb.vy = hvy + ty * vc * sgn;
+      if (cb.trail) cb.trail.length = 0;
+    }
+  }
+
   // Binary pair: seed both stars with the classical stable circular orbit about
   // their common barycentre. The relative (separation) speed is the two-body
   // circular value √((M1+M2) / d), tangential; splitTwoBody shares it between the
@@ -1474,18 +1515,22 @@
     const dir = Math.sign(sim.params.a || 1);
     const Vx = -dy / d * vrel * dir;
     const Vy =  dx / d * vrel * dir;
-    // Carry each structure's cloud with its host: a galaxy/cluster swarm shares its
-    // core's bulk motion, so when the cores are re-set to the circular orbit, shift
-    // each cloud particle by its host's velocity change (its internal orbit is kept).
-    const ov1x = bin.vx1, ov1y = bin.vy1, ov2x = bin.vx2, ov2y = bin.vy2;
     splitTwoBody(bin, M1, M2, Vx, Vy);
-    for (const cb of sim.bodies) {
-      if (!cb._cloud) continue;
-      // Shift each star by its host core's velocity change (its internal orbit is
-      // kept). Membership 'companion' rides the secondary; 'central' the primary; an
-      // untagged star (null) belongs to neither, so leave its velocity alone.
-      if (cb._cloudRole === 'companion') { cb.vx += bin.vx2 - ov2x; cb.vy += bin.vy2 - ov2y; }
-      else if (cb._cloudRole === 'central') { cb.vx += bin.vx1 - ov1x; cb.vy += bin.vy1 - ov1y; }
+    // Re-settle each structure's swarm onto stable classical orbits about its host core
+    // (and co-moving with that core's freshly-circularised bulk motion). The companion
+    // swarm rides the secondary, the central swarm rides the primary; an untagged star
+    // (role null) belongs to neither and is left alone. This is the internal analogue of
+    // the barycentric circularisation above: the pair AND every member star end on a
+    // momentum/angular-momentum-conserving closed orbit.
+    const has1 = (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster');
+    const has2 = (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster');
+    if (has2) {
+      circularizeCloud(sim, 'companion', bin.x2, bin.y2, bin.vx2, bin.vy2, M2, sim._halo2,
+                       Math.sign(bin.a2 || sim.params.a || 1) || 1);
+    }
+    if (has1) {
+      circularizeCloud(sim, 'central', bin.x1, bin.y1, bin.vx1, bin.vy1, M1, sim._halo1,
+                       Math.sign(sim.params.a || 1) || 1);
     }
     bin.trail1.length = 0;
     bin.trail2.length = 0;
@@ -1667,11 +1712,13 @@
   // points without labels. role 'central' orbits the primary (origin / bin.x1); role
   // 'companion' orbits the secondary (bin.x2). Idempotent per role.
   //
-  // The M slider sets N (more mass -> a richer swarm): see structureN().
-  function structureN(sim, role) {
-    const M = role === 'companion' ? ((sim.binary && sim.binary.M2) || 0.8) : sim.params.M;
-    // Log-ish scaling, clamped to a perf-friendly band.
-    return Math.max(18, Math.min(120, Math.round(46 + 34 * Math.log10(Math.max(0.1, M) * 10))));
+  // The mass slider sets N (more mass -> a richer swarm). Scales with the structure's
+  // PHYSICAL solar mass across the supermassive band (1e5..1e10 M⊙) so BOTH the central
+  // (whose geometric M is frozen at 1) and the companion respond to their own mass
+  // slider. Mapped log-linearly onto a perf-friendly particle band [18,120].
+  function structureN(massSun) {
+    const lm = Math.log10(Math.max(1, massSun || 1));     // ~5..10 over the supermassive range
+    return Math.max(18, Math.min(120, Math.round(18 + 20.4 * (lm - 5))));
   }
 
   // Remove a structure's seeded particles and its metadata/halo. Clears by ORIGIN
@@ -1683,70 +1730,148 @@
     else                      { sim._halo1 = null; sim._struct1 = null; }
   }
 
+  // Resolve a structure role's host core (position / velocity / geometric mass / spin
+  // direction / physical solar mass). Returns null if the role has no live host (e.g.
+  // a companion with no active binary).
+  function resolveHost(sim, role) {
+    const bin = sim.binary;
+    const binOn = !!(bin && bin.enabled);
+    if (role === 'companion') {
+      if (!binOn) return null;
+      return { hx: bin.x2, hy: bin.y2, hvx: bin.vx2, hvy: bin.vy2,
+               Mcore: bin.M2, dir: Math.sign(bin.a2 || sim.params.a || 1) || 1,
+               massSun: bin.M2sun != null ? bin.M2sun : (bin.M2 || 0.8) * (sim.params.Msun || 1) };
+    }
+    return { hx: binOn ? bin.x1 : 0, hy: binOn ? bin.y1 : 0,
+             hvx: binOn ? bin.vx1 : 0, hvy: binOn ? bin.vy1 : 0,
+             Mcore: sim.params.M, dir: Math.sign(sim.params.a || 1) || 1,
+             massSun: sim.params.Msun || 1 };
+  }
+
+  // Spawn one cloud particle on a circular (+dispersion) orbit about its host core,
+  // sampled within [rIn,rOut] with the central concentration r = rIn+(rOut-rIn)·u².
+  function spawnCloudParticle(sim, key, role, host, geom, halo, gas) {
+    const { hx, hy, hvx, hvy, Mcore, dir } = host;
+    const u = Math.random();
+    const r = geom.rIn + (geom.rOut - geom.rIn) * u * u;
+    const th = Math.random() * Math.PI * 2;
+    const x = hx + r * Math.cos(th), y = hy + r * Math.sin(th);
+    // Circular speed about the core, plus the halo's contribution (flattens the
+    // rotation curve for a galaxy). v_halo^2 = a_halo·r.
+    let vc2 = (phys.circularSpeed(r, Mcore) || Math.sqrt(Mcore / r)) ** 2;
+    if (halo) {
+      const ha = phys.haloAccel(r, 0, halo.M, halo.R);
+      vc2 += Math.abs(ha.ax) * r;
+    }
+    const vc = Math.sqrt(Math.max(0, vc2));
+    const disp = (gas ? 0.02 : 0.06) * vc;     // gas is dynamically colder than stars
+    const jx = (Math.random() - 0.5) * 2 * disp, jy = (Math.random() - 0.5) * 2 * disp;
+    addBody(sim, {
+      name: '', kind: gas ? 'gas' : 'star', radius: gas ? 0.32 : 0.42,
+      binding: 6, charge: 0,
+      x, y,
+      vx: hvx - Math.sin(th) * vc * dir + jx,
+      vy: hvy + Math.cos(th) * vc * dir + jy,
+      // _cloud: the tracer key; _cloudOrigin: immutable seed group (for clearing);
+      // _cloudRole: DYNAMIC membership (which structure owns it now; null = none).
+      _cloud: key, _cloudOrigin: role, _cloudRole: role,
+    });
+  }
+
+  // Intrinsic-size multiplier from the structure's physical mass (the mass–size
+  // relation: more massive galaxies/clusters are larger). The true virial law R∝M^(1/3)
+  // would span ~46× over the 1e5..1e10 M⊙ band — far too much for the demo viewport, so
+  // it is compressed log-linearly into a gentle, bounded band [0.65, 1.8]. This is what
+  // makes a structure's RADIUS visibly grow/shrink with its mass slider (the outer edge
+  // moves; the inner edge stays put, outside the ISCO, for orbital stability).
+  function structureSizeMul(massSun) {
+    const lm = Math.log10(Math.max(1, massSun || 1));      // ~5..10 over the supermassive range
+    return Math.max(0.65, Math.min(1.8, 0.65 + (1.8 - 0.65) * (lm - 5) / 5));
+  }
+
+  // Geometry (inner/outer sampling radii) for a structure key at a given mass. Only the
+  // OUTER edge scales with mass (size relation); the inner edge is fixed outside the
+  // ISCO so the swarm orbits stably instead of promptly plunging into the core BH.
+  function structureGeom(key, massSun = 4e6) {
+    const isGalaxy = key === 'galaxy';
+    const mul = structureSizeMul(massSun);
+    const rIn = isGalaxy ? 7 : 5;
+    const rOut = Math.max(rIn + 4, (isGalaxy ? 34 : 22) * mul);
+    return { rIn, rOut, gasFrac: isGalaxy ? 0.35 : 0 };
+  }
+
   function seedStructureCloud(sim, key, role = 'central') {
     clearStructureCloud(sim, role);
     if (key !== 'galaxy' && key !== 'cluster') return;
-    const bin = sim.binary;
-    const binOn = !!(bin && bin.enabled);
-    // Host core position / velocity / mass + the structure's PHYSICAL mass (solar).
-    let hx = 0, hy = 0, hvx = 0, hvy = 0, Mcore, dir, massSun;
-    if (role === 'companion') {
-      if (!binOn) return;
-      hx = bin.x2; hy = bin.y2; hvx = bin.vx2; hvy = bin.vy2;
-      Mcore = bin.M2; dir = Math.sign(bin.a2 || sim.params.a || 1) || 1;
-      massSun = bin.M2sun != null ? bin.M2sun : (bin.M2 || 0.8) * (sim.params.Msun || 1);
-    } else {
-      if (binOn) { hx = bin.x1; hy = bin.y1; hvx = bin.vx1; hvy = bin.vy1; }
-      Mcore = sim.params.M; dir = Math.sign(sim.params.a || 1) || 1;
-      massSun = sim.params.Msun || 1;
-    }
-    const isGalaxy = key === 'galaxy';
-    const N = structureN(sim, role);
-    const nGas = isGalaxy ? Math.round(N * 0.35) : 0;       // clusters are gas-poor
-    // Inner edge sits outside the ISCO so the swarm orbits stably instead of promptly
-    // plunging into the core BH (it would shed half its stars on seeding otherwise).
-    const rIn = isGalaxy ? 7 : 5;
-    const rOut = isGalaxy ? 34 : 22;
+    const host = resolveHost(sim, role);
+    if (!host) return;
+    const geom = structureGeom(key, host.massSun);
+    const N = structureN(host.massSun);
+    const nGas = Math.round(N * geom.gasFrac);             // clusters are gas-poor
     // Galaxy halo (uniform-density dark matter); none for a cluster.
-    const halo = isGalaxy
-      ? { M: Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION)), R: rOut * 1.8 }
+    const halo = (key === 'galaxy')
+      ? { M: host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION)), R: geom.rOut * 1.8 }
       : null;
     // Per-structure metadata: base star count + base mass + base halo mass (for the
-    // M<->N coupling) and the membership reach (how far the structure's gravity
-    // "owns" a star). See updateMembership / updateStructureMass.
-    const struct = { Nbase: N, massBase: massSun, haloBase: halo ? halo.M : 0, reach: rOut * 2.2 };
+    // M<->N coupling) and the membership reach (the far backstop past which a star
+    // belongs to no structure). The *_base fields are the seed values that the live
+    // count scales against (frac = N/Nbase) to drive the structure's visible radius,
+    // halo extent and brightness. See updateMembership / updateStructureMass.
+    const struct = {
+      key, Nbase: N, massBase: host.massSun, haloBase: halo ? halo.M : 0,
+      reach: geom.rOut * 2.2,            // membership backstop (fixed; avoids strip runaway)
+      rOut: geom.rOut, reachBase: geom.rOut * 2.2,
+      RvisBase: geom.rOut, haloRbase: halo ? halo.R : 0,
+    };
     if (role === 'companion') { sim._halo2 = halo; sim._struct2 = struct; }
     else                      { sim._halo1 = halo; sim._struct1 = struct; }
 
-    for (let i = 0; i < N; i++) {
-      const gas = i < nGas;
-      // Centrally-concentrated sampling (more particles inward): r = rIn + (rOut-rIn)·u².
-      const u = Math.random();
-      const r = rIn + (rOut - rIn) * u * u;
-      const th = Math.random() * Math.PI * 2;
-      const x = hx + r * Math.cos(th), y = hy + r * Math.sin(th);
-      // Circular speed about the core, plus the halo's contribution (flattens the
-      // rotation curve for a galaxy). v_halo^2 = a_halo·r.
-      let vc2 = (phys.circularSpeed(r, Mcore) || Math.sqrt(Mcore / r)) ** 2;
-      if (halo) {
-        const ha = phys.haloAccel(r, 0, halo.M, halo.R);
-        vc2 += Math.abs(ha.ax) * r;
-      }
-      const vc = Math.sqrt(Math.max(0, vc2));
-      // Small velocity dispersion (gas is dynamically colder than stars).
-      const disp = (gas ? 0.02 : 0.06) * vc;
-      const jx = (Math.random() - 0.5) * 2 * disp, jy = (Math.random() - 0.5) * 2 * disp;
-      addBody(sim, {
-        name: '', kind: gas ? 'gas' : 'star', radius: gas ? 0.32 : 0.42,
-        binding: 6, charge: 0,
-        x, y,
-        vx: hvx - Math.sin(th) * vc * dir + jx,
-        vy: hvy + Math.cos(th) * vc * dir + jy,
-        // _cloud: the tracer key; _cloudOrigin: immutable seed group (for clearing);
-        // _cloudRole: DYNAMIC membership (which structure owns it now; null = none).
-        _cloud: key, _cloudOrigin: role, _cloudRole: role,
-      });
+    for (let i = 0; i < N; i++) spawnCloudParticle(sim, key, role, host, geom, halo, i < nGas);
+  }
+
+  // ── User mass-slider response (M -> N -> R/brightness) ─────
+  // Changing a galaxy/cluster's mass slider should add or shed member stars (and so
+  // grow / shrink its radius and brightness) rather than silently re-scaling the cores.
+  // We add/remove particles toward the new target N, re-base the structure to the new
+  // mass (so frac returns to 1), and let the per-step coupling refresh R/density. Stars
+  // are shed from the OUTSIDE in (tidal-stripping order). Cheap, and keeps the existing
+  // swarm in place (no jarring full re-seed during a drag).
+  function rescaleStructureCloud(sim, role) {
+    const struct = role === 'companion' ? sim._struct2 : sim._struct1;
+    if (!struct) return;
+    const host = resolveHost(sim, role);
+    if (!host) return;
+    const key = struct.key;
+    const geom = structureGeom(key, host.massSun);
+    const halo = role === 'companion' ? sim._halo2 : sim._halo1;
+    const target = structureN(host.massSun);
+    // Current live members of this seed group.
+    const mine = sim.bodies.filter((b) => b._cloud && b._cloudOrigin === role && b.state === 'orbit');
+    let delta = target - mine.length;
+    if (delta > 0) {
+      const nGas = Math.round(delta * geom.gasFrac);
+      for (let i = 0; i < delta; i++) spawnCloudParticle(sim, key, role, host, geom, halo, i < nGas);
+    } else if (delta < 0) {
+      // Strip the outermost stars first.
+      mine.sort((a, b) => Math.hypot(b.x - host.hx, b.y - host.hy) - Math.hypot(a.x - host.hx, a.y - host.hy));
+      const drop = new Set(mine.slice(0, -delta));
+      sim.bodies = sim.bodies.filter((b) => !drop.has(b));
     }
+    // Re-base to the new mass: N target is the fresh full count, mass = current host
+    // mass, and the geometry (outer edge → RvisBase / reach / halo extent) follows the
+    // mass–size relation so the structure's RADIUS visibly tracks its mass.
+    struct.Nbase = target;
+    struct.massBase = host.massSun;
+    struct.rOut = geom.rOut;
+    struct.reach = geom.rOut * 2.2; struct.reachBase = geom.rOut * 2.2;
+    struct.RvisBase = geom.rOut; struct.haloRbase = halo ? geom.rOut * 1.8 : 0;
+    if (halo) {
+      halo.M = host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION));
+      halo.R = geom.rOut * 1.8;
+      struct.haloBase = halo.M;
+    }
+    recordCloudCounts(sim);
+    updateStructureMass(sim);
   }
 
   // Re-seed whichever structures the current scene declares (used after a config
@@ -1760,16 +1885,40 @@
       seedStructureCloud(sim, bin.smbhStructure, 'companion');
     }
     recordCloudCounts(sim);
+    updateStructureMass(sim);   // populate Rvis/density/frac so the glow shows pre-step
   }
 
   // ── Dynamic structure membership ──────────────────────────
-  // Every cloud star is (re)tagged each frame with the structure whose reach it is
-  // currently inside (the nearer one if both). A star that drifts out of all reaches
-  // becomes UNTAGGED (_cloudRole = null) but persists — it still feels every
-  // structure's gravity (the integrator's smooth field applies to all bodies). This
-  // is how a merger transfers stars: as a companion sinks in, its stars cross into the
-  // central's reach and re-tag to it, so N1 grows while N2 falls toward zero.
-  function updateMembership(sim) {
+  // Every cloud star carries exactly ONE tag at a time: the structure whose gravity
+  // currently owns it (_cloudRole 'central' | 'companion' | null). A star outside both
+  // structures' reach becomes UNTAGGED (null) but persists — it still feels every
+  // structure's gravity (the integrator's smooth field applies to all bodies).
+  //
+  // Ownership is decided by the GRAVITATIONAL PULL each structure exerts on the star
+  // (core point-mass + enclosed dark-matter halo), not by raw distance — a faint,
+  // halo-less cluster does not steal stars from a massive galaxy just by drifting
+  // close. The handover is HYSTERETIC IN TIME: a star only flips to the rival when the
+  // rival has pulled measurably harder (by SWITCH_MARGIN) for a sustained spell
+  // (SWITCH_TIME of sim-time, integrated in b._pullTimer). Brief, equal-footing
+  // crossings during the cores' orbit do not re-tag it. This is the merger transfer
+  // engine: as a companion sinks in, the central out-pulls its outer stars long enough
+  // to claim them, so N1 grows while N2 falls toward zero.
+  const SWITCH_TIME = 1.2;     // sim-time the rival must dominate before a star flips
+  const SWITCH_MARGIN = 1.15;  // rival pull must exceed the owner's by this factor
+
+  // Gravitational pull magnitude a structure exerts on a star at separation d:
+  // core point mass (geometric) softened at the centre, plus its halo's enclosed-mass
+  // term (KNphysics.haloAccel handles the inside/outside split). G = 1 in geometric units.
+  function structurePull(Mcore, d, halo, dx, dy) {
+    let g = Mcore / (d * d + 4);                       // softened core (eps^2 = 4)
+    if (halo && halo.M > 0) {
+      const ha = phys.haloAccel(dx, dy, halo.M, halo.R);
+      g += Math.hypot(ha.ax, ha.ay);
+    }
+    return g;
+  }
+
+  function updateMembership(sim, dt = 0) {
     const bin = sim.binary;
     const binOn = !!(bin && bin.enabled);
     const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
@@ -1777,24 +1926,44 @@
     const has2 = binOn && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster');
     const reach1 = (sim._struct1 && sim._struct1.reach) || 75;
     const reach2 = (sim._struct2 && sim._struct2.reach) || 55;
+    const M1core = sim.params.M, M2core = (bin && bin.M2) || 0.8;
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
-      const d1 = has1 ? Math.hypot(b.x - c1x, b.y - c1y) : Infinity;
-      const d2 = has2 ? Math.hypot(b.x - bin.x2, b.y - bin.y2) : Infinity;
+      const dx1 = b.x - c1x, dy1 = b.y - c1y;
+      const dx2 = binOn ? b.x - bin.x2 : 0, dy2 = binOn ? b.y - bin.y2 : 0;
+      const d1 = has1 ? Math.hypot(dx1, dy1) : Infinity;
+      const d2 = has2 ? Math.hypot(dx2, dy2) : Infinity;
       const in1 = d1 < reach1, in2 = d2 < reach2;
-      let role;
+      const cur = b._cloudRole;
+      let role = cur;
       if (!in1 && !in2) {
         role = null;                                  // left every structure → untagged, persists
+        b._pullTimer = 0;
       } else if (in1 !== in2) {
-        role = in1 ? 'central' : 'companion';         // only one structure in range
+        role = in1 ? 'central' : 'companion';         // only one structure in range → instant
+        b._pullTimer = 0;
       } else {
-        // Both in range: keep the current owner unless the OTHER is decisively nearer
-        // (hysteresis) — stops contested stars from flickering as the cores orbit.
-        const cur = b._cloudRole;
-        const curD = cur === 'central' ? d1 : cur === 'companion' ? d2 : Infinity;
-        const otherD = cur === 'central' ? d2 : cur === 'companion' ? d1 : Math.min(d1, d2);
-        if ((cur === 'central' || cur === 'companion') && otherD >= 0.8 * curD) role = cur;
-        else role = (d1 <= d2) ? 'central' : 'companion';
+        // Both in range: compare the gravitational pull each structure exerts.
+        const g1 = has1 ? structurePull(M1core, d1, sim._halo1, dx1, dy1) : 0;
+        const g2 = has2 ? structurePull(M2core, d2, sim._halo2, dx2, dy2) : 0;
+        const winner = g1 >= g2 ? 'central' : 'companion';
+        if (cur == null) {
+          role = winner;                              // adopt immediately if previously untagged
+          b._pullTimer = 0;
+        } else if (winner === cur) {
+          role = cur;                                 // owner still dominates → relax the timer
+          b._pullTimer = Math.max(0, (b._pullTimer || 0) - dt);
+        } else {
+          // Rival is ahead: only flip once it has led by the margin for SWITCH_TIME.
+          const gWin = winner === 'central' ? g1 : g2;
+          const gCur = cur === 'central' ? g1 : g2;
+          if (gWin >= SWITCH_MARGIN * gCur) {
+            b._pullTimer = (b._pullTimer || 0) + dt;
+            if (b._pullTimer >= SWITCH_TIME) { role = winner; b._pullTimer = 0; }
+          } else {
+            b._pullTimer = Math.max(0, (b._pullTimer || 0) - dt);
+          }
+        }
       }
       b._cloudRole = role;
     }
@@ -1805,13 +1974,34 @@
   // = the base for N base stars; losing/gaining stars scales the mass proportionally).
   // The companion's geometric + solar mass and both halos scale; the central core
   // stays the frozen geometric unit (M=1), so only its extended halo mass scales.
+  //
+  // The same live fraction also drives the structure's VISIBLE SCALE (so a galaxy that
+  // is gaining or shedding stars visibly grows / shrinks and brightens / dims):
+  //   · radius   R_vis = R_base · frac^(1/3)   (virial mass–radius, R ∝ M^(1/3))
+  //   · halo extent scales the same way (the dark matter tracks the luminous body)
+  //   · surface density  Σ = N / (π R_vis²) ∝ N^(1/3)  — a richer structure is both
+  //     bigger AND denser, the observed mass–size–density trend. Σ + frac drive the
+  //     render-side brightness.
   // When the companion's members reach zero it has been fully absorbed -> merge.
+  // Scale a halo's mass/extent to the live fraction and return {Rvis, density} for the
+  // structure's N member stars (used to drive the render-side brightness).
+  function structureScale(struct, frac, N, halo) {
+    const f = Math.max(0, frac);
+    const Rvis = Math.max(1, (struct.RvisBase || 1) * Math.cbrt(Math.max(1e-3, f)));
+    if (halo && struct.haloBase) {
+      halo.M = struct.haloBase * f;
+      if (struct.haloRbase) halo.R = Math.max(1, struct.haloRbase * Math.cbrt(Math.max(1e-3, f)));
+    }
+    return { Rvis, density: f > 0 ? N / (Math.PI * Rvis * Rvis) : 0 };
+  }
+
   function updateStructureMass(sim) {
     const bin = sim.binary;
     if ((sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') && sim._struct1 && sim._struct1.Nbase > 0) {
       const frac = Math.max(0, sim._cloudN1 / sim._struct1.Nbase);
-      if (sim._halo1 && sim._struct1.haloBase) sim._halo1.M = sim._struct1.haloBase * frac;
-    }
+      const sc = structureScale(sim._struct1, frac, sim._cloudN1, sim._halo1);
+      sim._cloudFrac1 = frac; sim._Rvis1 = sc.Rvis; sim._density1 = sc.density;
+    } else { sim._cloudFrac1 = 0; sim._Rvis1 = 0; sim._density1 = 0; }
     if (bin && bin.enabled && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster')
         && sim._struct2 && sim._struct2.Nbase > 0) {
       const frac = Math.max(0, sim._cloudN2 / sim._struct2.Nbase);
@@ -1819,9 +2009,10 @@
         bin.M2sun = Math.max(1, sim._struct2.massBase * frac);
         bin.M2 = Math.max(0.001, bin.M2sun / Math.max(1, sim.params.Msun || 1));
       }
-      if (sim._halo2 && sim._struct2.haloBase) sim._halo2.M = sim._struct2.haloBase * frac;
+      const sc = structureScale(sim._struct2, frac, sim._cloudN2, sim._halo2);
+      sim._cloudFrac2 = frac; sim._Rvis2 = sc.Rvis; sim._density2 = sc.density;
       if (sim._cloudN2 <= 0 && !bin.merged) structureMergeComplete(sim);
-    }
+    } else { sim._cloudFrac2 = 0; sim._Rvis2 = 0; sim._density2 = 0; }
   }
 
   // The companion structure has lost all its member stars to the central — the merger
@@ -1872,6 +2063,7 @@
         logEv(sim, 'good', tr('Quiescent supermassive companion', '寧靜的超大質量伴星'));
       }
       recordCloudCounts(sim);
+      updateStructureMass(sim);   // populate Rvis/density/frac so the glow shows pre-step
       return key;
     }
     sim.params.type = 'bh';
@@ -1893,6 +2085,7 @@
       logEv(sim, 'good', tr('Quiescent supermassive black hole', '寧靜的超大質量黑洞'));
     }
     recordCloudCounts(sim);
+    updateStructureMass(sim);   // populate Rvis/density/frac so the glow shows pre-step
     return key;
   }
 
@@ -2045,7 +2238,7 @@
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
                    setBHRegime, cycleBHRegime, applySMBHStructure, swapCentralCompanion,
-                   reseedStructureClouds,
+                   reseedStructureClouds, rescaleStructureCloud,
                    fitView, worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

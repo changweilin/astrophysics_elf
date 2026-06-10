@@ -779,6 +779,17 @@
     // blue/red kilonova, r-process cloud, luminous red nova, WD debris disc).
     drawTransient(sim, ctx, w, h, cx, cy, s);
 
+    // Galaxy/cluster diffuse glow — a soft halo whose RADIUS tracks the structure's
+    // visible R (R ∝ N^(1/3)) and whose brightness tracks its member fraction, so a
+    // structure visibly swells / brightens as it gains stars and shrinks / dims as it
+    // sheds them. Muted (never neon); drawn under the swarm dots.
+    drawStructureGlow(sim, ctx, w, h, s);
+
+    // Per-structure brightness multiplier for the swarm dots: denser structures glow
+    // a touch harder (rel = density / seed-density = frac^(1/3)). Gentle band.
+    const bri = (frac) => Math.max(0.45, Math.min(1.2, 0.6 + 0.55 * Math.cbrt(Math.max(1e-3, frac || 0))));
+    const briCentral = bri(sim._cloudFrac1), briCompanion = bri(sim._cloudFrac2);
+
     // ---- Bodies & trails ----
     for (const b of sim.bodies) {
       // Galaxy/cluster cloud particles: hundreds of test stars/gas — draw as light
@@ -786,7 +797,10 @@
       if (b._cloud) {
         if (b.state !== 'orbit') continue;
         const [px, py] = worldToScreen(sim, w, h, b.x, b.y);
-        ctx.fillStyle = colorOf(b, b.kind === 'gas' ? 0.55 : 0.85);
+        const bf = b._cloudRole === 'companion' ? briCompanion
+                 : b._cloudRole === 'central'   ? briCentral : 0.85;
+        const a = Math.min(1, (b.kind === 'gas' ? 0.55 : 0.85) * bf);
+        ctx.fillStyle = colorOf(b, a);
         ctx.beginPath();
         ctx.arc(px, py, b.kind === 'gas' ? 1.1 : 1.5, 0, Math.PI * 2);
         ctx.fill();
@@ -854,6 +868,38 @@
 
     // Jet central luminosity (above bodies)
     if (window.KNDisc) window.KNDisc.renderJetCenter(sim, ctx, w, h, worldToScreen);
+  }
+
+  // ── Galaxy / cluster diffuse glow ───────────────────────────────────────
+  // A soft radial halo for each active structure, centred on its core. The radius is
+  // the structure's live visible R (sim._Rvis*, which scales as N^(1/3)) and the
+  // opacity tracks its member fraction, so the glow visibly grows + brightens as a
+  // structure gains stars and shrinks + dims as it sheds them. Muted per the project's
+  // visual rule (gentle, never neon). Galaxies read cooler/blue, clusters warmer/gold.
+  function drawStructureGlow(sim, ctx, w, h, s) {
+    const bin = sim.binary;
+    const binOn = !!(bin && bin.enabled);
+    const draw = (key, Rvis, frac, wx, wy, isGalaxy) => {
+      if (!(Rvis > 0) || !(frac > 0)) return;
+      const [px, py] = worldToScreen(sim, w, h, wx, wy);
+      const R = Rvis * s;
+      if (!(R > 2)) return;
+      const op = Math.max(0.04, Math.min(0.20, 0.06 + 0.16 * Math.min(1.4, frac)));
+      const hue = isGalaxy ? 255 : 80;          // blue-violet galaxy vs golden cluster
+      const grd = ctx.createRadialGradient(px, py, R * 0.12, px, py, R);
+      grd.addColorStop(0, `oklch(0.85 0.07 ${hue} / ${op})`);
+      grd.addColorStop(0.55, `oklch(0.72 0.06 ${hue} / ${op * 0.45})`);
+      grd.addColorStop(1, `oklch(0.60 0.05 ${hue} / 0)`);
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.arc(px, py, R, 0, Math.PI * 2); ctx.fill();
+    };
+    if (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster') {
+      const cx = binOn ? bin.x1 : 0, cy = binOn ? bin.y1 : 0;
+      draw(sim.smbhStructure, sim._Rvis1, sim._cloudFrac1, cx, cy, sim.smbhStructure === 'galaxy');
+    }
+    if (binOn && (bin.smbhStructure === 'galaxy' || bin.smbhStructure === 'cluster')) {
+      draw(bin.smbhStructure, sim._Rvis2, sim._cloudFrac2, bin.x2, bin.y2, bin.smbhStructure === 'galaxy');
+    }
   }
 
   // ── Post-coalescence transient choreography ─────────────────────────────

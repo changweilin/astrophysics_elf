@@ -318,6 +318,14 @@ function BodyEditor({ sim, force, role }) {
         if (Math.abs(bin.Q2) > bin.M2) bin.Q2 = Math.sign(bin.Q2 || 1) * bin.M2 * 0.9;
       }
     }
+    // A galaxy/cluster's mass sets its star count: grow/shrink the swarm (and so its
+    // radius + brightness) toward the new mass. Central tracks sim.smbhStructure;
+    // companion tracks the binary's structure.
+    const role = isCentral ? 'central' : 'companion';
+    const struct = isCentral ? sim.smbhStructure : (bin && bin.smbhStructure);
+    if ((struct === 'galaxy' || struct === 'cluster') && window.KNSim.rescaleStructureCloud) {
+      window.KNSim.rescaleStructureCloud(sim, role);
+    }
     force();   // R★/T★ re-derived from the new mass by KNSim.syncStellar
   }
 
