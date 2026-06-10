@@ -421,16 +421,62 @@ function MBodyEditor({ sim, force, role }) {
       </div>
       )}
       {((smbhStructures && (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster')) || (isCentral && inOpenCluster)) && (
+        <React.Fragment>
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN1 || 0}</span>
         </div>
+        {/* Simulated binding core / real SMBH / swallow census (mirrors panel-left:
+            every structure has a sim core; only a galaxy hosts a real hole). */}
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('core binding mass (sim)', '模擬核心質量')}</span>
+          <span className="sn-v">
+            {phys.fmtSolarMass((sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0)) * (sim.params.Msun || 1))} M⊙
+          </span>
+        </div>
+        {sim.smbhStructure === 'galaxy' && smbhStructures && (
+          <React.Fragment>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('central BH mass (real)', '實質核心黑洞質量')}</span>
+            <span className="sn-v">
+              {phys.fmtSolarMass((1 + ((sim._struct1 && sim._struct1.accreted) || 0)) * (sim.params.Msun || 1))} M⊙
+            </span>
+          </div>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('stars swallowed', '吞噬恆星數')}</span>
+            <span className="sn-v">N = {(sim._struct1 && sim._struct1.accretedN) || 0}</span>
+          </div>
+          </React.Fragment>
+        )}
+        </React.Fragment>
       )}
       {((companionStructures && (companionStructure === 'galaxy' || companionStructure === 'cluster')) || (!isCentral && inOpenCluster)) && (
+        <React.Fragment>
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN2 || 0}</span>
         </div>
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('core binding mass (sim)', '模擬核心質量')}</span>
+          <span className="sn-v">
+            {phys.fmtSolarMass((sim.binary && sim.binary.M2 || 0) * (sim.params.Msun || 1))} M⊙
+          </span>
+        </div>
+        {companionStructure === 'galaxy' && companionStructures && (
+          <React.Fragment>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('central BH mass (real)', '實質核心黑洞質量')}</span>
+            <span className="sn-v">
+              {phys.fmtSolarMass(((sim.binary && sim.binary.M2 || 0) + ((sim._struct2 && sim._struct2.accreted) || 0)) * (sim.params.Msun || 1))} M⊙
+            </span>
+          </div>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('stars swallowed', '吞噬恆星數')}</span>
+            <span className="sn-v">N = {(sim._struct2 && sim._struct2.accretedN) || 0}</span>
+          </div>
+          </React.Fragment>
+        )}
+        </React.Fragment>
       )}
       {/* Tidal-stream census + conservation ledger (mirrors panel-left). */}
       {(sim._streamN || 0) > 0 && (

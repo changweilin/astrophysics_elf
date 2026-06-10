@@ -761,6 +761,7 @@
         }
       } else if (sim._struct1 && sim._struct2) {
         sim._struct1.accreted = (sim._struct1.accreted || 0) + (sim._struct2.accreted || 0);
+        sim._struct1.accretedN = (sim._struct1.accretedN || 0) + (sim._struct2.accretedN || 0);
       }
       sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
       // ── Gravitational-field continuity (no instant "weightlessness") ──
@@ -1279,7 +1280,10 @@
   // (struct.accreted), which structureScale folds back into the binding mass. Total
   // gravitating mass is conserved — nothing is created or destroyed by the (rare) capture.
   function accreteMember(struct, b) {
-    if (struct) struct.accreted = (struct.accreted || 0) + (b._m || 0);
+    if (struct) {
+      struct.accreted = (struct.accreted || 0) + (b._m || 0);
+      struct.accretedN = (struct.accretedN || 0) + 1;   // swallow census (panel readout)
+    }
   }
 
   // Loss cone of a real horizon at rDest: Lcrit = sqrt(2 G Mc rDest) is the angular momentum
@@ -2640,7 +2644,10 @@
     const product = mergedStructureType(sim.smbhStructure, bin.smbhStructure);
     // Conserve any mass each core has already swallowed: the companion's banked accretion
     // carries over to the surviving central.
-    if (sim._struct1 && sim._struct2) sim._struct1.accreted = (sim._struct1.accreted || 0) + (sim._struct2.accreted || 0);
+    if (sim._struct1 && sim._struct2) {
+      sim._struct1.accreted = (sim._struct1.accreted || 0) + (sim._struct2.accreted || 0);
+      sim._struct1.accretedN = (sim._struct1.accretedN || 0) + (sim._struct2.accretedN || 0);
+    }
     // The companion's members are already re-tagged to the central, so their mass is in
     // sim._cloudM1 (and the central halo) — the remnant keeps the full combined bound
     // mass. Only the now-empty companion bookkeeping is cleared.
@@ -2675,7 +2682,10 @@
     // core emptied; conserve the depleted central's banked accretion into the survivor.
     const product = mergedStructureType(sim.smbhStructure, newKey);
     const struct2 = sim._struct2, halo2 = sim._halo2;
-    if (struct2 && sim._struct1) struct2.accreted = (struct2.accreted || 0) + (sim._struct1.accreted || 0);
+    if (struct2 && sim._struct1) {
+      struct2.accreted = (struct2.accreted || 0) + (sim._struct1.accreted || 0);
+      struct2.accretedN = (struct2.accretedN || 0) + (sim._struct1.accretedN || 0);
+    }
     // The depleted central's CORE (frozen unit + any banked merger mass) would vanish
     // from the swarm's field on promotion — bank it on the survivor for field
     // continuity. Promotion renormalises the geometric unit to the companion's Msun,

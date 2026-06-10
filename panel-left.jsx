@@ -514,16 +514,66 @@ function BodyEditor({ sim, force, role }) {
       {/* Live in-range star count for the active structure cloud (shrinks as a
           galaxy/cluster loses stars to stripping / ejection / the central BH). */}
       {((smbhStructures && (sim.smbhStructure === 'galaxy' || sim.smbhStructure === 'cluster')) || (isCentral && inOpenCluster)) && (
+        <React.Fragment>
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN1 || 0}</span>
         </div>
+        {/* The structure's SIMULATED binding core — the softened point mass its swarm
+            actually orbits (frozen unit + banked merger cores), in solar units. For a
+            cluster this is purely a binding mass, NOT a black hole. */}
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('core binding mass (sim)', '模擬核心質量')}</span>
+          <span className="sn-v">
+            {phys.fmtSolarMass((sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0)) * (sim.params.Msun || 1))} M⊙
+          </span>
+        </div>
+        {/* Only a GALAXY hosts a real central SMBH (a cluster core is a simulated
+            binding mass with no hole): its physical mass grows by the members it has
+            swallowed (struct.accreted, conserved bookkeeping), counted below. */}
+        {sim.smbhStructure === 'galaxy' && smbhStructures && (
+          <React.Fragment>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('central BH mass (real)', '實質核心黑洞質量')}</span>
+            <span className="sn-v">
+              {phys.fmtSolarMass((1 + ((sim._struct1 && sim._struct1.accreted) || 0)) * (sim.params.Msun || 1))} M⊙
+            </span>
+          </div>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('stars swallowed', '吞噬恆星數')}</span>
+            <span className="sn-v">N = {(sim._struct1 && sim._struct1.accretedN) || 0}</span>
+          </div>
+          </React.Fragment>
+        )}
+        </React.Fragment>
       )}
       {((companionStructures && (companionStructure === 'galaxy' || companionStructure === 'cluster')) || (!isCentral && inOpenCluster)) && (
+        <React.Fragment>
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN2 || 0}</span>
         </div>
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('core binding mass (sim)', '模擬核心質量')}</span>
+          <span className="sn-v">
+            {phys.fmtSolarMass((sim.binary && sim.binary.M2 || 0) * (sim.params.Msun || 1))} M⊙
+          </span>
+        </div>
+        {companionStructure === 'galaxy' && companionStructures && (
+          <React.Fragment>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('central BH mass (real)', '實質核心黑洞質量')}</span>
+            <span className="sn-v">
+              {phys.fmtSolarMass(((sim.binary && sim.binary.M2 || 0) + ((sim._struct2 && sim._struct2.accreted) || 0)) * (sim.params.Msun || 1))} M⊙
+            </span>
+          </div>
+          <div className="struct-n" role="status">
+            <span className="sn-l">{tr('stars swallowed', '吞噬恆星數')}</span>
+            <span className="sn-v">N = {(sim._struct2 && sim._struct2.accretedN) || 0}</span>
+          </div>
+          </React.Fragment>
+        )}
+        </React.Fragment>
       )}
       {/* Tidal-stream census + conservation ledger: stripped stars tracing tails /
           streams, and the live total-mass / momentum drift against the seed baseline
