@@ -1130,6 +1130,14 @@
   // bodies are exempt: their tidal/capture fate stays deterministic (the single-body demo).
   function coreCanSwallow(key) { return !isStarSwarm(key); }   // a star swarm has no BH
 
+  // Mass-energy conservation when a galaxy's central BH swallows a member: the star's mass
+  // quantum leaves the member sum but is banked on the swallowing structure's core
+  // (struct.accreted), which structureScale folds back into the binding mass. Total
+  // gravitating mass is conserved — nothing is created or destroyed by the (rare) capture.
+  function accreteMember(struct, b) {
+    if (struct) struct.accreted = (struct.accreted || 0) + (b._m || 0);
+  }
+
   // Loss cone of a real horizon at rDest: Lcrit = sqrt(2 G Mc rDest) is the angular momentum
   // of a parabolic orbit grazing rDest (G = 1). |Δr × Δv| ≤ Lcrit ⇒ pericentre inside the
   // horizon ⇒ genuinely plunging ⇒ captured; otherwise it grazes past and survives.
@@ -1221,6 +1229,7 @@
             // binding mass) and only if it threads the horizon's tiny loss cone.
             if (b._cloud && (!coreCanSwallow(sim.smbhStructure)
                 || !cloudInLossCone(b, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0, M, rplus))) continue;
+            if (b._cloud) accreteMember(sim._struct1, b);
             b.state = 'captured'; b.consumedAt = sim.t;
             if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by primary BH', { name: b.name }));
             continue;
@@ -1240,6 +1249,7 @@
           if (!compH.naked && r2 < (isFinite(compH.rplus) ? compH.rplus : bin.M2)) {
             if (b._cloud && (!coreCanSwallow(bin.smbhStructure)
                 || !cloudInLossCone(b, bin.x2, bin.y2, bin.vx2 || 0, bin.vy2 || 0, bin.M2, compH.rplus))) continue;
+            if (b._cloud) accreteMember(sim._struct2, b);
             b.state = 'captured'; b.consumedAt = sim.t;
             if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by companion BH', { name: b.name }));
             continue;
@@ -1287,6 +1297,7 @@
           // Member swallowed only by a REAL BH core, only through the horizon's tiny loss cone.
           if (b._cloud && (!coreCanSwallow(sim.smbhStructure)
               || !cloudInLossCone(b, 0, 0, 0, 0, M, rplus))) continue;
+          if (b._cloud) accreteMember(sim._struct1, b);
           b.state = 'captured'; b.consumedAt = sim.t;
           if (!b._cloud) logEv(sim, 'warn', trp('{name} — crossed r₊, mass added to BH', { name: b.name }));
           continue;
@@ -2155,7 +2166,10 @@
     const f = Math.max(0, frac);
     const Rvis = Math.max(1, (struct.RvisBase || 1) * Math.cbrt(Math.max(1e-3, f)));
     if (halo) {
-      halo.M = Math.max(0, Mmembers);
+      // Live member mass PLUS anything the central BH has swallowed (struct.accreted): a star
+      // eaten by a galaxy's hole leaves the member sum but its mass-energy is conserved into
+      // the core, so the structure's total gravitating mass is unchanged across a swallow.
+      halo.M = Math.max(0, Mmembers + (struct.accreted || 0));
       if (struct.haloRbase) halo.R = Math.max(1, struct.haloRbase * Math.cbrt(Math.max(1e-3, f)));
     }
     return { Rvis, density: f > 0 ? N / (Math.PI * Rvis * Rvis) : 0 };
@@ -2220,6 +2234,31 @@
     recordCloudCounts(sim);                    // refresh member COMs / halo centres
   }
 
+  // Merge-product type. A merger keeps the HIGHER structure on this ladder, mirroring real
+  // assembly: two star clusters merge into a (bigger) star cluster; a cluster that falls into
+  // a galaxy is absorbed and the product is a galaxy (the galaxy's SMBH + the cluster's stars).
+  // Nothing demotes — you never make a cluster out of a galaxy.
+  const STRUCT_RANK = { opencluster: 1, cluster: 2, galaxy: 3 };
+  function mergedStructureType(a, b) {
+    return (STRUCT_RANK[b] || 0) > (STRUCT_RANK[a] || 0) ? b : a;
+  }
+
+  // Re-type the surviving central structure IN PLACE (no re-seed — the merged swarm stays).
+  // Becoming a galaxy lights its active nucleus (AGN disc + BZ jet); a cluster/open cluster
+  // stays dark. The body panel's category selector reads sim.smbhStructure, so it switches to
+  // the new type on the next render.
+  function applyMergedCentralType(sim, key) {
+    sim.smbhStructure = key;
+    if (sim._struct1) sim._struct1.key = key;
+    if (key === 'galaxy') {
+      if (sim.disc) sim.disc.enabled = true;
+      if (!(sim.params.B > 0.4)) sim.params.B = 0.6;
+      if (Math.abs(sim.params.a) < 0.5) sim.params.a = 0.9 * (Math.sign(sim.params.a) || 1);
+    } else if (sim.disc) {
+      sim.disc.enabled = false;
+    }
+  }
+
   // The companion structure has lost all its member stars to the central — the merger
   // is complete. End the binary; its (already re-tagged) stars stay with the central, and
   // the surviving central's mass label snaps back to the value it was built with.
@@ -2232,10 +2271,18 @@
     // members do not jump when the integrator re-centres the lone survivor at the origin.
     recenterSceneToCore(sim, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0);
     bin.enabled = false;
+    // The product takes the higher of the two structure types (cluster+cluster→cluster;
+    // cluster+galaxy→galaxy). Re-type the survivor in place (no re-seed) so the merged swarm
+    // is kept and the UI category selector follows.
+    const product = mergedStructureType(sim.smbhStructure, bin.smbhStructure);
+    // Conserve any mass each core has already swallowed: the companion's banked accretion
+    // carries over to the surviving central.
+    if (sim._struct1 && sim._struct2) sim._struct1.accreted = (sim._struct1.accreted || 0) + (sim._struct2.accreted || 0);
     // The companion's members are already re-tagged to the central, so their mass is in
     // sim._cloudM1 (and the central halo) — the remnant keeps the full combined bound
     // mass. Only the now-empty companion bookkeeping is cleared.
     sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
+    if (product !== sim.smbhStructure) applyMergedCentralType(sim, product);
     // Reset the central's displayed mass to its seed value (the user's "M reverts to the
     // value originally set" rule). The geometric core (params.M = 1) is unchanged.
     if (sim._struct1 && sim._struct1.massBase) sim.params.Msun = sim._struct1.massBase;
@@ -2251,11 +2298,14 @@
     const bin = sim.binary;
     if (!bin) return;
     const newKey = bin.smbhStructure;
+    // Product type takes the higher of the two (cluster+galaxy→galaxy), regardless of which
+    // core emptied; conserve the depleted central's banked accretion into the survivor.
+    const product = mergedStructureType(sim.smbhStructure, newKey);
     const struct2 = sim._struct2, halo2 = sim._halo2;
+    if (struct2 && sim._struct1) struct2.accreted = (struct2.accreted || 0) + (sim._struct1.accreted || 0);
     const keepScale = sim.view.scale;             // keep the swarm framed across promotion
     promoteCompanionToCentral(sim, bin);          // copy the companion's full param set up
     sim.view.scale = keepScale;
-    sim.smbhStructure = newKey;
     // Re-tag every one of the companion's surviving members to the central role/origin so
     // they keep orbiting the (now promoted) primary and a later clear wipes them.
     for (const b of sim.bodies) {
@@ -2265,8 +2315,9 @@
     }
     sim._halo1 = halo2; sim._struct1 = struct2;
     sim._halo2 = null; sim._struct2 = null; sim._cloudN2 = 0; sim._cloudM2 = 0;
-    // The promoted primary lights its accretion disc only if it is an active galaxy.
-    if (sim.disc) sim.disc.enabled = (newKey === 'galaxy');
+    // Type the new central to the product and light its AGN if it is (now) a galaxy. The UI
+    // category selector reads sim.smbhStructure and follows on the next render.
+    applyMergedCentralType(sim, product);
     if (sim.disc2) sim.disc2.enabled = false;
     // Snap the new primary's mass label back to its seed value (the "M reverts" rule).
     if (struct2 && struct2.massBase) sim.params.Msun = struct2.massBase;
