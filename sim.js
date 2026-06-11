@@ -451,7 +451,12 @@
     // relaxation) sink a touch faster than galaxy pairs.
     if (dfMerger && !bin.classical && !mtActive) {
       const rNow = Math.max(1e-3, Math.hypot(Dx, Dy));
-      const sigma = Math.max(0.05, phys.circularSpeed(rNow, Mt) || Math.sqrt(Mt / rNow));
+      // Background dispersion = the SWARM's softened-field circular speed at the
+      // separation. The pseudo-GR circularSpeed diverges at the photon sphere
+      // (r = 3·Mt) — using it made sigma blow up as the cores closed in, the
+      // Chandrasekhar bracket collapsed, and every galaxy pair stalled forever
+      // at exactly d = 3(M1+M2) instead of sinking to coalescence.
+      const sigma = Math.max(0.05, Math.sqrt(cloudCircularSpeed2(rNow, Mt)));
       // Background density at the separation: uniform dark-matter halos (if any) plus
       // a core stellar term (mass enclosed within rNow, rough).
       let rho = 0;
@@ -490,7 +495,17 @@
       const reach = reach1 + reach2;
       const overlap = sstep((reach - rNow) / (0.25 * reach));   // fades in past first contact
       const common = sstep(((sim._coreAlign || 0) - CORE_ALIGN_LO) / (CORE_ALIGN_HI - CORE_ALIGN_LO));
-      const boost = common * overlap;                            // 0 → 1, C¹ everywhere
+      // Inner-sink gate: once the cores sit INSIDE the swarm's inner edge (no
+      // member orbits between them) the swarm orbits the pair as one mass and
+      // the alignment tally can no longer arm (stars hug their own core, so the
+      // star→core directions never agree) — yet physically this is the regime
+      // where loss-cone scattering + GW finish the job quickly. Ramp the same
+      // boost in on separation so the inspiral does not stall at a few M.
+      const rIn1 = isCloudStruct(sim.smbhStructure) ? structureGeom(sim.smbhStructure).rIn : 2;
+      const rIn2 = isCloudStruct(bin.smbhStructure) ? structureGeom(bin.smbhStructure).rIn : 2;
+      const rInSum = rIn1 + rIn2;
+      const inner = sstep((rInSum - rNow) / (0.5 * rInSum));
+      const boost = Math.max(common, inner) * overlap;           // 0 → 1, C¹ everywhere
       decay *= 1 + CORE_MERGE_BOOST * boost;
       // One-time event-log marker (display only — the dynamics never switch).
       if (!bin._coreMerge && boost > 0.5) {
@@ -1524,6 +1539,49 @@
     }
   }
 
+  // ── Slingshot energy sink (restricted-N-body heating control) ──
+  // While a binary stirs the swarm, three-body slingshots off the moving cores
+  // pump orbital energy into the members. In a real structure that energy is
+  // shared among billions of stars (each one barely warms); a ~120-particle
+  // tracer swarm keeps it all per-star and slowly boils off — most stars would
+  // leave, the opposite of a real merger. Bleed the excess back out as a weak
+  // drag against the binding background (the wake the heated star raises in
+  // the halo + star sea it plows through). Engages ONLY above DRAG_TH times
+  // the local circular speed and only INSIDE the host halo — ordinary orbits
+  // are untouched, and a star already outside every halo keeps its speed, so
+  // genuine hypervelocity ejecta still escape.
+  const DRAG_TH = 1.30;     // engages above this multiple of the local circular speed
+  const DRAG_K = 0.35;      // excess-speed e-folding rate (per sim-t)
+  function stepSwarmDrag(sim, dt) {
+    if (dt <= 0) return;
+    const bin = sim.binary;
+    const binOn = !!(bin && bin.enabled);
+    if (!binOn && !sim._relax) return;   // only the merger dance / relaxation heats the swarm
+    const hostC = resolveHost(sim, 'central');
+    const hostS = binOn ? resolveHost(sim, 'companion') : null;
+    const halo1 = sim._halo1, halo2 = sim._halo2;
+    for (const b of sim.bodies) {
+      if (!b._cloud || b.state !== 'orbit') continue;
+      // Drag frame = the closer structure (the background the star moves through).
+      const d1 = Math.hypot(b.x - hostC.hx, b.y - hostC.hy);
+      const d2 = hostS ? Math.hypot(b.x - hostS.hx, b.y - hostS.hy) : Infinity;
+      const host = d2 < d1 ? hostS : hostC;
+      const halo = d2 < d1 ? halo2 : halo1;
+      const r = Math.min(d1, d2);
+      if (!halo || !(halo.M > 0) || r > halo.R) continue;   // no background → no wake
+      let vc2 = cloudCircularSpeed2(r, host.Mcore);
+      const ha = phys.haloAccel(r, 0, halo.M, halo.R);
+      vc2 += Math.abs(ha.ax) * r;
+      const vth = DRAG_TH * Math.sqrt(Math.max(1e-9, vc2));
+      const ux = b.vx - host.hvx, uy = b.vy - host.hvy;
+      const sp = Math.hypot(ux, uy);
+      if (sp <= vth) continue;
+      // Let only the EXCESS above the engagement speed decay (C0 at the threshold).
+      const f = (vth + (sp - vth) * Math.exp(-DRAG_K * dt)) / sp;
+      b.vx = host.hvx + ux * f; b.vy = host.hvy + uy * f;
+    }
+  }
+
   // Loss cone of a real horizon at rDest: Lcrit = sqrt(2 G Mc rDest) is the angular momentum
   // of a parabolic orbit grazing rDest (G = 1). |Δr × Δv| ≤ Lcrit ⇒ pericentre inside the
   // horizon ⇒ genuinely plunging ⇒ captured; otherwise it grazes past and survives.
@@ -2041,11 +2099,12 @@
     }
     stepStarburst(sim, advanced);     // perturbed molecular clouds collapse into new stars
     stepRelaxation(sim, advanced);    // G×G remnant relaxes toward an elliptical
+    stepSwarmDrag(sim, advanced);     // bleed slingshot heating back into the background
     if (sim._tdeFlares && sim._tdeFlares.length)
       sim._tdeFlares = sim._tdeFlares.filter((f) => sim.t - f.t0 < TDE_T);
     updateMembership(sim, advanced);  // re-tag stars to whichever structure now owns them
     recordCloudCounts(sim);    // N1 / N2 from the fresh membership
-    updateStructureMass(sim);  // mass tracks N; companion N->0 triggers the merge
+    updateStructureMass(sim, advanced);  // mass tracks N (adiabatic); companion N->0 triggers the merge
   }
 
   // Record how many cloud stars are still in range for each structure (central N1 /
@@ -2902,16 +2961,37 @@
     // ~a few percent in a real merger) leave.
     const solo = has1 && !binOn;
     const halo1 = sim._halo1;
+    // Uniform-density-sphere halo potential at distance r from its centre.
+    const haloPhi = (halo, r) => {
+      if (!halo || !(halo.M > 0)) return 0;
+      const hR = Math.max(1, halo.R || 1);
+      return r >= hR ? -halo.M / r
+                     : -halo.M * (3 * hR * hR - r * r) / (2 * hR * hR * hR);
+    };
     const soloBound = (b) => {
       const r = Math.hypot(b.x, b.y);
       const v2 = b.vx * b.vx + b.vy * b.vy;
-      let phi = -M1core / Math.sqrt(r * r + EPS2);
-      if (halo1 && halo1.M > 0) {
-        const hR = Math.max(1, halo1.R || 1);
-        phi += r >= hR ? -halo1.M / r
-                       : -halo1.M * (3 * hR * hR - r * r) / (2 * hR * hR * hR);
-      }
+      const phi = -M1core / Math.sqrt(r * r + EPS2) + haloPhi(halo1, r);
       return v2 / 2 + phi < 0;
+    };
+    // BINARY counterpart of the solo energy rule: is the star bound to the PAIR
+    // (both cores + both halos, velocity measured in the binary barycentre
+    // frame)? The merger dance slings members onto wide loops past every reach;
+    // those loops are still bound orbits of the combined system, and dropping
+    // them from the mass books would lighten the halos, weaken the binding and
+    // evaporate the swarm in a runaway. (Approximate in a time-varying two-core
+    // field, but it errs on retaining — only true ejecta read E > 0.)
+    const pairBound = (b) => {
+      const r1 = Math.hypot(b.x - c1x, b.y - c1y);
+      const r2 = Math.hypot(b.x - bin.x2, b.y - bin.y2);
+      const phi = -M1core / Math.sqrt(r1 * r1 + EPS2)
+                  - M2core / Math.sqrt(r2 * r2 + EPS2)
+                  + haloPhi(sim._halo1, r1) + haloPhi(sim._halo2, r2);
+      const Mt = Math.max(1e-9, M1core + M2core);
+      const bvx = (M1core * (bin.vx1 || 0) + M2core * (bin.vx2 || 0)) / Mt;
+      const bvy = (M1core * (bin.vy1 || 0) + M2core * (bin.vy2 || 0)) / Mt;
+      const ux = b.vx - bvx, uy = b.vy - bvy;
+      return (ux * ux + uy * uy) / 2 + phi < 0;
     };
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
@@ -2926,7 +3006,15 @@
         role = soloBound(b) ? 'central' : null;
         b._pullTimer = 0;
       } else if (!in1 && !in2) {
-        role = null;                                  // left every structure → untagged, persists
+        // Past every reach. A wide loop that is still BOUND to the pair keeps its
+        // owner (or, if untagged, is adopted by the closer structure — a bound
+        // tidal tail falling back); only true ejecta (E > 0) become streams.
+        if (binOn && pairBound(b)) {
+          role = cur != null ? cur
+               : (!has2 || d1 / reach1 <= d2 / reach2) ? (has1 ? 'central' : null) : 'companion';
+        } else {
+          role = null;                                // genuinely ejected → untagged, persists
+        }
         b._pullTimer = 0;
       } else if (in1 !== in2) {
         role = in1 ? 'central' : 'companion';         // only one structure in range → instant
@@ -3014,7 +3102,15 @@
   // structure gains stars and lightens as it loses them, and a transfer between the two
   // structures conserves the total (one +, one −) — the user's mass-energy rule. The
   // visible radius / surface density still follow the member fraction (count vs seed).
-  function structureScale(struct, frac, N, Mmembers, halo) {
+  // Halo-mass response time (sim-t). A membership flip moves a star's quantum
+  // between the two halos; letting halo.M JUMP would step the potential under
+  // every other member — each equal-pair ownership slosh then pumps random
+  // energy into the swarm (impulsive heating) until most of it boils off.
+  // Relaxing halo.M toward the member sum over a few time units makes the same
+  // transfer ADIABATIC (orbit actions are conserved), so the books still follow
+  // the members but the swarm is not stochastically heated by the bookkeeping.
+  const HALO_RESPONSE_T = 3;
+  function structureScale(struct, frac, N, Mmembers, halo, dt = null) {
     const f = Math.max(0, frac);
     const Rvis = Math.max(1, (struct.RvisBase || 1) * Math.cbrt(Math.max(1e-3, f)));
     if (halo) {
@@ -3022,7 +3118,10 @@
       // from the central POINT (coreMass1/2) now — it is inside the hole, not spread
       // through the halo — so total gravitating mass is conserved across a swallow
       // while its distribution correctly moves inward.
-      halo.M = Math.max(0, Mmembers);
+      const target = Math.max(0, Mmembers);
+      // dt == null → instant (seed / rescale / merger re-base set the new books at once).
+      const k = dt == null ? 1 : 1 - Math.exp(-dt / HALO_RESPONSE_T);
+      halo.M = halo.M + (target - halo.M) * k;
       // Halo EXTENT follows the halo's own mass (R ∝ M^(1/3)), not the star count —
       // the dark matter is its own body, not a head-count of the luminous members.
       if (struct.haloRbase) {
@@ -3033,7 +3132,7 @@
     return { Rvis, density: f > 0 ? N / (Math.PI * Rvis * Rvis) : 0 };
   }
 
-  function updateStructureMass(sim) {
+  function updateStructureMass(sim, dt = null) {
     const bin = sim.binary;
     const binOn = !!(bin && bin.enabled);
     const has1 = isCloudStruct(sim.smbhStructure) && sim._struct1 && sim._struct1.Nbase > 0;
@@ -3043,7 +3142,7 @@
       // Binding-halo mass = the bound members' quanta. Solo-structure membership is
       // ENERGY-based (updateMembership), so every gravitationally bound star — however
       // wide its orbit — keeps feeding the halo; only true ejecta (E > 0) drop out.
-      const sc = structureScale(sim._struct1, frac, sim._cloudN1, sim._cloudM1, sim._halo1);
+      const sc = structureScale(sim._struct1, frac, sim._cloudN1, sim._cloudM1, sim._halo1, dt);
       sim._cloudFrac1 = frac; sim._Rvis1 = sc.Rvis; sim._density1 = sc.density;
     } else { sim._cloudFrac1 = 0; sim._Rvis1 = 0; sim._density1 = 0; }
     if (has2) {
@@ -3053,7 +3152,7 @@
       // central SMBH and is deliberately NOT scaled by the member count here — doing both
       // would count the stellar mass twice (once in the point core the cloud feels via
       // KNphysics.acceleration, once in the halo).
-      const sc = structureScale(sim._struct2, frac, sim._cloudN2, sim._cloudM2, sim._halo2);
+      const sc = structureScale(sim._struct2, frac, sim._cloudN2, sim._cloudM2, sim._halo2, dt);
       sim._cloudFrac2 = frac; sim._Rvis2 = sc.Rvis; sim._density2 = sc.density;
     } else { sim._cloudFrac2 = 0; sim._Rvis2 = 0; sim._density2 = 0; }
 
