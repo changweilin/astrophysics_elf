@@ -367,19 +367,29 @@
     // feel the swarm. The integrator accumulates the EXACT per-member reaction forces
     // (sim._react1/_react2: −Σ m·a for each member's core + halo terms, the halo's
     // reaction anchored to its host core) — so the books balance star-for-star rather
-    // than approximately via the halo field sampled at the cores. We apply the net force
-    // to the pair's BARYCENTRE only: it translates the binary's centre of mass toward a
-    // tugged swarm, so the (cores + cloud) momentum is conserved instead of the
-    // barycentre staying artificially pinned. The RELATIVE (inspiral) coordinate is
-    // left to the dynamical-friction model below, which already represents the extended
-    // mass's drag — adding the conservative pull there too would double-drive the merger.
+    // than approximately via the halo field sampled at the cores. The net force moves
+    // the pair's BARYCENTRE here; the dfMerger block below feeds the same per-core
+    // reaction into the RELATIVE coordinate, so each core feels its own full swarm
+    // force — the wake drag in that reaction IS the dynamical friction (emergent).
     // Gated to scenes that actually carry a halo (normal stellar binaries are untouched).
     let vcx = 0, vcy = 0, AcomX = 0, AcomY = 0;
     const haloBR = !!(sim._halo1 || sim._halo2);
     if (haloBR) {
-      const rf1 = sim._react1, rf2 = sim._react2;
-      const Fx = (rf1 ? rf1.fx : 0) + (rf2 ? rf2.fx : 0);
-      const Fy = (rf1 ? rf1.fy : 0) + (rf2 ? rf2.fy : 0);
+      // Time-smooth the swarm→core reaction (exponential moving average, τ =
+      // REACT_TAU) before it drives the cores. A single member is a few percent
+      // of a core's mass here, so the raw per-star reaction is a sequence of
+      // hard random kicks — Brownian heating that can pump a soft pair apart
+      // (Heggie). In a real structure those kicks average over ~1e11 stars; the
+      // EMA recovers that limit: random-phase noise cancels, while the secular
+      // wake drag (the dynamical friction) is slow and passes through intact.
+      const rf1 = sim._react1 || { fx: 0, fy: 0 };
+      const rf2 = sim._react2 || { fx: 0, fy: 0 };
+      if (!bin._rf1s) { bin._rf1s = { fx: 0, fy: 0 }; bin._rf2s = { fx: 0, fy: 0 }; }
+      const k = 1 - Math.exp(-dt / REACT_TAU);
+      bin._rf1s.fx += (rf1.fx - bin._rf1s.fx) * k; bin._rf1s.fy += (rf1.fy - bin._rf1s.fy) * k;
+      bin._rf2s.fx += (rf2.fx - bin._rf2s.fx) * k; bin._rf2s.fy += (rf2.fy - bin._rf2s.fy) * k;
+      const Fx = bin._rf1s.fx + bin._rf2s.fx;
+      const Fy = bin._rf1s.fy + bin._rf2s.fy;
       AcomX = Fx / Mt; AcomY = Fy / Mt;
       // Re-derive the live barycentre position + velocity from the absolute core state so
       // the COM motion accumulates (the pinned-COM split-back below would otherwise reset it).
@@ -438,87 +448,50 @@
       }
     }
 
-    // ── Dynamical-friction inspiral (galaxy / cluster mergers) ──
-    // A galaxy or cluster is an extended system; it spirals in because its core plows
-    // through the other system's dark-matter halo + star sea, raising a gravitational
-    // wake that drags it (Chandrasekhar). Like the GW reaction above this is applied
-    // ADIABATICALLY — the per-step Chandrasekhar deceleration sets a fractional orbital
-    // decay rate, the separation contracts at that rate, and the pair is kept quasi-
-    // circular (v_circ ∝ 1/√r). Applying the drag directly to the velocity instead
-    // would overdamp the orbit into a slow terminal-velocity creep, not an inspiral.
-    // The real timescale is 1e8-1e10 yr, so it is accelerated by a per-structure boost
-    // (DF_RATE) chosen to show the dynamics clearly — cluster pairs (smaller, shorter
-    // relaxation) sink a touch faster than galaxy pairs.
+    // ── Emergent dynamical-friction inspiral (galaxy / cluster mergers) ──
+    // The members are REAL masses now (self-consistent N-body), so the wake a
+    // core raises in the swarm it plows through is already present in the
+    // swarm→core reaction forces (sim._react1/_react2, collected per member in
+    // integrate). Feeding that reaction into the pair's RELATIVE orbit is
+    // Chandrasekhar friction made emergent: no background-density model, no
+    // dispersion model, no alignment gates — the orbit decays because the swarm
+    // actually absorbs its energy and angular momentum, and stalls can't happen
+    // (the books and the dynamics are the same thing). Real merger timescales
+    // are 1e8-1e10 yr, so ONLY the dissipative component (the part of the
+    // reaction anti-parallel to the relative velocity — the drag) is amplified
+    // by DF_PACE / bin.dfRate; the conservative part (the swarm's bulk pull)
+    // stays at 1x so the orbital shape is not distorted.
     if (dfMerger && !bin.classical && !mtActive) {
-      const rNow = Math.max(1e-3, Math.hypot(Dx, Dy));
-      // Background dispersion = the SWARM's softened-field circular speed at the
-      // separation. The pseudo-GR circularSpeed diverges at the photon sphere
-      // (r = 3·Mt) — using it made sigma blow up as the cores closed in, the
-      // Chandrasekhar bracket collapsed, and every galaxy pair stalled forever
-      // at exactly d = 3(M1+M2) instead of sinking to coalescence.
-      const sigma = Math.max(0.05, Math.sqrt(cloudCircularSpeed2(rNow, Mt)));
-      // Background density at the separation: uniform dark-matter halos (if any) plus
-      // a core stellar term (mass enclosed within rNow, rough).
-      let rho = 0;
-      const h1 = sim._halo1, h2 = sim._halo2;
-      const sphere = (R) => (4 / 3) * Math.PI * R * R * R;
-      if (h1 && rNow < h1.R) rho += h1.M / sphere(h1.R);
-      if (h2 && rNow < h2.R) rho += h2.M / sphere(h2.R);
-      rho += 0.12 * Mt / sphere(Math.max(2, rNow));
-      const Mdf = Math.max(M1, M2);                       // dominant perturber
-      const bothCluster = isStarSwarm(sim.smbhStructure) && isStarSwarm(bin.smbhStructure);
-      // Per-structure time boost, calibrated so the pair spirals through several
-      // orbits (preserving the orbital angular momentum visually, like the stellar GW
-      // inspiral) rather than plunging radially. Cluster pairs sink a touch faster.
-      // bin.dfRate (default unset) is a user-tunable override, analogous to inspiralRate.
-      const DF_RATE = (bin.dfRate != null ? bin.dfRate : (bothCluster ? 0.65 : 0.5));
-      const aDF = phys.dynamicalFriction(Vx, Vy, Mdf, rho, sigma, 4);
-      const vrelNow = Math.max(1e-4, Math.hypot(Vx, Vy));
-      // Fractional decay rate = |a_DF| / v  (the drag-timescale inverse).
-      let decay = (Math.hypot(aDF.ax, aDF.ay) / vrelNow) * DF_RATE * dt;
-
-      // ── Common-field acceleration of the friction inspiral ──
-      // Chandrasekhar friction alone weakens once the cores orbit INSIDE a shared
-      // stellar envelope: the wake integral saturates and the pair can circle for
-      // a long time. Physically the late stage is dominated by the common
-      // background — when the structures' spheres of influence overlap AND most
-      // member stars are pulled toward both cores in nearly the same direction
-      // (sim._coreAlign, tallied per frame in recordCloudCounts), the swarm sees
-      // ONE well, not two. Model this by smoothly AMPLIFYING the same DF decay
-      // (up to ×(1+CORE_MERGE_BOOST)) — the inspiral keeps its quasi-circular
-      // Chandrasekhar character, just on a faster clock. Both ramps are
-      // smoothstepped (C¹), so the drive varies continuously and differentiably
-      // with the orbital state — no engagement threshold ever snaps the orbit.
-      const reach1 = (sim._struct1 && sim._struct1.rOut) || (h1 && h1.R) || 30;
-      const reach2 = (sim._struct2 && sim._struct2.rOut) || (h2 && h2.R) || 30;
-      const sstep = (t) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
-      const reach = reach1 + reach2;
-      const overlap = sstep((reach - rNow) / (0.25 * reach));   // fades in past first contact
-      const common = sstep(((sim._coreAlign || 0) - CORE_ALIGN_LO) / (CORE_ALIGN_HI - CORE_ALIGN_LO));
-      // Inner-sink gate: once the cores sit INSIDE the swarm's inner edge (no
-      // member orbits between them) the swarm orbits the pair as one mass and
-      // the alignment tally can no longer arm (stars hug their own core, so the
-      // star→core directions never agree) — yet physically this is the regime
-      // where loss-cone scattering + GW finish the job quickly. Ramp the same
-      // boost in on separation so the inspiral does not stall at a few M.
+      const rf1 = bin._rf1s, rf2 = bin._rf2s;   // EMA-smoothed reaction (see haloBR above)
+      if (rf1 && rf2) {
+        // Inertia = the FULL core point masses (unit + merger bank + swallowed),
+        // matching the attraction the members were accelerated by in integrate.
+        const Mi1 = Math.max(1e-9, coreMass1(sim)), Mi2 = Math.max(1e-9, coreMass2(sim));
+        let aRx = (rf2.fx / Mi2) - (rf1.fx / Mi1);
+        let aRy = (rf2.fy / Mi2) - (rf1.fy / Mi1);
+        const pace = bin.dfRate != null ? bin.dfRate : DF_PACE;
+        const v2rel = Vx * Vx + Vy * Vy;
+        if (v2rel > 1e-12 && pace !== 1) {
+          const dot = (aRx * Vx + aRy * Vy) / v2rel;
+          if (dot < 0) {           // drag component only — never amplify a push
+            aRx += (pace - 1) * dot * Vx;
+            aRy += (pace - 1) * dot * Vy;
+          }
+        }
+        Vx += aRx * dt; Vy += aRy * dt;
+      }
+      // Event-log marker when the cores sink inside the swarm's inner edge
+      // (display only — the dynamics above never switch).
+      const rNow = Math.hypot(Dx, Dy);
       const rIn1 = isCloudStruct(sim.smbhStructure) ? structureGeom(sim.smbhStructure).rIn : 2;
       const rIn2 = isCloudStruct(bin.smbhStructure) ? structureGeom(bin.smbhStructure).rIn : 2;
-      const rInSum = rIn1 + rIn2;
-      const inner = sstep((rInSum - rNow) / (0.5 * rInSum));
-      const boost = Math.max(common, inner) * overlap;           // 0 → 1, C¹ everywhere
-      decay *= 1 + CORE_MERGE_BOOST * boost;
-      // One-time event-log marker (display only — the dynamics never switch).
-      if (!bin._coreMerge && boost > 0.5) {
+      if (!bin._coreMerge && rNow < rIn1 + rIn2) {
         bin._coreMerge = true;
         logEv(sim, 'amber', tr('core influence spheres overlap — fields merging progressively',
                                '雙核心勢力範圍重疊 — 引力場漸進融合中'));
-      } else if (bin._coreMerge && boost < 0.2) {
+      } else if (bin._coreMerge && rNow > 1.5 * (rIn1 + rIn2)) {
         bin._coreMerge = false;
       }
-      let scale = 1 - decay;
-      if (scale < 0.5) scale = 0.5;                       // per-step clamp — no plunge
-      Dx *= scale; Dy *= scale;
-      Vx *= 1 / Math.sqrt(scale); Vy *= 1 / Math.sqrt(scale);   // stay quasi-circular
     }
 
     // Advance the barycentre under the swarm back-reaction (no-op when haloBR is false, so
@@ -1291,19 +1264,14 @@
   const CLOUD_SWALLOW_P = 0.08;
   const GRAZE_CLEAR_R   = 1.2;   // leaving this radius re-arms the swallow roll
 
-  // ── Common-field friction boost (progressive core coalescence) ──
-  // A member star counts as "commonly pulled" when its star→core1 / star→core2
-  // directions agree within ~20° (cos ≥ 0.94). As that fraction rises across
-  // [CORE_ALIGN_LO, CORE_ALIGN_HI] the swarm increasingly sees ONE potential
-  // well, and the Chandrasekhar inspiral is smoothly ACCELERATED — the same DF
-  // decay law, multiplied by up to (1 + CORE_MERGE_BOOST) — rather than driven
-  // by a separate contraction channel. Both the alignment ramp and the
-  // sphere-of-influence overlap gate are smoothstepped, so the drive is a C¹
-  // function of the orbital state: no thresholds snap, no hysteresis kinks.
-  const CORE_ALIGN_COS  = 0.94;
-  const CORE_ALIGN_LO   = 0.35;
-  const CORE_ALIGN_HI   = 0.85;
-  const CORE_MERGE_BOOST = 5;
+  // ── Emergent-friction pacing ──────────────────────────────
+  // The swarm→core reaction (collected in integrate) IS the dynamical friction
+  // now. Real DF timescales are 1e8-1e10 yr, so the DISSIPATIVE component of
+  // that reaction (drag anti-parallel to the relative velocity) is amplified
+  // by this factor for the demo's clock; the conservative component is never
+  // scaled. bin.dfRate overrides per-pair (analogous to inspiralRate).
+  const DF_PACE = 2;
+  const REACT_TAU = 2;   // swarm→core reaction smoothing time (kills per-star kick noise)
   // Post-coalescence field-morph window (sim-time units): the two softened core
   // sources persist after contact and are blended into the single remnant point
   // over this window (smoothstep shrink + contact-rate rotation), so the swarm's
@@ -1539,49 +1507,6 @@
     }
   }
 
-  // ── Slingshot energy sink (restricted-N-body heating control) ──
-  // While a binary stirs the swarm, three-body slingshots off the moving cores
-  // pump orbital energy into the members. In a real structure that energy is
-  // shared among billions of stars (each one barely warms); a ~120-particle
-  // tracer swarm keeps it all per-star and slowly boils off — most stars would
-  // leave, the opposite of a real merger. Bleed the excess back out as a weak
-  // drag against the binding background (the wake the heated star raises in
-  // the halo + star sea it plows through). Engages ONLY above DRAG_TH times
-  // the local circular speed and only INSIDE the host halo — ordinary orbits
-  // are untouched, and a star already outside every halo keeps its speed, so
-  // genuine hypervelocity ejecta still escape.
-  const DRAG_TH = 1.30;     // engages above this multiple of the local circular speed
-  const DRAG_K = 0.35;      // excess-speed e-folding rate (per sim-t)
-  function stepSwarmDrag(sim, dt) {
-    if (dt <= 0) return;
-    const bin = sim.binary;
-    const binOn = !!(bin && bin.enabled);
-    if (!binOn && !sim._relax) return;   // only the merger dance / relaxation heats the swarm
-    const hostC = resolveHost(sim, 'central');
-    const hostS = binOn ? resolveHost(sim, 'companion') : null;
-    const halo1 = sim._halo1, halo2 = sim._halo2;
-    for (const b of sim.bodies) {
-      if (!b._cloud || b.state !== 'orbit') continue;
-      // Drag frame = the closer structure (the background the star moves through).
-      const d1 = Math.hypot(b.x - hostC.hx, b.y - hostC.hy);
-      const d2 = hostS ? Math.hypot(b.x - hostS.hx, b.y - hostS.hy) : Infinity;
-      const host = d2 < d1 ? hostS : hostC;
-      const halo = d2 < d1 ? halo2 : halo1;
-      const r = Math.min(d1, d2);
-      if (!halo || !(halo.M > 0) || r > halo.R) continue;   // no background → no wake
-      let vc2 = cloudCircularSpeed2(r, host.Mcore);
-      const ha = phys.haloAccel(r, 0, halo.M, halo.R);
-      vc2 += Math.abs(ha.ax) * r;
-      const vth = DRAG_TH * Math.sqrt(Math.max(1e-9, vc2));
-      const ux = b.vx - host.hvx, uy = b.vy - host.hvy;
-      const sp = Math.hypot(ux, uy);
-      if (sp <= vth) continue;
-      // Let only the EXCESS above the engagement speed decay (C0 at the threshold).
-      const f = (vth + (sp - vth) * Math.exp(-DRAG_K * dt)) / sp;
-      b.vx = host.hvx + ux * f; b.vy = host.hvy + uy * f;
-    }
-  }
-
   // Loss cone of a real horizon at rDest: Lcrit = sqrt(2 G Mc rDest) is the angular momentum
   // of a parabolic orbit grazing rDest (G = 1). |Δr × Δv| ≤ Lcrit ⇒ pericentre inside the
   // horizon ⇒ genuinely plunging ⇒ captured; otherwise it grazes past and survives.
@@ -1659,14 +1584,100 @@
         };
       }
     }
-    // Newton's-third-law reaction of the swarm on the cores, accumulated per member from
-    // its core + halo forces (a halo's reaction is anchored to its host core — the halo
-    // IS the structure's bound member mass riding that core). stepBinary translates the
-    // pair's barycentre with the net force, so (cores + cloud) momentum is conserved by
-    // construction instead of approximately via the halo field sampled at the cores.
+    // ── Member self-gravity (monopole mean field) ─────────────
+    // The swarm binds ITSELF: every member carries its real mass quantum (stars
+    // + their dark-matter share). Direct pairwise gravity is NOT usable at this
+    // population (~100 particles carrying the full bound mass relax collisionally
+    // in a couple of crossing times — mass segregation piles stars onto tight
+    // inner orbits while flinging others into a spurious far halo, no softening
+    // can stop the distant-encounter part). Instead each structure's members feel
+    // the smooth MONOPOLE of their own swarm, rebuilt every step from the actual
+    // positions: sort the group by radius about its core, prefix-sum the mass,
+    // and pull each member by the mass enclosed inside its own radius (Plummer-
+    // softened by EPS2_SS). Energy-honest (the profile follows the real mass, no
+    // bookkeeping teleports), exerts zero net self-force, and is collisionless by
+    // construction. The OTHER structure's swarm acts as its enclosed-mass
+    // monopole too, with the net reaction returned to that group as a uniform
+    // bulk acceleration so cross-swarm momentum is conserved exactly.
+    // (Star-core forces stay exact pairwise below — the wake in THOSE is what
+    // drags the cores: emergent dynamical friction.)
+    const swarm = [];
+    for (const b of sim.bodies) {
+      if (b._cloud && b.state === 'orbit' && !b.held) swarm.push(b);
+    }
+    const nSw = swarm.length;
+    {
+      const g1 = [], g2 = [];
+      for (let i = 0; i < nSw; i++) {
+        const b = swarm[i];
+        b._sgx = 0; b._sgy = 0;
+        if (binOn) {
+          const d1q = (b.x - c1x) * (b.x - c1x) + (b.y - c1y) * (b.y - c1y);
+          const d2q = (b.x - bin.x2) * (b.x - bin.x2) + (b.y - bin.y2) * (b.y - bin.y2);
+          (d1q <= d2q ? g1 : g2).push(b);
+        } else g1.push(b);
+      }
+      // Build a group's radial profile about (gx,gy): sorted radii + prefix mass.
+      const profile = (g, gx, gy) => {
+        const pr = new Array(g.length);
+        for (let i = 0; i < g.length; i++) {
+          const b = g[i];
+          pr[i] = [Math.hypot(b.x - gx, b.y - gy), b._m || 0, b];
+        }
+        pr.sort((p, q) => p[0] - q[0]);
+        let acc = 0;
+        const cum = new Array(pr.length);
+        for (let i = 0; i < pr.length; i++) { cum[i] = acc; acc += pr[i][1]; }  // mass strictly inside
+        return { pr, cum, total: acc, gx, gy };
+      };
+      const encAt = (P, r) => {        // enclosed mass at radius r (binary search)
+        let lo = 0, hi = P.pr.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (P.pr[mid][0] < r) lo = mid + 1; else hi = mid; }
+        return lo > 0 ? P.cum[lo - 1] + P.pr[lo - 1][1] : 0;
+      };
+      const P1 = g1.length ? profile(g1, c1x, c1y) : null;
+      const P2 = binOn && g2.length ? profile(g2, bin.x2, bin.y2) : null;
+      // Own-swarm monopole (rank order gives enclosed mass directly).
+      for (const P of [P1, P2]) {
+        if (!P) continue;
+        for (let i = 0; i < P.pr.length; i++) {
+          const [r, , b] = P.pr[i];
+          if (r < 1e-6) continue;
+          const w = -P.cum[i] / Math.pow(r * r + EPS2_SS, 1.5);
+          b._sgx += w * (b.x - P.gx); b._sgy += w * (b.y - P.gy);
+        }
+      }
+      // Cross-swarm monopole, with the net reaction handed back to the source
+      // group as a uniform bulk acceleration (momentum closes exactly).
+      if (P1 && P2) {
+        const cross = (Psrc, gdst) => {
+          let fx = 0, fy = 0;
+          for (const b of gdst) {
+            const dx = b.x - Psrc.gx, dy = b.y - Psrc.gy;
+            const r = Math.hypot(dx, dy);
+            if (r < 1e-6) continue;
+            const w = -encAt(Psrc, r) / Math.pow(r * r + EPS2_SS, 1.5);
+            b._sgx += w * dx; b._sgy += w * dy;
+            const m = b._m || 0;
+            fx -= m * w * dx; fy -= m * w * dy;     // reaction on the source swarm
+          }
+          if (Psrc.total > 0) {
+            const ax = fx / Psrc.total, ay = fy / Psrc.total;
+            for (const [, , b] of Psrc.pr) { b._sgx += ax; b._sgy += ay; }
+          }
+        };
+        cross(P2, g1);
+        cross(P1, g2);
+      }
+    }
+    // Newton's-third-law reaction of the swarm on the cores, accumulated per member
+    // from its core forces. stepBinary feeds the net force back into BOTH the pair's
+    // barycentre AND the relative orbit — that back-reaction IS the dynamical
+    // friction now (the wake a core raises in the swarm it plows through), emergent
+    // instead of the old hand-tuned Chandrasekhar formula.
     let r1fx = 0, r1fy = 0, r2fx = 0, r2fy = 0;
-    const cloudAccel = (px, py, m, collect) => {
-      const acc = { ax: 0, ay: 0 };
+    const cloudAccel = (px, py, m, collect, sgx, sgy) => {
+      const acc = { ax: sgx || 0, ay: sgy || 0 };
       let a1x, a1y;
       if (mo) {
         // Morph window: the central well is still the TWO progenitor points.
@@ -1680,14 +1691,12 @@
         const w1 = -Mc1 / Math.pow(d1x * d1x + d1y * d1y + EPS2, 1.5);
         a1x = w1 * d1x; a1y = w1 * d1y;
       }
-      if (halo1) { const hf = phys.haloAccel(px - h1c.x, py - h1c.y, halo1.M, halo1.R); a1x += hf.ax; a1y += hf.ay; }
       acc.ax += a1x; acc.ay += a1y;
       if (collect) { r1fx -= m * a1x; r1fy -= m * a1y; }
       if (binOn) {
         const d2x = px - bin.x2, d2y = py - bin.y2;
         const w2 = -Mc2 / Math.pow(d2x * d2x + d2y * d2y + EPS2, 1.5);
-        let a2x = w2 * d2x, a2y = w2 * d2y;
-        if (halo2) { const hf = phys.haloAccel(px - h2c.x, py - h2c.y, halo2.M, halo2.R); a2x += hf.ax; a2y += hf.ay; }
+        const a2x = w2 * d2x, a2y = w2 * d2y;
         acc.ax += a2x; acc.ay += a2y;
         if (collect) { r2fx -= m * a2x; r2fy -= m * a2y; }
       }
@@ -1697,7 +1706,7 @@
       if (b.state !== 'orbit') continue;
       if (b.held) { b.trail.length = 0; continue; } // frozen while user repositions
       const cloud = !!b._cloud;
-      const a1 = cloud ? cloudAccel(b.x, b.y, 0, false)
+      const a1 = cloud ? cloudAccel(b.x, b.y, 0, false, b._sgx, b._sgy)
                        : phys.acceleration(b.x, b.y, b.vx, b.vy, M, Q, a, b.charge || 0, bin);
       if (!cloud) addHalo(a1, b.x, b.y);
       const mx = b.x + b.vx * dt * 0.5;
@@ -1706,7 +1715,7 @@
       const mvy = b.vy + a1.ay * dt * 0.5;
       // The midpoint stage is the one whose acceleration actually advances the star, so
       // the third-law reaction is collected here (×m, banked onto the cores).
-      const a2 = cloud ? cloudAccel(mx, my, b._m || 0, true)
+      const a2 = cloud ? cloudAccel(mx, my, b._m || 0, true, b._sgx, b._sgy)
                        : phys.acceleration(mx, my, mvx, mvy, M, Q, a, b.charge || 0, bin);
       if (!cloud) addHalo(a2, mx, my);
       b.vx += a2.ax * dt;
@@ -2099,7 +2108,6 @@
     }
     stepStarburst(sim, advanced);     // perturbed molecular clouds collapse into new stars
     stepRelaxation(sim, advanced);    // G×G remnant relaxes toward an elliptical
-    stepSwarmDrag(sim, advanced);     // bleed slingshot heating back into the background
     if (sim._tdeFlares && sim._tdeFlares.length)
       sim._tdeFlares = sim._tdeFlares.filter((f) => sim.t - f.t0 < TDE_T);
     updateMembership(sim, advanced);  // re-tag stars to whichever structure now owns them
@@ -2119,13 +2127,6 @@
     let cpx = 0, cpy = 0, cL = 0, cAbs = 0;   // cloud momentum / ang-momentum (ledger)
     const bin = sim.binary, binOn = !!(bin && bin.enabled);
     const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
-    // Field-alignment tally: of the BOUND members, how many are pulled toward the
-    // two cores in nearly the same direction (the angle between the star→core1 and
-    // star→core2 unit vectors within ~20°)? This fraction only approaches 1 when
-    // the cores sit deep inside a COMMON stellar envelope — the swarm can no longer
-    // resolve them as separate attractors — and is what arms the progressive core
-    // coalescence in stepBinary.
-    let nAligned = 0, nAlignTot = 0;
     let gm1 = 0, gm2 = 0;   // molecular-cloud (gas member) mass per structure
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
@@ -2141,20 +2142,10 @@
       if (b._cloudRole === 'companion')    { n2++; m2 += m; sx2 += m * b.x; sy2 += m * b.y; }
       else if (b._cloudRole === 'central') { n1++; m1 += m; sx1 += m * b.x; sy1 += m * b.y; }
       else                                 { nS++; mS += m; if (b._hvs) nH++; }
-      if (binOn && (b._cloudRole === 'central' || b._cloudRole === 'companion')) {
-        const ux = c1x - b.x, uy = c1y - b.y;          // star → central core
-        const wx = bin.x2 - b.x, wy = bin.y2 - b.y;    // star → companion core
-        const den = Math.hypot(ux, uy) * Math.hypot(wx, wy);
-        if (den > 1e-9) {
-          nAlignTot++;
-          if ((ux * wx + uy * wy) / den >= CORE_ALIGN_COS) nAligned++;
-        }
-      }
       cpx += m * b.vx; cpy += m * b.vy;
       cL  += m * (b.x * b.vy - b.y * b.vx);
       cAbs += m * Math.hypot(b.vx, b.vy);
     }
-    sim._coreAlign = binOn && nAlignTot > 0 ? nAligned / nAlignTot : 0;
     sim._gasM1 = gm1; sim._gasM2 = gm2;
     sim._cloudN1 = n1; sim._cloudN2 = n2;
     sim._cloudM1 = m1; sim._cloudM2 = m2;
@@ -2284,18 +2275,32 @@
   // preserved (its angular-momentum sign), so the swarm keeps its spin while every orbit
   // becomes a stable closed circle — the cloud analogue of circularizeBody. (hvx,hvy) is
   // the host core's lab velocity, added so the whole swarm co-moves with its core.
+  // Per-member circular speed in the swarm's ACTUAL field — the same monopole
+  // mean field the integrator applies: softened core plus the member mass
+  // enclosed inside the star's own radius (EPS2_SS Plummer), so a seeded or
+  // re-circularised swarm starts in true equilibrium with what it will feel.
+  function swarmCircSpeed(members, i, hx, hy, Mcore) {
+    const b = members[i];
+    const rx = b.x - hx, ry = b.y - hy;
+    const r = Math.hypot(rx, ry);
+    if (r < 1e-3) return { r, rx, ry, vc: 0 };
+    let enc = 0;
+    for (let j = 0; j < members.length; j++) {
+      if (j === i) continue;
+      const o = members[j];
+      if (Math.hypot(o.x - hx, o.y - hy) < r) enc += o._m || 0;
+    }
+    const s = r * r + EPS2, sss = r * r + EPS2_SS;
+    const vc2 = Mcore * r * r / (s * Math.sqrt(s)) + enc * r * r / (sss * Math.sqrt(sss));
+    return { r, rx, ry, vc: Math.sqrt(Math.max(0, vc2)) };
+  }
+
   function circularizeCloud(sim, role, hx, hy, hvx, hvy, Mcore, halo, dir) {
-    for (const cb of sim.bodies) {
-      if (!cb._cloud || cb.state !== 'orbit' || cb._cloudRole !== role) continue;
-      const rx = cb.x - hx, ry = cb.y - hy;
-      const r = Math.hypot(rx, ry);
+    const mine = sim.bodies.filter((cb) => cb._cloud && cb.state === 'orbit' && cb._cloudRole === role);
+    for (let i = 0; i < mine.length; i++) {
+      const cb = mine[i];
+      const { r, rx, ry, vc } = swarmCircSpeed(mine, i, hx, hy, Mcore);
       if (r < 1e-3) { cb.vx = hvx; cb.vy = hvy; continue; }
-      let vc2 = cloudCircularSpeed2(r, Mcore);
-      if (halo && halo.M > 0) {
-        const ha = phys.haloAccel(rx, ry, halo.M, halo.R);
-        vc2 += Math.hypot(ha.ax, ha.ay) * r;
-      }
-      const vc = Math.sqrt(Math.max(0, vc2));
       // Keep the star's current sense of revolution (sign of r × v_rel); fall back to
       // the host's spin direction if it is essentially at rest relative to the core.
       const relvx = cb.vx - hvx, relvy = cb.vy - hvy;
@@ -2324,7 +2329,22 @@
     // Peters radiation reaction acts from this clean circular start (it does not
     // hold a perpetual Newtonian circle).
     bin.classical = false;
-    const vrel = Math.sqrt(Mt / d);
+    // For structure pairs the relative orbit moves through the SWARMS' mass too
+    // (the members are real masses now): circularising against the bare cores
+    // alone would seed far below the true circular speed and the pair would
+    // plunge. Effective mass = full cores + each swarm's members enclosed
+    // within the separation.
+    let Mt2 = Mt;
+    if (isCloudStruct(sim.smbhStructure) || isCloudStruct(bin.smbhStructure)) {
+      Mt2 = coreMass1(sim) + coreMass2(sim);
+      for (const b of sim.bodies) {
+        if (!b._cloud || b.state !== 'orbit') continue;
+        const hx = b._cloudRole === 'companion' ? bin.x2 : bin.x1;
+        const hy = b._cloudRole === 'companion' ? bin.y2 : bin.y1;
+        if (Math.hypot(b.x - hx, b.y - hy) < d) Mt2 += b._m || 0;
+      }
+    }
+    const vrel = Math.sqrt(Mt2 / d);
     const dir = Math.sign(sim.params.a || 1);
     const Vx = -dy / d * vrel * dir;
     const Vy =  dx / d * vrel * dir;
@@ -2532,9 +2552,19 @@
   function isCloudStruct(key) {
     return key === 'galaxy' || key === 'cluster' || key === 'opencluster';
   }
-  // Plummer softening (ε² = 2.25, ε = 1.5 M) of the core field as the cloud members
-  // feel it — shared by the integrator (cloudAccel) and the circular-speed seeds.
-  const EPS2 = 2.25;
+  // Plummer softening (ε = 3 M) of the core field as the cloud members feel it —
+  // shared by the integrator (cloudAccel) and the circular-speed seeds. The core
+  // is a galactic bulge / cluster core to its members, not a point; the dominant
+  // ejection channel was members slingshot off the fast-moving cores in a
+  // merger's final plunge, which the wider kernel blunts.
+  const EPS2 = 9;
+  // Star-star Plummer softening (ε = 4.5 M) for the member self-gravity. Deliberately
+  // WIDER than the mean interparticle spacing (~5-9 M for a 60-120 star structure):
+  // a ~100-particle swarm whose members carry the full bound mass would otherwise be
+  // dominated by hard two-body scattering and disc clumping (small-N noise) — the wide
+  // kernel turns the pairwise sum into a smooth mean field while still letting the
+  // swarm bind itself and drag the cores (emergent dynamical friction).
+  const EPS2_SS = 20.25;
   // Squared circular speed of a cloud member at radius r in the field it ACTUALLY
   // feels: the Plummer-softened Newtonian core, v² = a(r)·r = M r² / (r²+ε²)^(3/2).
   // (NOT the pseudo-GR circularSpeed — that is the field of user-placed bodies; a
@@ -2608,14 +2638,19 @@
     const th = Math.random() * Math.PI * 2;
     const x = hx + r * Math.cos(th), y = hy + r * Math.sin(th);
     // Circular speed about the core (softened field the member feels), plus the
-    // halo's contribution (flattens the rotation curve for a galaxy). v_halo^2 = a_halo·r.
+    // swarm's OWN enclosed mass — the members bind themselves now (self-consistent
+    // N-body). The sampling law r = rIn + (rOut−rIn)·u² has CDF u = sqrt(Δr/Δ), so
+    // the analytically expected enclosed member mass at r is haloM·u, pulled
+    // through the same wide star-star softening the integrator uses.
     let vc2 = cloudCircularSpeed2(r, Mcore);
-    if (halo) {
-      const ha = phys.haloAccel(r, 0, halo.M, halo.R);
-      vc2 += Math.abs(ha.ax) * r;
+    if (halo && geom.rOut > geom.rIn) {
+      const u = Math.sqrt(Math.max(0, Math.min(1, (r - geom.rIn) / (geom.rOut - geom.rIn))));
+      vc2 += (halo.M * u) * r * r / Math.pow(r * r + EPS2_SS, 1.5);
     }
     const vc = Math.sqrt(Math.max(0, vc2));
-    const disp = (gas ? 0.02 : 0.06) * vc;     // gas is dynamically colder than stars
+    // Warmer disc than the old mean-field seed: random-direction dispersion lifts
+    // Toomre Q so the self-gravitating sheet does not clump (small-N stability).
+    const disp = (gas ? 0.05 : 0.14) * vc;     // gas is dynamically colder than stars
     const jx = (Math.random() - 0.5) * 2 * disp, jy = (Math.random() - 0.5) * 2 * disp;
     addBody(sim, {
       name: '', kind: gas ? 'gas' : 'star', radius: gas ? 0.32 : 0.42,
@@ -2831,6 +2866,20 @@
     else                      { sim._halo1 = halo; sim._struct1 = struct; }
 
     for (let i = 0; i < N; i++) spawnCloudParticle(sim, key, role, host, geom, halo, i < nGas, mPer);
+    // Settle the seed velocities on the swarm's ACTUAL self-consistent field (the
+    // spawn-time analytic guess can't know the realized positions): exact pairwise
+    // circular speed about the host, with a modest random dispersion on top so the
+    // self-gravitating disc stays Toomre-warm instead of clumping.
+    const mine = sim.bodies.filter((b) => b._cloud && b.state === 'orbit' && b._cloudRole === role);
+    for (let i = 0; i < mine.length; i++) {
+      const b = mine[i];
+      const { r, rx, ry, vc } = swarmCircSpeed(mine, i, host.hx, host.hy, host.Mcore);
+      if (r < 1e-3) continue;
+      const disp = (b.kind === 'gas' ? 0.04 : 0.10) * vc;
+      const jx = (Math.random() - 0.5) * 2 * disp, jy = (Math.random() - 0.5) * 2 * disp;
+      b.vx = host.hvx - (ry / r) * vc * host.dir + jx;
+      b.vy = host.hvy + (rx / r) * vc * host.dir + jy;
+    }
   }
 
   // ── User mass-slider response (M -> N -> R/brightness) ─────
@@ -2968,10 +3017,40 @@
       return r >= hR ? -halo.M / r
                      : -halo.M * (3 * hR * hR - r * r) / (2 * hR * hR * hR);
     };
+    // Solo referee potential = the SAME monopole the integrator applies, built
+    // from EVERY orbiting member (bound AND stream — the mass is there whether
+    // or not it carries a tag). Judging against the bound-only halo record
+    // would re-create the old runaway in the referee: a marginal star reads
+    // unbound → drops off the books → the next star reads against a lighter
+    // halo → cascades. Φ(r) ≈ −M_enc(r)/√(r²+ε²) + Σ_outside −m_j/√(r_j²+ε²)
+    // (inner mass as a softened point, outer members as shells).
+    let soloProf = null;
+    if (solo) {
+      const pr = [];
+      for (const b of sim.bodies) {
+        if (b._cloud && b.state === 'orbit') pr.push([Math.hypot(b.x, b.y), b._m || 0]);
+      }
+      pr.sort((p, q) => p[0] - q[0]);
+      const n = pr.length;
+      const cum = new Array(n), out = new Array(n + 1);
+      let acc = 0;
+      for (let i = 0; i < n; i++) { cum[i] = acc; acc += pr[i][1]; }
+      out[n] = 0;
+      for (let i = n - 1; i >= 0; i--) out[i] = out[i + 1] - pr[i][1] / Math.sqrt(pr[i][0] * pr[i][0] + EPS2_SS);
+      soloProf = { pr, cum, out, n };
+    }
+    const swarmPhiAt = (r) => {
+      if (!soloProf || !soloProf.n) return 0;
+      const { pr, cum, out, n } = soloProf;
+      let lo = 0, hi = n;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (pr[mid][0] < r) lo = mid + 1; else hi = mid; }
+      const enc = lo > 0 ? cum[lo - 1] + pr[lo - 1][1] : 0;
+      return -enc / Math.sqrt(r * r + EPS2_SS) + out[lo];
+    };
     const soloBound = (b) => {
       const r = Math.hypot(b.x, b.y);
       const v2 = b.vx * b.vx + b.vy * b.vy;
-      const phi = -M1core / Math.sqrt(r * r + EPS2) + haloPhi(halo1, r);
+      const phi = -M1core / Math.sqrt(r * r + EPS2) + swarmPhiAt(r);
       return v2 / 2 + phi < 0;
     };
     // BINARY counterpart of the solo energy rule: is the star bound to the PAIR
