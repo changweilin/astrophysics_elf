@@ -191,9 +191,12 @@ function MBodyEditor({ sim, force, role }) {
   function setField(k, v) {
     if (isCentral) {
       if (k === 'Q' || k === 'a') sim.params[k] = v;
+      if (k === 'a') sim.params._aUser = true;   // spin touched — galaxy nudge must not override
     } else if (bin) {
       const m = { Q: 'Q2', a: 'a2', B: 'B2' };
       bin[m[k]] = v;
+      if (k === 'a') bin._a2User = true;
+      if (k === 'B') bin._B2User = true;
     }
     force();
   }
@@ -875,7 +878,8 @@ function TabBlackHole({ sim, force }) {
                   if (pr.T_eff != null) sim.params.T_eff = pr.T_eff;
                 }
                 if (pr.B != null) sim.params.B = pr.B;
-                if (pr.disc != null) sim.disc.enabled = pr.disc;
+                // Record the preset's disc state as the remembered preference.
+                if (pr.disc != null) window.KNSim.setDiscEnabled(sim, 'central', pr.disc);
                 if (pr.binary && sim.binary) {
                   sim.binary.enabled = pr.binary.enabled;
                   sim.binary.M2sun = pr.binary.M2sun;
@@ -1667,7 +1671,12 @@ function TabDisc({ sim, force }) {
   const onComp = which === 'companion' && hasComp;
   const aDisc = (onComp ? sim.disc2 : sim.disc) || sim.disc;
   const aB = onComp ? ((bin && bin.B2) || 0) : (p.B || 0);
-  const setAB = (v) => { if (onComp && bin) bin.B2 = v; else sim.params.B = v; force(); };
+  // Mark the slider as user-touched so structure re-sets never nudge it (panel-left twin).
+  const setAB = (v) => {
+    if (onComp && bin) { bin.B2 = v; bin._B2User = true; }
+    else { sim.params.B = v; sim.params._BUser = true; }
+    force();
+  };
   return (
     <>
       <div className="m-sec">
@@ -1686,7 +1695,7 @@ function TabDisc({ sim, force }) {
           </div>
         )}
         <button className={`m-disc-toggle ${aDisc.enabled ? 'on' : ''}`}
-          onClick={() => { aDisc.enabled = !aDisc.enabled; force(); }}>
+          onClick={() => { window.KNSim.setDiscEnabled(sim, onComp ? 'companion' : 'central', !aDisc.enabled); force(); }}>
           <span className="dt-dot" />
           {aDisc.enabled ? tr('Disc · active', '吸積盤 · 啟用') : tr('Spin up accretion disc', '啟動吸積盤')}
         </button>

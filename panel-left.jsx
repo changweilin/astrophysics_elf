@@ -250,9 +250,12 @@ function BodyEditor({ sim, force, role }) {
   function setField(k, v) {
     if (isCentral) {
       if (k === 'Q' || k === 'a') sim.params[k] = v;
+      if (k === 'a') sim.params._aUser = true;   // spin touched — galaxy nudge must not override
     } else if (bin) {
       const m = { Q: 'Q2', a: 'a2', B: 'B2' };
       bin[m[k]] = v;
+      if (k === 'a') bin._a2User = true;
+      if (k === 'B') bin._B2User = true;
     }
     force();
   }
@@ -818,7 +821,13 @@ function LeftPanel({ sim, force }) {
   const onComp = activeBody === 'companion';
   const aDisc = (onComp ? sim.disc2 : sim.disc) || sim.disc;
   const aB = onComp ? ((bin && bin.B2) || 0) : (p.B || 0);
-  const setAB = (v) => { if (onComp && bin) bin.B2 = v; else sim.params.B = v; force(); };
+  // _BUser/_B2User: the user touched this B slider — structure re-sets (galaxy's
+  // jet-visibility nudge) must never override a deliberate value afterwards.
+  const setAB = (v) => {
+    if (onComp && bin) { bin.B2 = v; bin._B2User = true; }
+    else { sim.params.B = v; sim.params._BUser = true; }
+    force();
+  };
 
   const companionPlacing = sim.placement && sim.placement.item && sim.placement.item.isCompanion;
   const companionAiming  = sim.aiming && sim.aiming.kind === 'companion';
@@ -1047,7 +1056,7 @@ function LeftPanel({ sim, force }) {
           <span className="idx">§05</span>
         </div>
         <button className={`disc-toggle ${aDisc.enabled ? 'on' : ''}`}
-          onClick={() => { aDisc.enabled = !aDisc.enabled; force(); }}>
+          onClick={() => { window.KNSim.setDiscEnabled(sim, onComp ? 'companion' : 'central', !aDisc.enabled); force(); }}>
           <span className="dt-dot" />
           {aDisc.enabled ? tr('ACCRETION DISC · active', '吸積盤 · 啟用') : tr('Spin up accretion disc', '啟動吸積盤')}
         </button>
@@ -1106,7 +1115,9 @@ function LeftPanel({ sim, force }) {
                                  if (pr.T_eff != null) sim.params.T_eff = pr.T_eff;
                                }
                                if (pr.B != null) sim.params.B = pr.B;
-                               if (pr.disc != null) sim.disc.enabled = pr.disc;
+                               // A preset's disc state is an explicit choice — record it as
+                               // the remembered preference (same funnel as the toggle).
+                               if (pr.disc != null) window.KNSim.setDiscEnabled(sim, 'central', pr.disc);
                                if (sim.binary) sim.binary.M2 = Math.max(0.01, (sim.binary.M2sun || 8) / Math.max(0.01, pr.Msun));
                                sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(pr.type || 'bh')];
                                force(); }}>

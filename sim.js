@@ -1190,6 +1190,12 @@
     sim.params.Z = bin.Z2 != null ? bin.Z2 : 0.5;
     sim.params.age = bin.age2 || 0;
     sim.params.B = bin.B2 != null ? bin.B2 : (sim.params.B || 0);
+    // The promoted body keeps its own user preferences (disc toggle memory,
+    // user-touched B/a flags, gas fraction) in the central slot.
+    sim.params.discPref = bin.discPref2 != null ? bin.discPref2 : sim.params.discPref;
+    if (bin._B2User) sim.params._BUser = true;
+    if (bin._a2User) sim.params._aUser = true;
+    if (bin.gasFrac2 != null) sim.params.gasFrac = bin.gasFrac2;
     deriveStarSurface(sim, bin, 1);
     sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(sim.params.type)];
   }
@@ -2857,6 +2863,24 @@
   //               by default (the disc being enabled IS the active-nucleus state).
   //   · cluster — a self-bound star swarm with no central SMBH and no gas.
   //   · smbh    — the quiescent bare hole.
+  // ── User disc preference (remembered across body re-sets) ──
+  // The user's explicit accretion-disc on/off choice per role, recorded by the
+  // panel toggles and presets through here. Structure re-sets (applySMBHStructure,
+  // clearStructure) consult the preference instead of forcing their own defaults,
+  // so re-picking a body type never silently undoes a deliberate toggle.
+  // Preference null = never touched → the structure's default applies. (Star
+  // swarms still force the disc off — no central BH, nothing to accrete onto —
+  // but the preference survives for the next disc-bearing body.)
+  function setDiscEnabled(sim, role, on) {
+    if (role === 'companion') {
+      if (sim.disc2) sim.disc2.enabled = !!on;
+      if (sim.binary) sim.binary.discPref2 = !!on;
+    } else {
+      if (sim.disc) sim.disc.enabled = !!on;
+      sim.params.discPref = !!on;
+    }
+  }
+
   // role 'companion' targets the binary secondary (its own disc/jet on sim.disc2).
   function applySMBHStructure(sim, key, role = 'central') {
     if (role === 'companion') {
@@ -2865,9 +2889,11 @@
       bin.type = 'bh';
       bin.smbhStructure = key;
       if (key === 'galaxy') {
-        if (sim.disc2) sim.disc2.enabled = true;                    // active nucleus (AGN) on
-        if (!(bin.B2 > 0.4)) bin.B2 = 0.6;                          // power a BZ jet
-        if (Math.abs(bin.a2) < 0.5 * bin.M2) bin.a2 = 0.9 * bin.M2 * (Math.sign(bin.a2) || 1);
+        // AGN defaults to ON, but a remembered user toggle wins; the B/a nudges
+        // (jet visibility defaults) never override a slider the user has touched.
+        if (sim.disc2) sim.disc2.enabled = bin.discPref2 != null ? bin.discPref2 : true;
+        if (!(bin.B2 > 0.4) && !bin._B2User) bin.B2 = 0.6;          // power a BZ jet
+        if (Math.abs(bin.a2) < 0.5 * bin.M2 && !bin._a2User) bin.a2 = 0.9 * bin.M2 * (Math.sign(bin.a2) || 1);
         seedStructureCloud(sim, 'galaxy', 'companion');
         logEv(sim, 'warn', tr('Companion galaxy — active nucleus (AGN): accretion disc + jet',
                               '伴星系 — 活躍星系核(AGN):吸積盤 + 噴流'));
@@ -2882,7 +2908,8 @@
         logEv(sim, 'good', tr('Companion open cluster — loose self-bound star swarm',
                               '伴疏散星團 — 鬆散的自束縛恆星群'));
       } else {
-        if (sim.disc2) sim.disc2.enabled = false;
+        // A bare hole CAN carry a disc — honor the remembered toggle (default off).
+        if (sim.disc2) sim.disc2.enabled = bin.discPref2 != null ? bin.discPref2 : false;
         clearStructureCloud(sim, 'companion'); sim._halo2 = null;
         logEv(sim, 'good', tr('Quiescent supermassive companion', '寧靜的超大質量伴星'));
       }
@@ -2893,13 +2920,16 @@
     sim.params.type = 'bh';
     sim.smbhStructure = key;
     if (key === 'galaxy') {
-      if (sim.disc) sim.disc.enabled = true;                        // active nucleus (AGN) on
-      if (!(sim.params.B > 0.4)) sim.params.B = 0.6;                 // power a BZ jet
-      if (Math.abs(sim.params.a) < 0.5) sim.params.a = 0.9 * (Math.sign(sim.params.a) || 1);
+      // AGN defaults to ON, but a remembered user toggle wins; the B/a nudges
+      // (jet visibility defaults) never override a slider the user has touched.
+      if (sim.disc) sim.disc.enabled = sim.params.discPref != null ? sim.params.discPref : true;
+      if (!(sim.params.B > 0.4) && !sim.params._BUser) sim.params.B = 0.6;   // power a BZ jet
+      if (Math.abs(sim.params.a) < 0.5 && !sim.params._aUser) sim.params.a = 0.9 * (Math.sign(sim.params.a) || 1);
       seedStructureCloud(sim, 'galaxy', 'central');
       logEv(sim, 'warn', tr('Galaxy — active nucleus (AGN): accretion disc + jet',
                             '星系 — 活躍星系核(AGN):吸積盤 + 噴流'));
     } else if (key === 'cluster') {
+      if (sim.disc) sim.disc.enabled = false;   // star swarm — no central BH to accrete onto
       seedStructureCloud(sim, 'cluster', 'central');
       logEv(sim, 'good', tr('Star cluster — self-bound star swarm (no central SMBH)',
                             '星團 — 自身束縛的恆星群(無中央黑洞)'));
@@ -2909,7 +2939,8 @@
       logEv(sim, 'good', tr('Open cluster — loose self-bound star swarm',
                             '疏散星團 — 鬆散的自束縛恆星群'));
     } else {
-      if (sim.disc) sim.disc.enabled = false;
+      // A bare hole CAN carry a disc — honor the remembered toggle (default off).
+      if (sim.disc) sim.disc.enabled = sim.params.discPref != null ? sim.params.discPref : false;
       clearStructureCloud(sim, 'central'); sim._halo1 = null;
       logEv(sim, 'good', tr('Quiescent supermassive black hole', '寧靜的超大質量黑洞'));
     }
@@ -2926,11 +2957,13 @@
     clearStructureCloud(sim, role);
     if (role === 'companion') {
       if (sim.binary) sim.binary.smbhStructure = 'smbh';
-      if (sim.disc2) sim.disc2.enabled = false;
+      // Restore the remembered disc toggle (default off) — leaving a swarm for a
+      // disc-bearing body should bring the user's disc state back, not erase it.
+      if (sim.disc2) sim.disc2.enabled = sim.binary && sim.binary.discPref2 != null ? sim.binary.discPref2 : false;
       sim._cloudN2 = 0; sim._cloudM2 = 0;
     } else {
       sim.smbhStructure = 'smbh';
-      if (sim.disc) sim.disc.enabled = false;
+      if (sim.disc) sim.disc.enabled = sim.params.discPref != null ? sim.params.discPref : false;
       sim._cloudN1 = 0; sim._cloudM1 = 0;
     }
     recordCloudCounts(sim);
@@ -2961,18 +2994,23 @@
     const qq2  = bin.M2 > 0 ? bin.Q2 / bin.M2 : 0;
     const MtOld = p.M + bin.M2;                  // geometric total before the swap
 
-    // Exchange physical mass + evolutionary stage + surface/driver fields.
+    // Exchange physical mass + evolutionary stage + surface/driver fields, plus the
+    // per-body user preferences (disc toggle memory, user-touched B/a flags, gas
+    // fraction) — they describe the BODY, so they follow it across the swap.
     const t = {
       Msun: p.Msun, type: p.type, R_star: p.R_star, T_eff: p.T_eff,
       age: p.age, Z: p.Z, cepheid: p.cepheid, cepheidAmp: p.cepheidAmp,
       B: p.B, _stellarTouched: p._stellarTouched,
+      discPref: p.discPref, _BUser: p._BUser, _aUser: p._aUser, gasFrac: p.gasFrac,
     };
     p.Msun = bin.M2sun; p.type = bin.type; p.R_star = bin.R_star2; p.T_eff = bin.T_eff2;
     p.age = bin.age2; p.Z = bin.Z2; p.cepheid = bin.cepheid; p.cepheidAmp = bin.cepheidAmp;
     p.B = bin.B2; p._stellarTouched = bin._stellarTouched;
+    p.discPref = bin.discPref2; p._BUser = bin._B2User; p._aUser = bin._a2User; p.gasFrac = bin.gasFrac2;
     bin.M2sun = t.Msun; bin.type = t.type; bin.R_star2 = t.R_star; bin.T_eff2 = t.T_eff;
     bin.age2 = t.age; bin.Z2 = t.Z; bin.cepheid = t.cepheid; bin.cepheidAmp = t.cepheidAmp;
     bin.B2 = t.B; bin._stellarTouched = t._stellarTouched;
+    bin.discPref2 = t.discPref; bin._B2User = t._BUser; bin._a2User = t._aUser; bin.gasFrac2 = t.gasFrac;
 
     // Primary stays geometric M = 1; companion geometric mass is the new ratio.
     bin.M2 = Math.max(0.001, p.Msun > 0 ? bin.M2sun / p.Msun : 1);
@@ -3087,7 +3125,7 @@
 
   window.KNSim = { createSim, addBody, logEv, initBinary, placeCompanion, removeCompanion,
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
-                   setBHRegime, cycleBHRegime, applySMBHStructure, clearStructure, swapCentralCompanion,
+                   setBHRegime, cycleBHRegime, applySMBHStructure, clearStructure, swapCentralCompanion, setDiscEnabled,
                    reseedStructureClouds, rescaleStructureCloud, setGasFraction,
                    fitView, worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
