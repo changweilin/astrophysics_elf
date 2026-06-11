@@ -536,6 +536,27 @@ function BodyEditor({ sim, force, role }) {
             swallowed (struct.accreted, conserved bookkeeping), counted below. */}
         {sim.smbhStructure === 'galaxy' && smbhStructures && (
           <React.Fragment>
+          {/* Dedicated AGN switch: the galaxy's active-nucleus state (disc + BZ jet).
+              Goes through setDiscEnabled so the choice is remembered as discPref;
+              merger gas inflow can also ignite it (sim.js igniteAGN). */}
+          <button className={`disc-toggle ${sim.disc && sim.disc.enabled ? 'on' : ''}`}
+            onClick={() => { window.KNSim.setDiscEnabled(sim, 'central', !(sim.disc && sim.disc.enabled)); force(); }}>
+            <span className="dt-dot" />
+            {sim.disc && sim.disc.enabled
+              ? tr('AGN · active nucleus ON', 'AGN · 活躍星系核 開')
+              : tr('AGN off — quiescent nucleus', 'AGN 關 — 寧靜星系核')}
+          </button>
+          {/* Morphology after a galaxy×galaxy merger: violent relaxation →
+              elliptical (struct.morph, set by beginEllipticalRelaxation). */}
+          {sim._struct1 && sim._struct1.morph === 'elliptical' && (
+            <div className="struct-n" role="status">
+              <span className="sn-l">{tr('morphology', '星系型態')}</span>
+              <span className="sn-v">
+                {sim._relax ? tr('relaxing → elliptical', '鬆弛中 → 橢圓')
+                            : tr('elliptical (merger remnant)', '橢圓星系（合併殘骸）')}
+              </span>
+            </div>
+          )}
           <div className="struct-n" role="status">
             <span className="sn-l">{tr('central BH mass (real)', '實質核心黑洞質量')}</span>
             <span className="sn-v">
@@ -585,6 +606,13 @@ function BodyEditor({ sim, force, role }) {
         </div>
         {companionStructure === 'galaxy' && companionStructures && (
           <React.Fragment>
+          <button className={`disc-toggle ${sim.disc2 && sim.disc2.enabled ? 'on' : ''}`}
+            onClick={() => { window.KNSim.setDiscEnabled(sim, 'companion', !(sim.disc2 && sim.disc2.enabled)); force(); }}>
+            <span className="dt-dot" />
+            {sim.disc2 && sim.disc2.enabled
+              ? tr('AGN · active nucleus ON', 'AGN · 活躍星系核 開')
+              : tr('AGN off — quiescent nucleus', 'AGN 關 — 寧靜星系核')}
+          </button>
           <div className="struct-n" role="status">
             <span className="sn-l">{tr('central BH mass (real)', '實質核心黑洞質量')}</span>
             <span className="sn-v">

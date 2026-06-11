@@ -750,6 +750,9 @@
         mA: M1 + preBoost, mB: M2, eGW: eMergerGW,
       };
       const product = mergedStructureType(sim.smbhStructure, bin.smbhStructure);
+      // Two galaxies merging is the elliptical-forming channel (checked on the
+      // PROGENITOR keys, before the survivor is re-typed below).
+      const galaxyPair = sim.smbhStructure === 'galaxy' && bin.smbhStructure === 'galaxy';
       if (!sim._struct1 && sim._struct2) {
         // Bare-hole central swallowed a structure companion: the survivor inherits the
         // companion's structure record + swarm wholesale (re-homed to the central role).
@@ -778,6 +781,7 @@
       if (sim._struct1) sim._struct1.coreBoost = (sim._struct1.coreBoost || 0) + Math.max(0, MfGeo - 1);
       if (product !== sim.smbhStructure) applyMergedCentralType(sim, product);
       recenterSceneToCore(sim, ccx, ccy, cvx, cvy);
+      if (galaxyPair) beginEllipticalRelaxation(sim);
     }
 
     bin.enabled = false;
@@ -1289,6 +1293,31 @@
   const SB_KICK   = 0.02;   // newborn velocity dispersion (symmetric, Σ = 0)
   const SB_GLOW_T = 4;      // render-side newborn glow fade (sim-time units)
 
+  // ── AGN ignition (merger-driven gas inflow) ──
+  // A binary interaction torques a galaxy's molecular clouds inward; a cloud
+  // spending time inside AGN_FUEL_R of its OWN core is fuel arriving at the
+  // nucleus. Exposure integrates as Σ clouds·dt (struct.gasInflow); once it
+  // crosses AGN_IGNITE a quiescent nucleus lights up (the disc turning on IS
+  // the demo's active-nucleus state) with one event line. One ignition per
+  // structure lifetime (struct.agnIgnited) and the remembered user preference
+  // (discPref) is never rewritten — a later manual toggle always wins.
+  const AGN_FUEL_R = 6.5;
+  const AGN_IGNITE = 1.0;
+
+  // ── Violent relaxation → elliptical end state (galaxy×galaxy mergers) ──
+  // When two GALAXIES finish merging, the remnant's stars do not keep their
+  // ordered disc rotation: the rapidly varying merger potential scatters orbit
+  // orientations (Lynden-Bell's violent relaxation) and the remnant settles
+  // into a dispersion-supported spheroid — an elliptical galaxy. Modeled
+  // SPEED-PRESERVING (each star's kinetic energy is untouched, the ledger's ΣM
+  // exactly so): every bound member gets a fixed random rotation rate for its
+  // velocity DIRECTION, enveloped by sin²(π·t/T) so the drive ramps in and out
+  // with zero end slope (C¹ — no kick at either edge of the window). Half the
+  // stars end up counter-rotating or on near-radial orbits, so the net disc
+  // rotation dies and the swarm relaxes into a rounder, hotter spheroid.
+  const RELAX_T = 10;       // relaxation window (sim-time units)
+  const RELAX_W = 0.35;     // max |velocity-direction rotation rate| (rad / t)
+
   // Member-star swallows are rare loss-cone events; log them (rate-limited to one
   // line per sim-second) so a star leaving the population is visible evidence in
   // the event feed, never a silent disappearance.
@@ -1331,6 +1360,13 @@
       const opp = role === 'central' ? M2 / (d2 * d2 * d2) : Mc1 / (d1 * d1 * d1);
       const q = opp / Math.max(1e-9, own);
       if (q < SB_QMIN) continue;
+      // Gas-inflow census for AGN ignition: a TIDALLY PERTURBED cloud (same q floor
+      // as the starburst — quiescent discs do not feed) near its own nucleus is
+      // fuel arriving at the hole. Distant clouds on ordinary inner orbits don't count.
+      if ((role === 'central' ? d1 : d2) < AGN_FUEL_R) {
+        const st = role === 'companion' ? sim._struct2 : sim._struct1;
+        if (st && st.key === 'galaxy') st.gasInflow = (st.gasInflow || 0) + dt;
+      }
       if (Math.random() >= SB_RATE * Math.min(1.5, q) * dt) continue;
       // Collapse: the cloud becomes SB_SPLIT stars. Mutate the cloud body into the
       // first newborn (keeps array churn low) and queue the siblings. Offsets and
@@ -1366,6 +1402,71 @@
     if ((sim._sbPend || 0) > 0 && sim.t - (sim._sbLogT != null ? sim._sbLogT : -9) >= 1) {
       logEv(sim, 'good', trp('starburst · molecular clouds collapse → {n} new stars', { n: sim._sbPend }));
       sim._sbLogT = sim.t; sim._sbPend = 0;
+    }
+    // Enough fuel has reached a quiescent nucleus → the AGN ignites.
+    igniteAGN(sim, 'central');
+    igniteAGN(sim, 'companion');
+  }
+
+  // Gas inflow → AGN ignition. A physical event, not a user toggle: the disc
+  // turns on but the remembered preference (discPref / discPref2) is untouched,
+  // so re-picking the body type later still honors the user's own choice. The
+  // one-shot flag consumes the ignition whether or not the disc was already on.
+  function igniteAGN(sim, role) {
+    const st = role === 'companion' ? sim._struct2 : sim._struct1;
+    if (!st || st.key !== 'galaxy' || st.agnIgnited) return;
+    if ((st.gasInflow || 0) < AGN_IGNITE) return;
+    st.agnIgnited = true;
+    const disc = role === 'companion' ? sim.disc2 : sim.disc;
+    if (!disc || disc.enabled) return;   // nucleus already shining
+    disc.enabled = true;
+    logEv(sim, 'warn', tr('gas inflow ignites the active nucleus (AGN) — accretion disc + jet',
+                          '氣體流入點燃活躍星系核(AGN) — 吸積盤 + 噴流'));
+  }
+
+  // Arm the violent-relaxation window on the surviving central structure after a
+  // galaxy×galaxy merger. Mixed pairings (galaxy×cluster etc.) keep the survivor's
+  // morphology — only the G×G channel produces an elliptical. Idempotent: a remnant
+  // that already relaxed stays elliptical with no second window.
+  function beginEllipticalRelaxation(sim) {
+    const st = sim._struct1;
+    if (!st || st.key !== 'galaxy' || st.morph === 'elliptical') return;
+    st.morph = 'elliptical';
+    sim._relax = { t: 0, T: RELAX_T };
+    for (const b of sim.bodies) {
+      if (b._cloud && b.state === 'orbit') b._rlxW = (Math.random() * 2 - 1) * RELAX_W;
+    }
+    logEv(sim, 'amber', tr('violent relaxation — merger remnant settling into an elliptical galaxy',
+                           '劇烈鬆弛 — 合併殘骸正鬆弛為橢圓星系'));
+  }
+
+  // Run the relaxation window: rotate each tagged member's core-relative velocity
+  // by its own fixed random rate, sin²-enveloped over the window. Speeds (hence
+  // kinetic energies and the mass ledger) are exactly preserved; the swarm's net
+  // angular momentum is deliberately scattered away — that IS the relaxation — so
+  // the conservation baseline is re-based once when the window closes.
+  function stepRelaxation(sim, dt) {
+    const rx = sim._relax;
+    if (!rx || dt <= 0) return;
+    rx.t += dt;
+    if (rx.t >= rx.T) {
+      sim._relax = null;
+      for (const b of sim.bodies) if (b._rlxW != null) b._rlxW = null;
+      resetConservationBaseline(sim);   // discrete model event — re-base p/L
+      logEv(sim, 'good', tr('relaxation complete → elliptical galaxy', '鬆弛完成 → 橢圓星系'));
+      return;
+    }
+    const sn = Math.sin(Math.PI * rx.t / rx.T);
+    const env = sn * sn;                // zero drive at both window edges (C¹)
+    const host = resolveHost(sim, 'central');
+    const hvx = host ? host.hvx : 0, hvy = host ? host.hvy : 0;
+    for (const b of sim.bodies) {
+      if (!b._cloud || b.state !== 'orbit' || b._cloudRole !== 'central' || b._rlxW == null) continue;
+      const th = b._rlxW * env * dt;
+      const c = Math.cos(th), s = Math.sin(th);
+      const ux = b.vx - hvx, uy = b.vy - hvy;
+      b.vx = hvx + ux * c - uy * s;
+      b.vy = hvy + ux * s + uy * c;
     }
   }
 
@@ -1849,6 +1950,7 @@
       guard++;
     }
     stepStarburst(sim, advanced);     // perturbed molecular clouds collapse into new stars
+    stepRelaxation(sim, advanced);    // G×G remnant relaxes toward an elliptical
     updateMembership(sim, advanced);  // re-tag stars to whichever structure now owns them
     recordCloudCounts(sim);    // N1 / N2 from the fresh membership
     updateStructureMass(sim);  // mass tracks N; companion N->0 triggers the merge
@@ -2154,6 +2256,7 @@
     sim._struct1 = cloneState(s.struct1) || null;
     sim._struct2 = cloneState(s.struct2) || null;
     sim._coreMorph = null;   // morphs are transient — never restored mid-window
+    sim._relax = null;       // (a restored struct keeps morph='elliptical'; only the window drops)
     // Never reuse an id the restored scene already holds (the seq counter is global).
     if (s.seq) sim.seq = Math.max(sim.seq || 1, s.seq);
   }
@@ -2174,6 +2277,7 @@
     sim._halo1 = null; sim._halo2 = null;   // no galaxy halos in a fresh scene
     sim._struct1 = null; sim._struct2 = null;
     sim._coreMorph = null;                  // no in-flight post-merger field morph
+    sim._relax = null;                      // no in-flight violent relaxation
     // A fresh scene is its own sandbox — start with discs off (a galaxy's AGN turns
     // them back on); the previous scale's disc state is kept in its own snapshot.
     if (sim.disc)  { sim.disc.enabled = false;  sim.disc.particles.length = 0; }
@@ -2440,7 +2544,7 @@
   function seedStructureCloud(sim, key, role = 'central') {
     clearStructureCloud(sim, role);
     resetConservationBaseline(sim);   // new swarm = new initial condition for the ledger
-    if (role === 'central') sim._coreMorph = null;   // a re-seeded centre owns no stale morph
+    if (role === 'central') { sim._coreMorph = null; sim._relax = null; }   // a re-seeded centre owns no stale morph/relaxation
     if (!isCloudStruct(key)) return;
     const host = resolveHost(sim, role);
     if (!host) return;
@@ -2770,6 +2874,9 @@
     // cluster+galaxy→galaxy). Re-type the survivor in place (no re-seed) so the merged swarm
     // is kept and the UI category selector follows.
     const product = mergedStructureType(sim.smbhStructure, bin.smbhStructure);
+    // Elliptical-forming channel — both progenitors are galaxies (checked here,
+    // before the survivor is re-typed).
+    const galaxyPair = sim.smbhStructure === 'galaxy' && bin.smbhStructure === 'galaxy';
     // Conserve any mass each core has already swallowed: the companion's banked accretion
     // carries over to the surviving central.
     if (sim._struct1 && sim._struct2) {
@@ -2796,6 +2903,7 @@
     recordCloudCounts(sim);
     logEv(sim, 'good', tr('structure merger complete — companion absorbed into the central',
                           '結構合併完成 — 伴星系/星團已併入主體'));
+    if (galaxyPair) beginEllipticalRelaxation(sim);
   }
 
   // The PRIMARY (central) structure has lost all its member stars to a more massive
@@ -2809,6 +2917,8 @@
     // Product type takes the higher of the two (cluster+galaxy→galaxy), regardless of which
     // core emptied; conserve the depleted central's banked accretion into the survivor.
     const product = mergedStructureType(sim.smbhStructure, newKey);
+    // Elliptical-forming channel — both progenitors are galaxies.
+    const galaxyPair = sim.smbhStructure === 'galaxy' && newKey === 'galaxy';
     const struct2 = sim._struct2, halo2 = sim._halo2;
     if (struct2 && sim._struct1) {
       struct2.accreted = (struct2.accreted || 0) + (sim._struct1.accreted || 0);
@@ -2851,6 +2961,7 @@
     recordCloudCounts(sim);
     logEv(sim, 'good', tr('primary depleted — companion succeeds as the new central',
                           '主星耗盡 — 伴星接替成為新的主體'));
+    if (galaxyPair) beginEllipticalRelaxation(sim);
   }
 
   // Back-compat alias (older call sites). A nuclear star cluster is the cluster cloud.
