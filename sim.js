@@ -785,6 +785,11 @@
     }
 
     bin.enabled = false;
+    // Re-base the surviving structure to the merged (bigger) system — must run with
+    // the binary OFF so membership re-resolves against the lone survivor.
+    if (sim._struct1 && sim.bodies.some((b) => b._cloud && b.state === 'orbit')) {
+      rebaseMergedStructure(sim);
+    }
     if (reason === 'ce') {
       logEv(sim, 'warn', trp('COMMON ENVELOPE → merger · M_f={mf} M⊙', { mf: MsunFinal.toFixed(1) }));
     } else {
@@ -2660,6 +2665,10 @@
     if (!host) return;
     const key = struct.key;
     const geom = structureGeom(key, host.massSun);
+    // A merged remnant stays enlarged (rebaseMergedStructure's accumulated growth):
+    // re-reading the mass–size relation alone would snap it back to a single-
+    // progenitor footprint on the first slider drag.
+    geom.rOut *= struct.sizeBoost || 1;
     const halo = role === 'companion' ? sim._halo2 : sim._halo1;
     const target = structureN(host.massSun, key);
     // New bound mass for the new slider mass, shared over the target population.
@@ -2752,6 +2761,27 @@
     const reach2 = (sim._struct2 && sim._struct2.reach) || 55;
     const M1core = sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
     const M2core = (bin && bin.M2) || 0.8;
+    // ── Lone structure: membership is ENERGY-based ──
+    // The radius reach exists to referee the two-structure tug-of-war. With no rival
+    // attractor a star belongs to the lone structure iff it is gravitationally BOUND
+    // to it (E < 0 in the softened core + binding halo field) — a wide orbit is still
+    // its orbit. Judging a lone system by radius misreads a freshly merged remnant's
+    // long-period envelope (apocentres beyond the old reach) as stripped streams and
+    // slowly evaporates a system that should have GROWN; only true ejecta (E > 0,
+    // ~a few percent in a real merger) leave.
+    const solo = has1 && !binOn;
+    const halo1 = sim._halo1;
+    const soloBound = (b) => {
+      const r = Math.hypot(b.x, b.y);
+      const v2 = b.vx * b.vx + b.vy * b.vy;
+      let phi = -M1core / Math.sqrt(r * r + EPS2);
+      if (halo1 && halo1.M > 0) {
+        const hR = Math.max(1, halo1.R || 1);
+        phi += r >= hR ? -halo1.M / r
+                       : -halo1.M * (3 * hR * hR - r * r) / (2 * hR * hR * hR);
+      }
+      return v2 / 2 + phi < 0;
+    };
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit') continue;
       const dx1 = b.x - c1x, dy1 = b.y - c1y;
@@ -2761,7 +2791,10 @@
       const in1 = d1 < reach1, in2 = d2 < reach2;
       const cur = b._cloudRole;
       let role = cur;
-      if (!in1 && !in2) {
+      if (solo) {
+        role = soloBound(b) ? 'central' : null;
+        b._pullTimer = 0;
+      } else if (!in1 && !in2) {
         role = null;                                  // left every structure → untagged, persists
         b._pullTimer = 0;
       } else if (in1 !== in2) {
@@ -2858,7 +2891,12 @@
       // eaten by a galaxy's hole leaves the member sum but its mass-energy is conserved into
       // the core, so the structure's total gravitating mass is unchanged across a swallow.
       halo.M = Math.max(0, Mmembers + (struct.accreted || 0));
-      if (struct.haloRbase) halo.R = Math.max(1, struct.haloRbase * Math.cbrt(Math.max(1e-3, f)));
+      // Halo EXTENT follows the halo's own mass (R ∝ M^(1/3)), not the star count —
+      // the dark matter is its own body, not a head-count of the luminous members.
+      if (struct.haloRbase) {
+        const fh = struct.haloBase > 0 ? halo.M / struct.haloBase : f;
+        halo.R = Math.max(1, struct.haloRbase * Math.cbrt(Math.max(1e-3, fh)));
+      }
     }
     return { Rvis, density: f > 0 ? N / (Math.PI * Rvis * Rvis) : 0 };
   }
@@ -2870,6 +2908,9 @@
     const has2 = binOn && isCloudStruct(bin.smbhStructure) && sim._struct2 && sim._struct2.Nbase > 0;
     if (has1) {
       const frac = Math.max(0, sim._cloudN1 / sim._struct1.Nbase);
+      // Binding-halo mass = the bound members' quanta. Solo-structure membership is
+      // ENERGY-based (updateMembership), so every gravitationally bound star — however
+      // wide its orbit — keeps feeding the halo; only true ejecta (E > 0) drop out.
       const sc = structureScale(sim._struct1, frac, sim._cloudN1, sim._cloudM1, sim._halo1);
       sim._cloudFrac1 = frac; sim._Rvis1 = sc.Rvis; sim._density1 = sc.density;
     } else { sim._cloudFrac1 = 0; sim._Rvis1 = 0; sim._density1 = 0; }
@@ -2991,6 +3032,7 @@
     // scene. (recenterSceneToCore above reset it too, but while the binary was still on.)
     resetConservationBaseline(sim);
     recordCloudCounts(sim);
+    rebaseMergedStructure(sim);   // the survivor IS the merged, bigger system now
     logEv(sim, 'good', tr('structure merger complete — companion absorbed into the central',
                           '結構合併完成 — 伴星系/星團已併入主體'));
     if (galaxyPair) beginEllipticalRelaxation(sim);
@@ -3049,9 +3091,52 @@
     // merged away and the survivor was renormalised to geometric M = 1 — a unit change).
     resetConservationBaseline(sim);
     recordCloudCounts(sim);
+    rebaseMergedStructure(sim);   // the promoted survivor inherits the merged system
     logEv(sim, 'good', tr('primary depleted — companion succeeds as the new central',
                           '主星耗盡 — 伴星接替成為新的主體'));
     if (galaxyPair) beginEllipticalRelaxation(sim);
+  }
+
+  // ── Re-base the survivor to the MERGED system ─────────────
+  // A merger leaves a physically BIGGER bound system (a merged elliptical / a larger
+  // cluster, with a heavier and more extended binding halo — R ∝ M^(1/3)), but the
+  // survivor's seed-time baselines (Nbase, haloBase, RvisBase, reach) describe only
+  // its OWN pre-merger body. Left alone, the absorbed members ride wide orbits that
+  // drift past the survivor's old fixed reach, get misread as "stripped streams",
+  // stop feeding the binding halo, and the remnant slowly EVAPORATES — the glow
+  // shrinks back below its pre-merger size, the opposite of real assembly. So at
+  // merger end the survivor is re-based: every live member quantum now belongs to
+  // the remnant, the geometry grows by the mass–size relation, and the membership
+  // reach follows — the wider reach immediately re-adopts the in-transit members.
+  function rebaseMergedStructure(sim) {
+    const st = sim._struct1;
+    if (!st) return;
+    let N = 0, Mall = 0;
+    for (const b of sim.bodies) {
+      if (b._cloud && b.state === 'orbit') { N++; Mall += b._m || 0; }
+    }
+    if (!(N > 0) || !(Mall > 0)) return;
+    // Mass–size growth of the merged body, vs the survivor's previous bound-mass
+    // baseline. Clamped gentle (an equal-mass merger is cbrt(2) ≈ 1.26); never
+    // shrinks — losing members is handled by the live frac scaling, not the base.
+    const g = Math.max(1, Math.min(1.6, Math.cbrt(Mall / Math.max(1e-9, st.haloBase || Mall))));
+    st.haloBase = Mall;          // every surviving member quantum binds the remnant
+    st.mPer = Mall / N;
+    st.RvisBase *= g;
+    st.haloRbase *= g;
+    st.rOut *= g;
+    st.reach = st.rOut * 2.2;
+    st.reachBase = st.reach;
+    // Accumulated merger growth, honored by rescaleStructureCloud so a later mass-
+    // slider drag does not snap the remnant back to its single-progenitor size.
+    st.sizeBoost = (st.sizeBoost || 1) * g;
+    updateMembership(sim, 0);    // the wider reach re-adopts the in-transit members now
+    recordCloudCounts(sim);
+    // Base the count fraction on what the merged reach actually HOLDS (frac = 1 at
+    // this instant): the visible radius shows the merged size immediately, and far
+    // strays still in transit don't read as a deficit they can never repay.
+    st.Nbase = Math.max(1, sim._cloudN1);
+    updateStructureMass(sim);
   }
 
   // Back-compat alias (older call sites). A nuclear star cluster is the cluster cloud.
