@@ -654,6 +654,12 @@ function BodyEditor({ sim, force, role }) {
           <span className="sn-v">N = {sim._streamN}</span>
         </div>
       )}
+      {(sim._hvsN || 0) > 0 && (
+        <div className="struct-n" role="status">
+          <span className="sn-l">{tr('hypervelocity stars', '超高速星')}</span>
+          <span className="sn-v">N = {sim._hvsN}</span>
+        </div>
+      )}
       {sim._conserve && sim._conserve0 && (sim._cloudN1 > 0 || sim._cloudN2 > 0) && (
         <div className="struct-n" role="status">
           <span className="sn-l">{tr('ΣM · Δp (conserved)', '總質量 · 動量漂移')}</span>

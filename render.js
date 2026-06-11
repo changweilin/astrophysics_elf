@@ -785,6 +785,11 @@
     // sheds them. Muted (never neon); drawn under the swarm dots.
     drawStructureGlow(sim, ctx, w, h, s);
 
+    // Tidal-disruption flares — a short soft glow on the core that just shredded
+    // a member star (sim._tdeFlares, sim.js armTDEFlare). Muted, brief, anchored
+    // to the swallowing core's CURRENT position so it rides the orbit.
+    drawTDEFlares(sim, ctx, w, h, s);
+
     // Per-structure brightness multiplier for the swarm dots: denser structures glow
     // a touch harder (rel = density / seed-density = frac^(1/3)). Gentle band.
     const bri = (frac) => Math.max(0.45, Math.min(1.2, 0.6 + 0.55 * Math.cbrt(Math.max(1e-3, frac || 0))));
@@ -801,7 +806,9 @@
         // warm tint, gentle alpha (never neon, per the project's visual rule).
         if (b._stream && b.trail && b.trail.length > 4 && sim.flags.showOrbits) {
           ctx.lineWidth = 1;
-          ctx.strokeStyle = 'oklch(0.78 0.05 70 / 0.25)';
+          // A hypervelocity ejection streaks cool blue-white; ordinary stripped
+          // stream stars keep the warm tidal-tail tint.
+          ctx.strokeStyle = b._hvs ? 'oklch(0.86 0.05 250 / 0.30)' : 'oklch(0.78 0.05 70 / 0.25)';
           ctx.beginPath();
           const [tx0, ty0] = worldToScreenInto(sim, w, h, b.trail[0], b.trail[1]);
           ctx.moveTo(tx0, ty0);
@@ -821,10 +828,13 @@
         const young = b._bornAt != null ? Math.max(0, 1 - (sim.t - b._bornAt) / 4) : 0;
         // A stream star reads slightly warmer than the bound members so the tails /
         // streams separate visually from the structures shedding them.
+        // A hypervelocity star (b._hvs, sim.js Hills detection) reads as a slightly
+        // larger cool blue-white runaway, distinct from the warm stream stars.
         ctx.fillStyle = young > 0 ? `oklch(${0.84 + 0.06 * young} ${0.06 + 0.05 * young} 235 / ${Math.min(1, a + 0.12 * young)})`
+                      : b._hvs    ? `oklch(0.92 0.05 250 / ${Math.min(1, a + 0.1)})`
                       : b._stream ? `oklch(0.84 0.07 70 / ${a})` : colorOf(b, a);
         ctx.beginPath();
-        ctx.arc(px, py, (b.kind === 'gas' ? 1.1 : 1.5) + 0.7 * young, 0, Math.PI * 2);
+        ctx.arc(px, py, (b.kind === 'gas' ? 1.1 : 1.5) + 0.7 * young + (b._hvs ? 0.5 : 0), 0, Math.PI * 2);
         ctx.fill();
         continue;
       }
@@ -915,13 +925,56 @@
       ctx.fillStyle = grd;
       ctx.beginPath(); ctx.arc(px, py, R, 0, Math.PI * 2); ctx.fill();
     };
+    // Faint dark-matter halo extent — a barely-there dashed ring at the binding
+    // halo's radius (galaxies only; the invisible mass made just visible enough
+    // to teach that it is there, per the "faint optional halo" design note).
+    const drawDM = (halo, wx, wy) => {
+      if (!halo || !(halo.R > 0) || !(halo.M > 0)) return;
+      const [px, py] = worldToScreen(sim, w, h, wx, wy);
+      const R = halo.R * s;
+      if (!(R > 8)) return;
+      ctx.strokeStyle = 'oklch(0.75 0.04 290 / 0.10)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 7]);
+      ctx.beginPath(); ctx.arc(px, py, R, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+    };
     const isCloud = (k) => k === 'galaxy' || k === 'cluster' || k === 'opencluster';
     if (isCloud(sim.smbhStructure)) {
       const cx = binOn ? bin.x1 : 0, cy = binOn ? bin.y1 : 0;
       draw(sim.smbhStructure, sim._Rvis1, sim._cloudFrac1, cx, cy, sim.smbhStructure === 'galaxy');
+      if (sim.smbhStructure === 'galaxy') drawDM(sim._halo1, cx, cy);
     }
     if (binOn && isCloud(bin.smbhStructure)) {
       draw(bin.smbhStructure, sim._Rvis2, sim._cloudFrac2, bin.x2, bin.y2, bin.smbhStructure === 'galaxy');
+      if (bin.smbhStructure === 'galaxy') drawDM(sim._halo2, bin.x2, bin.y2);
+    }
+  }
+
+  // ── Tidal-disruption flares ─────────────────────────────────────────────
+  // Each entry in sim._tdeFlares marks a member star shredded by a core BH
+  // (sim.js, the loss-cone swallow path). The flare is a soft expanding glow
+  // that fades over ~2.5 t-units — clearly visible but gentle, never neon.
+  function drawTDEFlares(sim, ctx, w, h, s) {
+    const list = sim._tdeFlares;
+    if (!list || !list.length) return;
+    const bin = sim.binary, binOn = !!(bin && bin.enabled);
+    for (const f of list) {
+      const age = sim.t - f.t0;
+      if (age < 0 || age >= 2.5) continue;
+      if (f.role === 'companion' && !binOn) continue;   // anchor gone (post-merger)
+      const wx = f.role === 'companion' ? bin.x2 : (binOn ? bin.x1 : 0);
+      const wy = f.role === 'companion' ? bin.y2 : (binOn ? bin.y1 : 0);
+      const [px, py] = worldToScreen(sim, w, h, wx, wy);
+      const u = age / 2.5;
+      const R = Math.max(4, (3 + 9 * u) * s);
+      const a = 0.30 * (1 - u) * (1 - u);     // quick-rise slow-fade luminosity
+      const grd = ctx.createRadialGradient(px, py, 0, px, py, R);
+      grd.addColorStop(0, `oklch(0.92 0.09 75 / ${a})`);
+      grd.addColorStop(0.5, `oklch(0.82 0.08 55 / ${a * 0.5})`);
+      grd.addColorStop(1, 'oklch(0.70 0.06 40 / 0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.arc(px, py, R, 0, Math.PI * 2); ctx.fill();
     }
   }
 

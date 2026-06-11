@@ -1256,6 +1256,14 @@
   // are swallowed only inside this small fixed radius, with the loss cone evaluated
   // at the same radius, restoring the intended "vanishingly few" capture rate.
   const CLOUD_SWALLOW_R = 0.4;
+  // Even inside the swallow radius the DEMO's capture region is still ~9 orders of
+  // magnitude larger than the real horizon, so almost every loss-cone plunge in
+  // nature MISSES the hole. Each qualifying passage rolls ONCE against this
+  // probability (the graze tag makes a failed roll immune until the star leaves
+  // the zone, so it is per-pericentre-passage, not per-substep) — keeping member
+  // swallows the intended rare TDE events, not a wholesale feeding channel.
+  const CLOUD_SWALLOW_P = 0.08;
+  const GRAZE_CLEAR_R   = 1.2;   // leaving this radius re-arms the swallow roll
 
   // ── Common-field friction boost (progressive core coalescence) ──
   // A member star counts as "commonly pulled" when its star→core1 / star→core2
@@ -1317,6 +1325,19 @@
   // rotation dies and the swarm relaxes into a rounder, hotter spheroid.
   const RELAX_T = 10;       // relaxation window (sim-time units)
   const RELAX_W = 0.35;     // max |velocity-direction rotation rate| (rad / t)
+
+  // ── TDE flares + hypervelocity stars (Phase 3 polish) ──
+  // A member STAR that threads a real BH core's loss cone is tidally shredded on
+  // the way in — a tidal disruption event. The swallow bookkeeping is unchanged
+  // (accreteMember conserves the mass); the flare is a short, muted render-side
+  // glow anchored on the swallowing core (sim._tdeFlares). Gas accretes quietly.
+  const TDE_T = 2.5;        // flare fade (sim-time units)
+  // A member slung out of every structure's reach FASTER than the local escape
+  // speed of everything still binding it has been dynamically ejected for good —
+  // the demo's Hills-mechanism product. Tagged `_hvs` (detection only: the
+  // three-body slingshot that launched it already happened in the integrator,
+  // so nothing is kicked and the ledger is untouched).
+  const HVS_FAC = 1.15;     // ejection threshold over the local escape speed
 
   // Member-star swallows are rare loss-cone events; log them (rate-limited to one
   // line per sim-second) so a star leaving the population is visible evidence in
@@ -1422,6 +1443,15 @@
     disc.enabled = true;
     logEv(sim, 'warn', tr('gas inflow ignites the active nucleus (AGN) — accretion disc + jet',
                           '氣體流入點燃活躍星系核(AGN) — 吸積盤 + 噴流'));
+  }
+
+  // Arm a tidal-disruption flare on the swallowing core. Render-side only — the
+  // renderer anchors it to the role's CURRENT core position and fades it over
+  // TDE_T (muted, never neon). Capped so a feeding frenzy can't grow the list.
+  function armTDEFlare(sim, role) {
+    if (!sim._tdeFlares) sim._tdeFlares = [];
+    if (sim._tdeFlares.length >= 8) sim._tdeFlares.shift();
+    sim._tdeFlares.push({ role, t0: sim.t });
   }
 
   // Arm the violent-relaxation window on the surviving central structure after a
@@ -1623,6 +1653,8 @@
       if (bin && bin.enabled) {
         const r1 = Math.hypot(b.x - bin.x1, b.y - bin.y1);
         const r2 = Math.hypot(b.x - bin.x2, b.y - bin.y2);
+        // A grazed member is immune until it leaves both cores' zones (re-arms the roll).
+        if (b._grazed && r1 > GRAZE_CLEAR_R && r2 > GRAZE_CLEAR_R) b._grazed = false;
         // tidal stress: take worst of two bodies
         const t1 = phys.tidalStress(r1, M, b.radius || 0.4, b.binding || 1);
         const t2 = phys.tidalStress(r2, bin.M2, b.radius || 0.4, b.binding || 1);
@@ -1630,11 +1662,15 @@
         if (b.stress > b.stressPeak) b.stressPeak = b.stress;
         if (b.kind !== 'probe' && b.kind !== 'ship' && b.stress > 1.15) {
           // Members are collisionless: no tidal-shredding channel — they graze straight
-          // through (only a real horizon below can take them). User bodies still spaghettify.
-          if (b._cloud) continue;
-          b.state = 'spaghettified'; b.consumedAt = sim.t;
-          logEv(sim, 'warn', trp('{name} — spaghettified between binary pair', { name: b.name }));
-          continue;
+          // through. NO `continue` for them: only the real-horizon loss-cone check below
+          // may take a member (a `continue` here would dead-code the swallow/TDE path,
+          // since stress always exceeds the threshold inside the swallow radius).
+          // User bodies still spaghettify.
+          if (!b._cloud) {
+            b.state = 'spaghettified'; b.consumedAt = sim.t;
+            logEv(sim, 'warn', trp('{name} — spaghettified between binary pair', { name: b.name }));
+            continue;
+          }
         }
         // Primary capture / surface impact
         if (cType === 'bh') {
@@ -1645,9 +1681,19 @@
             if (b._cloud && (!coreCanSwallow(sim.smbhStructure)
                 || r1 > CLOUD_SWALLOW_R
                 || !cloudInLossCone(b, bin.x1, bin.y1, bin.vx1 || 0, bin.vy1 || 0, M, CLOUD_SWALLOW_R))) continue;
+            // One swallow roll per passage — most plunges graze the (truly tiny) horizon.
+            if (b._cloud && b._grazed) continue;
+            if (b._cloud && Math.random() >= CLOUD_SWALLOW_P) { b._grazed = true; continue; }
             if (b._cloud) {
               accreteMember(sim._struct1, b);
-              logMemberSwallow(sim, 'member star swallowed by central BH (loss cone)', '成員星被中央黑洞吞噬（loss cone）');
+              // A star is shredded on the way in — a TDE with a visible flare;
+              // a molecular cloud accretes quietly.
+              if (b.kind !== 'gas') {
+                armTDEFlare(sim, 'central');
+                logMemberSwallow(sim, 'tidal disruption event — member star shredded by central BH', '潮汐撕裂事件（TDE）— 成員星被中央黑洞撕裂');
+              } else {
+                logMemberSwallow(sim, 'molecular cloud swallowed by central BH (loss cone)', '分子雲被中央黑洞吞噬（loss cone）');
+              }
             }
             b.state = 'captured'; b.consumedAt = sim.t;
             if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by primary BH', { name: b.name }));
@@ -1669,9 +1715,16 @@
             if (b._cloud && (!coreCanSwallow(bin.smbhStructure)
                 || r2 > CLOUD_SWALLOW_R
                 || !cloudInLossCone(b, bin.x2, bin.y2, bin.vx2 || 0, bin.vy2 || 0, bin.M2, CLOUD_SWALLOW_R))) continue;
+            if (b._cloud && b._grazed) continue;
+            if (b._cloud && Math.random() >= CLOUD_SWALLOW_P) { b._grazed = true; continue; }
             if (b._cloud) {
               accreteMember(sim._struct2, b);
-              logMemberSwallow(sim, 'member star swallowed by companion BH (loss cone)', '成員星被伴星黑洞吞噬（loss cone）');
+              if (b.kind !== 'gas') {
+                armTDEFlare(sim, 'companion');
+                logMemberSwallow(sim, 'tidal disruption event — member star shredded by companion BH', '潮汐撕裂事件（TDE）— 成員星被伴星黑洞撕裂');
+              } else {
+                logMemberSwallow(sim, 'molecular cloud swallowed by companion BH (loss cone)', '分子雲被伴星黑洞吞噬（loss cone）');
+              }
             }
             b.state = 'captured'; b.consumedAt = sim.t;
             if (!b._cloud) logEv(sim, 'warn', trp('{name} — captured by companion BH', { name: b.name }));
@@ -1704,11 +1757,15 @@
       b.stress = tidal;
       if (tidal > b.stressPeak) b.stressPeak = tidal;
       if (b.kind !== 'probe' && b.kind !== 'ship' && tidal > 1.15) {
-        // Members are collisionless: no tidal-shredding channel — they graze straight through.
-        if (b._cloud) continue;
-        b.state = 'spaghettified'; b.consumedAt = sim.t;
-        logEv(sim, 'warn', trp('{name} — spaghettified at r = {r} M', { name: b.name, r: r.toFixed(2) }));
-        continue;
+        // Members are collisionless: no tidal-shredding channel — they graze straight
+        // through, but must FALL THROUGH (no `continue`) so the real-horizon loss-cone
+        // swallow below stays reachable (stress always tops the threshold inside the
+        // swallow radius, so a `continue` here would dead-code member swallows / TDEs).
+        if (!b._cloud) {
+          b.state = 'spaghettified'; b.consumedAt = sim.t;
+          logEv(sim, 'warn', trp('{name} — spaghettified at r = {r} M', { name: b.name, r: r.toFixed(2) }));
+          continue;
+        }
       }
       // Surface impact for stellar centrals
       if (cType !== 'bh') {
@@ -1721,15 +1778,23 @@
           continue;
         }
       } else {
+        if (b._cloud && b._grazed && r > GRAZE_CLEAR_R) b._grazed = false;   // re-arm the roll
         if (!naked && r < rplus) {
           // Member swallowed only by a REAL BH core, only inside the tiny mass-decoupled
           // swallow radius, through that radius's loss cone.
           if (b._cloud && (!coreCanSwallow(sim.smbhStructure)
               || r > CLOUD_SWALLOW_R
               || !cloudInLossCone(b, 0, 0, 0, 0, M, CLOUD_SWALLOW_R))) continue;
+          if (b._cloud && b._grazed) continue;
+          if (b._cloud && Math.random() >= CLOUD_SWALLOW_P) { b._grazed = true; continue; }
           if (b._cloud) {
             accreteMember(sim._struct1, b);
-            logMemberSwallow(sim, 'member star swallowed by central BH (loss cone)', '成員星被中央黑洞吞噬（loss cone）');
+            if (b.kind !== 'gas') {
+              armTDEFlare(sim, 'central');
+              logMemberSwallow(sim, 'tidal disruption event — member star shredded by central BH', '潮汐撕裂事件（TDE）— 成員星被中央黑洞撕裂');
+            } else {
+              logMemberSwallow(sim, 'molecular cloud swallowed by central BH (loss cone)', '分子雲被中央黑洞吞噬（loss cone）');
+            }
           }
           b.state = 'captured'; b.consumedAt = sim.t;
           if (!b._cloud) logEv(sim, 'warn', trp('{name} — crossed r₊, mass added to BH', { name: b.name }));
@@ -1951,6 +2016,8 @@
     }
     stepStarburst(sim, advanced);     // perturbed molecular clouds collapse into new stars
     stepRelaxation(sim, advanced);    // G×G remnant relaxes toward an elliptical
+    if (sim._tdeFlares && sim._tdeFlares.length)
+      sim._tdeFlares = sim._tdeFlares.filter((f) => sim.t - f.t0 < TDE_T);
     updateMembership(sim, advanced);  // re-tag stars to whichever structure now owns them
     recordCloudCounts(sim);    // N1 / N2 from the fresh membership
     updateStructureMass(sim);  // mass tracks N; companion N->0 triggers the merge
@@ -1964,6 +2031,7 @@
     let n1 = 0, n2 = 0, m1 = 0, m2 = 0;
     let sx1 = 0, sy1 = 0, sx2 = 0, sy2 = 0;   // mass-weighted member positions
     let nS = 0, mS = 0;                       // stripped tidal-stream stars (role null)
+    let nH = 0;                               // hypervelocity ejections (subset of streams)
     let cpx = 0, cpy = 0, cL = 0, cAbs = 0;   // cloud momentum / ang-momentum (ledger)
     const bin = sim.binary, binOn = !!(bin && bin.enabled);
     const c1x = binOn ? bin.x1 : 0, c1y = binOn ? bin.y1 : 0;
@@ -1988,7 +2056,7 @@
       // moving in the pair's combined field and stays on the total-mass ledger.
       if (b._cloudRole === 'companion')    { n2++; m2 += m; sx2 += m * b.x; sy2 += m * b.y; }
       else if (b._cloudRole === 'central') { n1++; m1 += m; sx1 += m * b.x; sy1 += m * b.y; }
-      else                                 { nS++; mS += m; }
+      else                                 { nS++; mS += m; if (b._hvs) nH++; }
       if (binOn && (b._cloudRole === 'central' || b._cloudRole === 'companion')) {
         const ux = c1x - b.x, uy = c1y - b.y;          // star → central core
         const wx = bin.x2 - b.x, wy = bin.y2 - b.y;    // star → companion core
@@ -2007,6 +2075,7 @@
     sim._cloudN1 = n1; sim._cloudN2 = n2;
     sim._cloudM1 = m1; sim._cloudM2 = m2;
     sim._streamN = nS; sim._streamM = mS;
+    sim._hvsN = nH;
     // Centre of mass of each structure = (core point mass + its member stars). The core
     // is the frozen SMBH point (central params.M at the origin/bin.x1; companion bin.M2 at
     // bin.x2); the members carry the conserved bound mass. Used as the binding halo's
@@ -2729,8 +2798,29 @@
       // stops streaming and its tail trail is dropped.
       if (role == null && cur != null) {
         b._stream = true; b._streamAt = sim.t;
+        // ── Hypervelocity star (Hills-mechanism product) ──
+        // The star was just stripped out of every reach. If it is moving faster
+        // than the local escape speed of EVERYTHING still binding it (both cores
+        // + halos, measured from the barycentre), the three-body slingshot that
+        // launched it was a genuine dynamical ejection — tag it. Detection only:
+        // the integrator already did the kicking, so nothing changes dynamically.
+        if (!b._hvs) {
+          const Mtot = M1core + ((sim._halo1 && sim._halo1.M) || 0)
+                     + (binOn ? M2core + ((sim._halo2 && sim._halo2.M) || 0) : 0);
+          const bx = binOn ? bin.cx : 0, by = binOn ? bin.cy : 0;
+          const rB = Math.max(1, Math.hypot(b.x - bx, b.y - by));
+          const v = Math.hypot(b.vx, b.vy);
+          if (v > HVS_FAC * Math.sqrt(2 * Mtot / rB)) {
+            b._hvs = true;
+            if (sim.t - (sim._hvsLogT != null ? sim._hvsLogT : -9) >= 1) {
+              sim._hvsLogT = sim.t;
+              logEv(sim, 'amber', tr('hypervelocity star — ejected past escape speed (Hills mechanism)',
+                                     '超高速星 — 以超脫離速度彈射（Hills 機制）'));
+            }
+          }
+        }
       } else if (role != null && b._stream) {
-        b._stream = false;
+        b._stream = false; b._hvs = false;   // recaptured — bound again, by definition not HVS
         if (b.trail) b.trail.length = 0;
       }
       b._cloudRole = role;
