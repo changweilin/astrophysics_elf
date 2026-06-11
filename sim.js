@@ -740,6 +740,11 @@
       // back to the single-point field is identically zero — the member field is C¹
       // through the whole merger, not just mass-conserving.
       const preBoost = (sim._struct1 && sim._struct1.coreBoost) || 0;
+      // Each progenitor core's full point mass at contact — incl. what it has
+      // swallowed (accreted now gravitates from the core) — so the morph's two
+      // source points hand over to exactly Mc1 = coreMass1 at the window's end.
+      const preAcc1 = (sim._struct1 && sim._struct1.accreted) || 0;
+      const preAcc2 = (sim._struct2 && sim._struct2.accreted) || 0;
       const relx = bin.x2 - bin.x1, rely = bin.y2 - bin.y1;
       const relvx = (bin.vx2 || 0) - (bin.vx1 || 0), relvy = (bin.vy2 || 0) - (bin.vy1 || 0);
       sim._coreMorph = {
@@ -747,7 +752,7 @@
         om: (relx * relvy - rely * relvx) / Math.max(1e-6, relx * relx + rely * rely),
         ax0: bin.x1 - ccx, ay0: bin.y1 - ccy,
         bx0: bin.x2 - ccx, by0: bin.y2 - ccy,
-        mA: M1 + preBoost, mB: M2, eGW: eMergerGW,
+        mA: M1 + preBoost + preAcc1, mB: M2 + preAcc2, eGW: eMergerGW,
       };
       const product = mergedStructureType(sim.smbhStructure, bin.smbhStructure);
       // Two galaxies merging is the elliptical-forming channel (checked on the
@@ -1205,6 +1210,7 @@
     if (bin._B2User) sim.params._BUser = true;
     if (bin._a2User) sim.params._aUser = true;
     if (bin.gasFrac2 != null) sim.params.gasFrac = bin.gasFrac2;
+    if (bin.bhFrac2 != null) sim.params.bhFrac = bin.bhFrac2;
     deriveStarSurface(sim, bin, 1);
     sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(sim.params.type)];
   }
@@ -1354,14 +1360,27 @@
   }
 
   // Mass-energy conservation when a galaxy's central BH swallows a member: the star's mass
-  // quantum leaves the member sum but is banked on the swallowing structure's core
-  // (struct.accreted), which structureScale folds back into the binding mass. Total
-  // gravitating mass is conserved — nothing is created or destroyed by the (rare) capture.
+  // quantum leaves the member sum and is banked on the swallowing structure's core
+  // (struct.accreted). The mass is INSIDE the hole now, so it gravitates as part of the
+  // central POINT (coreMass1/coreMass2 below), not the extended binding halo — total
+  // gravitating mass is conserved, only its distribution moves inward.
   function accreteMember(struct, b) {
     if (struct) {
       struct.accreted = (struct.accreted || 0) + (b._m || 0);
       struct.accretedN = (struct.accretedN || 0) + 1;   // swallow census (panel readout)
     }
+  }
+
+  // The central / companion core's full gravitating POINT mass, as the swarm feels it:
+  // the frozen geometric core, plus banked merger cores (coreBoost), plus everything
+  // the hole has swallowed (accreted — mass inside the horizon is point mass, not halo).
+  function coreMass1(sim) {
+    const s = sim._struct1;
+    return sim.params.M + ((s && s.coreBoost) || 0) + ((s && s.accreted) || 0);
+  }
+  function coreMass2(sim) {
+    const s = sim._struct2;
+    return ((sim.binary && sim.binary.M2) || 0) + ((s && s.accreted) || 0);
   }
 
   // ── Starburst: collapse perturbed molecular clouds into newborn stars ──
@@ -1373,8 +1392,8 @@
     if (dt <= 0) return;
     const bin = sim.binary;
     if (!bin || !bin.enabled) return;
-    const Mc1 = sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
-    const M2 = bin.M2 || 0;
+    const Mc1 = coreMass1(sim);
+    const M2 = coreMass2(sim);
     const spawns = [];
     for (const b of sim.bodies) {
       if (!b._cloud || b.state !== 'orbit' || b.kind !== 'gas') continue;
@@ -1555,7 +1574,8 @@
     // original (pseudo-GR) field.
     // Central core mass as the SWARM feels it: the frozen unit plus any banked merger
     // mass (struct.coreBoost — the absorbed companion core, kept for field continuity).
-    const Mc1 = M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
+    const Mc1 = coreMass1(sim);          // frozen unit + merger bank + swallowed mass
+    const Mc2 = coreMass2(sim);
     // ── Post-coalescence field morph (see coalesce) ──
     // While the window is open the central source is REPLACED by the two contact-
     // frozen progenitor points, smoothstep-shrunk onto the remnant and rotating at
@@ -1607,7 +1627,7 @@
       if (collect) { r1fx -= m * a1x; r1fy -= m * a1y; }
       if (binOn) {
         const d2x = px - bin.x2, d2y = py - bin.y2;
-        const w2 = -bin.M2 / Math.pow(d2x * d2x + d2y * d2y + EPS2, 1.5);
+        const w2 = -Mc2 / Math.pow(d2x * d2x + d2y * d2y + EPS2, 1.5);
         let a2x = w2 * d2x, a2y = w2 * d2y;
         if (halo2) { const hf = phys.haloAccel(px - h2c.x, py - h2c.y, halo2.M, halo2.R); a2x += hf.ax; a2y += hf.ay; }
         acc.ax += a2x; acc.ay += a2y;
@@ -2115,19 +2135,22 @@
       // live cloud star regardless of role). The central core carries the frozen unit
       // PLUS any banked merger mass (struct.coreBoost) — absorbed companion cores stay
       // on the books.
-      const M1c = M1 + ((sim._struct1 && sim._struct1.coreBoost) || 0);
+      // Core point masses now INCLUDE the swallowed quanta (coreMass1/2), so the
+      // accreted mass rides the cores' momentum/angular-momentum terms too — it
+      // moves with the hole that ate it, not as a separate massless line item.
+      const M1c = coreMass1(sim);
+      const M2c = coreMass2(sim);
       let mT = M1c + m1 + m2 + mS
-             + ((sim._struct1 && sim._struct1.accreted) || 0)
-             + ((sim._struct2 && sim._struct2.accreted) || 0);
+             + (!binOn && sim._struct2 ? (sim._struct2.accreted || 0) : 0);
       let pxT = cpx + M1c * (binOn ? bin.vx1 : 0);
       let pyT = cpy + M1c * (binOn ? bin.vy1 : 0);
       let LT  = cL + (binOn ? M1c * (bin.x1 * bin.vy1 - bin.y1 * bin.vx1) : 0);
       let pAbs = cAbs + M1c * (binOn ? Math.hypot(bin.vx1, bin.vy1) : 0);
       if (binOn) {
-        mT += bin.M2;
-        pxT += bin.M2 * bin.vx2; pyT += bin.M2 * bin.vy2;
-        LT  += bin.M2 * (bin.x2 * bin.vy2 - bin.y2 * bin.vx2);
-        pAbs += bin.M2 * Math.hypot(bin.vx2, bin.vy2);
+        mT += M2c;
+        pxT += M2c * bin.vx2; pyT += M2c * bin.vy2;
+        LT  += M2c * (bin.x2 * bin.vy2 - bin.y2 * bin.vx2);
+        pAbs += M2c * Math.hypot(bin.vx2, bin.vy2);
       }
       sim._conserve = { M: mT, px: pxT, py: pyT, L: LT };
       // Baseline: captured on the first pass after seeding / a user perturbation. pref
@@ -2256,12 +2279,12 @@
     const has1 = isCloudStruct(sim.smbhStructure);
     const has2 = isCloudStruct(bin.smbhStructure);
     if (has2) {
-      circularizeCloud(sim, 'companion', bin.x2, bin.y2, bin.vx2, bin.vy2, M2, sim._halo2,
+      circularizeCloud(sim, 'companion', bin.x2, bin.y2, bin.vx2, bin.vy2, coreMass2(sim), sim._halo2,
                        Math.sign(bin.a2 || sim.params.a || 1) || 1);
     }
     if (has1) {
       circularizeCloud(sim, 'central', bin.x1, bin.y1, bin.vx1, bin.vy1,
-                       M1 + ((sim._struct1 && sim._struct1.coreBoost) || 0), sim._halo1,
+                       coreMass1(sim), sim._halo1,
                        Math.sign(sim.params.a || 1) || 1);
     }
     resetConservationBaseline(sim);   // circularisation rewrites the velocities
@@ -2504,13 +2527,13 @@
     if (role === 'companion') {
       if (!binOn) return null;
       return { hx: bin.x2, hy: bin.y2, hvx: bin.vx2, hvy: bin.vy2,
-               Mcore: bin.M2, dir: Math.sign(bin.a2 || sim.params.a || 1) || 1,
+               Mcore: coreMass2(sim), dir: Math.sign(bin.a2 || sim.params.a || 1) || 1,
                massSun: bin.M2sun != null ? bin.M2sun : (bin.M2 || 0.8) * (sim.params.Msun || 1) };
     }
     return { hx: binOn ? bin.x1 : 0, hy: binOn ? bin.y1 : 0,
              hvx: binOn ? bin.vx1 : 0, hvy: binOn ? bin.vy1 : 0,
-             // Members orbit the core + any banked merger mass (field continuity).
-             Mcore: sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0),
+             // Members orbit the full core point: unit + merger bank + swallowed mass.
+             Mcore: coreMass1(sim),
              dir: Math.sign(sim.params.a || 1) || 1,
              massSun: sim.params.Msun || 1 };
   }
@@ -2587,6 +2610,59 @@
     return v != null ? Math.max(0, Math.min(0.8, v)) : geom.gasFrac;
   }
 
+  // ── Black-hole share of a structure's TOTAL mass ──────────
+  // The mass slider sets the structure's TOTAL mass (BH + stars + clouds + dark
+  // matter); the central hole is this fraction of it. Fixed ratios of the real
+  // universe stay constants; ratios that VARY get a control — the BH share
+  // varies wildly across the M–sigma relation, so a galaxy gets a slider.
+  // Budget note: the cosmic split is dark energy ~68% / dark matter ~27% /
+  // baryons ~5%, but dark ENERGY does not cluster — it never enters a bound
+  // structure's mass, so nothing exceeds 100%. Inside a galaxy only DM : baryons
+  // = 27 : 5 ≈ 84 : 16 remains, which is the fixed ~85% halo share used here.
+  // The slider spans 0.01%..15% of the total — down into the realistic M–sigma
+  // band. The swarm dynamics can't carry the true halo of a tiny BH share (a
+  // 0.01% share means a halo ~10,000x the geometric core — member speeds would
+  // pass c at the halo edge), so the LIVE halo mass is capped at HALO_RATIO_MAX
+  // times the core and struct.haloMul remembers the deficit, keeping the panel
+  // mass budget slider-true. A star swarm (cluster / open cluster) has NO hole:
+  // its core is a pure simulated binding point at the fixed default share.
+  const BH_FRAC_DEF = 0.15;
+  const BH_FRAC_MIN = 0.0001, BH_FRAC_MAX = 0.15;   // user slider span (0.01%..15%)
+  const HALO_RATIO_MAX = 19;   // dynamics cap = (1 − 0.05)/0.05, the old 5% demo floor
+  function bhFracFor(sim, role, key) {
+    if (key && key !== 'galaxy') return BH_FRAC_DEF;
+    const v = role === 'companion' ? (sim.binary ? sim.binary.bhFrac2 : null) : sim.params.bhFrac;
+    return v != null ? Math.max(BH_FRAC_MIN, Math.min(BH_FRAC_MAX, v)) : BH_FRAC_DEF;
+  }
+
+  // User slider: redistribute a galaxy's FIXED total mass between the hole and
+  // everything else (stars + clouds + DM ride the binding halo). The total —
+  // what the mass slider sets — is invariant under this control; only the split
+  // moves. The unit anchor (Msun = the central hole's physical mass) re-derives,
+  // and the swarm re-bases its halo mass + per-star quanta under the new split.
+  function setBHFraction(sim, role, frac) {
+    const f = Math.max(BH_FRAC_MIN, Math.min(BH_FRAC_MAX, frac || BH_FRAC_DEF));
+    const fOld = bhFracFor(sim, role, 'galaxy');
+    if (role === 'companion') {
+      const bin = sim.binary;
+      if (!bin) return;
+      bin.bhFrac2 = f;
+      const total = (bin.M2sun || 1) / fOld;
+      bin.M2sun = total * f;
+      bin.M2 = Math.max(0.01, bin.M2sun / Math.max(1e-9, sim.params.Msun || 1));
+    } else {
+      sim.params.bhFrac = f;
+      const total = (sim.params.Msun || 1) / fOld;
+      sim.params.Msun = total * f;
+      // The companion's geometric mass is M2sun per central unit — keep its
+      // PHYSICAL mass unchanged across the central's unit re-derivation.
+      if (sim.binary && sim.binary.M2sun != null) {
+        sim.binary.M2 = Math.max(0.01, sim.binary.M2sun / Math.max(1e-9, sim.params.Msun));
+      }
+    }
+    rescaleStructureCloud(sim, role);   // halo mass + quanta re-derive under the new split
+  }
+
   // ── User slider: a galaxy's BH ↔ molecular-cloud make-up ──
   // Sets what fraction of the structure's bound member mass rides in molecular
   // clouds (gas members) vs stars, and re-balances the LIVE swarm in place by
@@ -2615,6 +2691,43 @@
     recordCloudCounts(sim);   // refresh the gas-mass sums for the ratio readout
   }
 
+  // ── Structure mass budget for the panels ──────────────────
+  // Single source of truth for the composition readout: the structure's TOTAL
+  // mass (M⊙) and each component's share of it. Galaxy parts are BH / stars /
+  // molecular clouds / dark matter; a star swarm splits into swarm / binding
+  // mass. The BH and cloud shares follow the live sums (so accretion and the
+  // sliders move them), stars are the 5:27 baryon cut of the non-gas bound
+  // mass, and DARK MATTER is the remainder — the budget closes at exactly
+  // 100%. struct.haloMul re-inflates the dynamics-capped halo (HALO_RATIO_MAX)
+  // back to the slider-true DM share.
+  function structureShares(sim, role) {
+    const struct = role === 'companion' ? sim._struct2 : sim._struct1;
+    const halo = role === 'companion' ? sim._halo2 : sim._halo1;
+    if (!struct || !halo) return null;
+    const core = role === 'companion' ? coreMass2(sim) : coreMass1(sim);
+    const mul = struct.haloMul || 1;
+    const haloM = halo.M * mul;
+    const total = Math.max(1e-9, core + haloM);
+    const totalSun = total * (sim.params.Msun || 1);
+    if (struct.key !== 'galaxy') {
+      return { totalSun, parts: [
+        { en: 'star swarm', zh: '恆星群', f: haloM / total },
+        { en: 'binding mass (sim)', zh: '束縛質量（模擬）', f: core / total },
+      ] };
+    }
+    const gasM = ((role === 'companion' ? sim._gasM2 : sim._gasM1) || 0) * mul;
+    const fBH = core / total;
+    const fGas = Math.min(1 - fBH, gasM / total);
+    const fStar = Math.max(0, (haloM - gasM) / total) * (5 / 32);   // DM : baryons = 27 : 5
+    const fDM = Math.max(0, 1 - fBH - fGas - fStar);                // remainder closes the budget
+    return { totalSun, parts: [
+      { en: 'black hole', zh: '黑洞', f: fBH },
+      { en: 'stars', zh: '恆星', f: fStar },
+      { en: 'molecular clouds', zh: '分子雲', f: fGas },
+      { en: 'dark matter', zh: '暗物質', f: fDM },
+    ] };
+  }
+
   function seedStructureCloud(sim, key, role = 'central') {
     clearStructureCloud(sim, role);
     resetConservationBaseline(sim);   // new swarm = new initial condition for the ledger
@@ -2622,8 +2735,12 @@
     if (!isCloudStruct(key)) return;
     const host = resolveHost(sim, role);
     if (!host) return;
-    const geom = structureGeom(key, host.massSun);
-    const N = structureN(host.massSun, key);
+    // The mass slider is the structure's TOTAL mass; richness (N) and the
+    // mass–size relation read that total. The hole is the bhFrac share of it.
+    const fBH = bhFracFor(sim, role, key);
+    const totalSun = host.massSun / fBH;
+    const geom = structureGeom(key, totalSun);
+    const N = structureN(totalSun, key);
     const nGas = Math.round(N * gasFracFor(sim, key, role, geom));   // clusters are gas-poor
     // Binding halo (uniform-density sphere) = the structure's gravitating bound mass —
     // dark matter for a galaxy, the self-bound star+DM mass for a cluster. BOTH get one
@@ -2631,7 +2748,12 @@
     // its members fly apart in a merger (mass not conserved). The halo MASS is driven by
     // the live member sum each step (updateStructureMass), so it deepens as the structure
     // absorbs stars and lightens as it sheds them — conserving total mass across a transfer.
-    const halo = { M: host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION)), R: geom.rOut * 1.8 };
+    // Halo : core = (1 − f_BH)/f_BH so core + halo = the slider's total, but the LIVE
+    // halo is capped at HALO_RATIO_MAX× the core (swarm-dynamics limit); haloMul carries
+    // the capped-away remainder so the panel budget still reads slider-true.
+    const haloRatio = (1 - fBH) / fBH;
+    const dynRatio = Math.min(haloRatio, HALO_RATIO_MAX);
+    const halo = { M: host.Mcore * dynRatio, R: geom.rOut * 1.8 };
     // Per-star mass quantum: the bound mass shared over the seed population, so the live
     // sum Σ b._m reproduces the halo mass and follows the members one-for-one.
     const mPer = N > 0 ? halo.M / N : 0;
@@ -2644,6 +2766,7 @@
       reach: geom.rOut * 2.2,            // membership backstop (fixed; avoids strip runaway)
       rOut: geom.rOut, reachBase: geom.rOut * 2.2,
       RvisBase: geom.rOut, haloRbase: halo.R,
+      haloMul: haloRatio / dynRatio,     // display re-inflation for the capped halo (≥ 1)
     };
     if (role === 'companion') { sim._halo2 = halo; sim._struct2 = struct; }
     else                      { sim._halo1 = halo; sim._struct1 = struct; }
@@ -2664,15 +2787,22 @@
     const host = resolveHost(sim, role);
     if (!host) return;
     const key = struct.key;
-    const geom = structureGeom(key, host.massSun);
+    // Slider = TOTAL structure mass; N and the mass–size relation read the total.
+    const fBH = bhFracFor(sim, role, key);
+    const totalSun = host.massSun / fBH;
+    const geom = structureGeom(key, totalSun);
     // A merged remnant stays enlarged (rebaseMergedStructure's accumulated growth):
     // re-reading the mass–size relation alone would snap it back to a single-
     // progenitor footprint on the first slider drag.
     geom.rOut *= struct.sizeBoost || 1;
     const halo = role === 'companion' ? sim._halo2 : sim._halo1;
-    const target = structureN(host.massSun, key);
+    const target = structureN(totalSun, key);
     // New bound mass for the new slider mass, shared over the target population.
-    const newHaloM = host.Mcore * (phys.DM_FRACTION / (1 - phys.DM_FRACTION));
+    // Halo : core = (1 − f_BH)/f_BH keeps core + halo = the slider total, capped at
+    // HALO_RATIO_MAX for the live dynamics (haloMul re-inflates it for display).
+    const haloRatio = (1 - fBH) / fBH;
+    const dynRatio = Math.min(haloRatio, HALO_RATIO_MAX);
+    const newHaloM = host.Mcore * dynRatio;
     const mPer = target > 0 ? newHaloM / target : 0;
     // Current live members of this seed group.
     const mine = sim.bodies.filter((b) => b._cloud && b._cloudOrigin === role && b.state === 'orbit');
@@ -2701,6 +2831,7 @@
     struct.reach = geom.rOut * 2.2; struct.reachBase = geom.rOut * 2.2;
     struct.RvisBase = geom.rOut; struct.haloRbase = geom.rOut * 1.8;
     struct.haloBase = newHaloM;
+    struct.haloMul = haloRatio / dynRatio;
     if (halo) { halo.M = newHaloM; halo.R = geom.rOut * 1.8; }
     resetConservationBaseline(sim);   // deliberate mass edit — re-base the ledger
     recordCloudCounts(sim);
@@ -2759,8 +2890,8 @@
     const has2 = binOn && isCloudStruct(bin.smbhStructure);
     const reach1 = (sim._struct1 && sim._struct1.reach) || 75;
     const reach2 = (sim._struct2 && sim._struct2.reach) || 55;
-    const M1core = sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0);
-    const M2core = (bin && bin.M2) || 0.8;
+    const M1core = coreMass1(sim);
+    const M2core = coreMass2(sim) || 0.8;
     // ── Lone structure: membership is ENERGY-based ──
     // The radius reach exists to referee the two-structure tug-of-war. With no rival
     // attractor a star belongs to the lone structure iff it is gravitationally BOUND
@@ -2887,10 +3018,11 @@
     const f = Math.max(0, frac);
     const Rvis = Math.max(1, (struct.RvisBase || 1) * Math.cbrt(Math.max(1e-3, f)));
     if (halo) {
-      // Live member mass PLUS anything the central BH has swallowed (struct.accreted): a star
-      // eaten by a galaxy's hole leaves the member sum but its mass-energy is conserved into
-      // the core, so the structure's total gravitating mass is unchanged across a swallow.
-      halo.M = Math.max(0, Mmembers + (struct.accreted || 0));
+      // Live member mass only. A swallowed star's quantum (struct.accreted) gravitates
+      // from the central POINT (coreMass1/2) now — it is inside the hole, not spread
+      // through the halo — so total gravitating mass is conserved across a swallow
+      // while its distribution correctly moves inward.
+      halo.M = Math.max(0, Mmembers);
       // Halo EXTENT follows the halo's own mass (R ∝ M^(1/3)), not the star count —
       // the dark matter is its own body, not a head-count of the luminous members.
       if (struct.haloRbase) {
@@ -3288,15 +3420,18 @@
       age: p.age, Z: p.Z, cepheid: p.cepheid, cepheidAmp: p.cepheidAmp,
       B: p.B, _stellarTouched: p._stellarTouched,
       discPref: p.discPref, _BUser: p._BUser, _aUser: p._aUser, gasFrac: p.gasFrac,
+      bhFrac: p.bhFrac,
     };
     p.Msun = bin.M2sun; p.type = bin.type; p.R_star = bin.R_star2; p.T_eff = bin.T_eff2;
     p.age = bin.age2; p.Z = bin.Z2; p.cepheid = bin.cepheid; p.cepheidAmp = bin.cepheidAmp;
     p.B = bin.B2; p._stellarTouched = bin._stellarTouched;
     p.discPref = bin.discPref2; p._BUser = bin._B2User; p._aUser = bin._a2User; p.gasFrac = bin.gasFrac2;
+    p.bhFrac = bin.bhFrac2;
     bin.M2sun = t.Msun; bin.type = t.type; bin.R_star2 = t.R_star; bin.T_eff2 = t.T_eff;
     bin.age2 = t.age; bin.Z2 = t.Z; bin.cepheid = t.cepheid; bin.cepheidAmp = t.cepheidAmp;
     bin.B2 = t.B; bin._stellarTouched = t._stellarTouched;
     bin.discPref2 = t.discPref; bin._B2User = t._BUser; bin._a2User = t._aUser; bin.gasFrac2 = t.gasFrac;
+    bin.bhFrac2 = t.bhFrac;
 
     // Primary stays geometric M = 1; companion geometric mass is the new ratio.
     bin.M2 = Math.max(0.001, p.Msun > 0 ? bin.M2sun / p.Msun : 1);
@@ -3413,6 +3548,7 @@
                    step, syncStellar, frameAnchor, applyFrameLock, circularizeBody, circularizeBinary, setBinaryVelocity,
                    setBHRegime, cycleBHRegime, applySMBHStructure, clearStructure, swapCentralCompanion, setDiscEnabled,
                    reseedStructureClouds, rescaleStructureCloud, setGasFraction,
+                   setBHFraction, bhFracFor, structureShares,
                    fitView, worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

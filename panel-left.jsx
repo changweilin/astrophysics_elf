@@ -9,6 +9,13 @@ const { useState, useEffect, useRef, useMemo } = React;
 // swipes scroll the page and plain taps are ignored. Gesture state lives on the
 // DOM node (no hooks), so the same helper works from any component/file.
 // Mouse and keyboard input are untouched (no touch events fire for them).
+// Percent label for a structure-composition share. More decimals only when the
+// share is tiny (a 0.01% BH must not print as "0%").
+window.KNUI_fmtShare = (f) => {
+  const p = f * 100;
+  return (p < 0.1 ? p.toFixed(2) : p < 10 ? p.toFixed(1) : p.toFixed(0)) + '%';
+};
+
 window.KNUI = window.KNUI || {
   rangeGuard(onChange) {
     return {
@@ -448,6 +455,14 @@ function BodyEditor({ sim, force, role }) {
   // state (an accreting companion is an active galaxy; otherwise a quiescent hole).
   const companionStructure = (bin && bin.smbhStructure)
     || ((sim.disc2 && sim.disc2.enabled) ? 'galaxy' : 'smbh');
+  // Galaxy / cluster mode: the mass slider reads and writes the structure's TOTAL
+  // mass (BH + stars + molecular clouds + dark matter). The hole is the bhFrac
+  // share of it (Msun stays the per-unit anchor = the BH's physical mass), so the
+  // slider value converts by ÷/× fBH on the way in/out.
+  const activeSMBHKey = isCentral ? (sim.smbhStructure || 'smbh') : companionStructure;
+  const structTotalMode = (smbhStructures || companionStructures)
+    && (activeSMBHKey === 'galaxy' || activeSMBHKey === 'cluster');
+  const fBH = structTotalMode ? window.KNSim.bhFracFor(sim, structRole, activeSMBHKey) : 1;
 
   return (
     <>
@@ -522,15 +537,28 @@ function BodyEditor({ sim, force, role }) {
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN1 || 0}</span>
         </div>
-        {/* The structure's SIMULATED binding core — the softened point mass its swarm
-            actually orbits (frozen unit + banked merger cores), in solar units. For a
-            cluster this is purely a binding mass, NOT a black hole. */}
-        <div className="struct-n" role="status">
-          <span className="sn-l">{tr('core binding mass (sim)', '模擬核心質量')}</span>
-          <span className="sn-v">
-            {phys.fmtSolarMass((sim.params.M + ((sim._struct1 && sim._struct1.coreBoost) || 0)) * (sim.params.Msun || 1))} M⊙
-          </span>
-        </div>
+        {/* Mass budget: the TOTAL structure mass plus each component's share of it
+            (dark matter is the remainder, so the budget closes at exactly 100%).
+            Dark ENERGY never appears here: it does not cluster. structureShares()
+            in sim.js is the single source of truth (live, slider-true). */}
+        {(() => {
+          const sh = window.KNSim.structureShares(sim, 'central');
+          if (!sh) return null;
+          return (
+            <React.Fragment>
+              <div className="struct-n" role="status">
+                <span className="sn-l">{tr('total mass', '結構總質量')}</span>
+                <span className="sn-v">{phys.fmtSolarMass(sh.totalSun)} M⊙</span>
+              </div>
+              {sh.parts.map((p) => (
+                <div className="struct-n" role="status" key={p.en}>
+                  <span className="sn-l">{tr(p.en, p.zh)}</span>
+                  <span className="sn-v">{window.KNUI_fmtShare(p.f)}</span>
+                </div>
+              ))}
+            </React.Fragment>
+          );
+        })()}
         {/* Only a GALAXY hosts a real central SMBH (a cluster core is a simulated
             binding mass with no hole): its physical mass grows by the members it has
             swallowed (struct.accreted, conserved bookkeeping), counted below. */}
@@ -558,23 +586,8 @@ function BodyEditor({ sim, force, role }) {
             </div>
           )}
           <div className="struct-n" role="status">
-            <span className="sn-l">{tr('central BH mass (real)', '實質核心黑洞質量')}</span>
-            <span className="sn-v">
-              {phys.fmtSolarMass((1 + ((sim._struct1 && sim._struct1.accreted) || 0)) * (sim.params.Msun || 1))} M⊙
-            </span>
-          </div>
-          <div className="struct-n" role="status">
             <span className="sn-l">{tr('stars swallowed', '吞噬恆星數')}</span>
             <span className="sn-v">N = {(sim._struct1 && sim._struct1.accretedN) || 0}</span>
-          </div>
-          {/* Live BH : molecular-cloud mass ratio (geometric units cancel), the
-              starburst newborn census, and the composition slider — flipping member
-              kinds in place (setGasFraction), mass quanta untouched (conserved). */}
-          <div className="struct-n" role="status">
-            <span className="sn-l">{tr('BH : molecular clouds', '黑洞 : 分子雲質量')}</span>
-            <span className="sn-v">
-              1 : {((sim._gasM1 || 0) / Math.max(1e-9, 1 + ((sim._struct1 && sim._struct1.accreted) || 0))).toFixed(2)}
-            </span>
           </div>
           {((sim._struct1 && sim._struct1.newborn) || 0) > 0 && (
             <div className="struct-n" role="status">
@@ -582,12 +595,27 @@ function BodyEditor({ sim, force, role }) {
               <span className="sn-v">N = {sim._struct1.newborn}</span>
             </div>
           )}
-          <Param sym="f" name={tr('Molecular cloud fraction', '分子雲質量比例')} unit=""
-                 val={sim.params.gasFrac != null ? sim.params.gasFrac : 0.35}
-                 min={0} max={0.8} step={0.01}
+          {/* Slider denominated in the TOTAL structure mass (user rule, 1%..50%).
+              The engine's gasFrac stays a member-mass (halo) fraction internally,
+              so the JSX converts by the halo's (1 − f_BH) share both ways. */}
+          <Param sym="f" name={tr('Molecular clouds (of total mass)', '分子雲質量（占總質量）')} unit=""
+                 val={(sim.params.gasFrac != null ? sim.params.gasFrac : 0.35)
+                      * (1 - window.KNSim.bhFracFor(sim, 'central', 'galaxy'))}
+                 min={0.01} max={0.5} step={0.01}
                  fmt={(v) => (v * 100).toFixed(0) + '%'}
-                 onChange={(v) => { window.KNSim.setGasFraction(sim, 'central', v); force(); }}
-                 scaleLabels={['0%', tr('of bound mass', '占束縛質量'), '80%']} />
+                 onChange={(v) => { window.KNSim.setGasFraction(sim, 'central',
+                   v / (1 - window.KNSim.bhFracFor(sim, 'central', 'galaxy'))); force(); }}
+                 scaleLabels={['1%', tr('of total mass', '占總質量'), '50%']} />
+          {/* The BH's share of the TOTAL mass (0.01%..15%, into the realistic M–σ
+              band). The total stays fixed — the control redistributes mass between
+              the hole and the halo; below the dynamics floor the live halo is
+              capped and struct.haloMul keeps the readout slider-true. */}
+          <Param sym="f₍BH₎" name={tr('Black hole mass share', '黑洞質量比')} unit=""
+                 val={window.KNSim.bhFracFor(sim, 'central', 'galaxy')}
+                 min={0.0001} max={0.15} step={0.0001}
+                 fmt={(v) => window.KNUI_fmtShare(v)}
+                 onChange={(v) => { window.KNSim.setBHFraction(sim, 'central', v); force(); }}
+                 scaleLabels={['0.01%', tr('of total mass', '占總質量'), '15%']} />
           </React.Fragment>
         )}
         </React.Fragment>
@@ -598,12 +626,26 @@ function BodyEditor({ sim, force, role }) {
           <span className="sn-l">{tr('stars in range', '範圍內恆星')}</span>
           <span className="sn-v">N = {sim._cloudN2 || 0}</span>
         </div>
-        <div className="struct-n" role="status">
-          <span className="sn-l">{tr('core binding mass (sim)', '模擬核心質量')}</span>
-          <span className="sn-v">
-            {phys.fmtSolarMass((sim.binary && sim.binary.M2 || 0) * (sim.params.Msun || 1))} M⊙
-          </span>
-        </div>
+        {/* Mass budget (mirrors the central block): total + component shares,
+            dark matter as the remainder — structureShares() is the source. */}
+        {(() => {
+          const sh = window.KNSim.structureShares(sim, 'companion');
+          if (!sh) return null;
+          return (
+            <React.Fragment>
+              <div className="struct-n" role="status">
+                <span className="sn-l">{tr('total mass', '結構總質量')}</span>
+                <span className="sn-v">{phys.fmtSolarMass(sh.totalSun)} M⊙</span>
+              </div>
+              {sh.parts.map((p) => (
+                <div className="struct-n" role="status" key={p.en}>
+                  <span className="sn-l">{tr(p.en, p.zh)}</span>
+                  <span className="sn-v">{window.KNUI_fmtShare(p.f)}</span>
+                </div>
+              ))}
+            </React.Fragment>
+          );
+        })()}
         {companionStructure === 'galaxy' && companionStructures && (
           <React.Fragment>
           <button className={`disc-toggle ${sim.disc2 && sim.disc2.enabled ? 'on' : ''}`}
@@ -614,20 +656,8 @@ function BodyEditor({ sim, force, role }) {
               : tr('AGN off — quiescent nucleus', 'AGN 關 — 寧靜星系核')}
           </button>
           <div className="struct-n" role="status">
-            <span className="sn-l">{tr('central BH mass (real)', '實質核心黑洞質量')}</span>
-            <span className="sn-v">
-              {phys.fmtSolarMass(((sim.binary && sim.binary.M2 || 0) + ((sim._struct2 && sim._struct2.accreted) || 0)) * (sim.params.Msun || 1))} M⊙
-            </span>
-          </div>
-          <div className="struct-n" role="status">
             <span className="sn-l">{tr('stars swallowed', '吞噬恆星數')}</span>
             <span className="sn-v">N = {(sim._struct2 && sim._struct2.accretedN) || 0}</span>
-          </div>
-          <div className="struct-n" role="status">
-            <span className="sn-l">{tr('BH : molecular clouds', '黑洞 : 分子雲質量')}</span>
-            <span className="sn-v">
-              1 : {((sim._gasM2 || 0) / Math.max(1e-9, ((sim.binary && sim.binary.M2) || 1) + ((sim._struct2 && sim._struct2.accreted) || 0))).toFixed(2)}
-            </span>
           </div>
           {((sim._struct2 && sim._struct2.newborn) || 0) > 0 && (
             <div className="struct-n" role="status">
@@ -635,12 +665,20 @@ function BodyEditor({ sim, force, role }) {
               <span className="sn-v">N = {sim._struct2.newborn}</span>
             </div>
           )}
-          <Param sym="f" name={tr('Molecular cloud fraction', '分子雲質量比例')} unit=""
-                 val={sim.binary && sim.binary.gasFrac2 != null ? sim.binary.gasFrac2 : 0.35}
-                 min={0} max={0.8} step={0.01}
+          <Param sym="f" name={tr('Molecular clouds (of total mass)', '分子雲質量（占總質量）')} unit=""
+                 val={(sim.binary && sim.binary.gasFrac2 != null ? sim.binary.gasFrac2 : 0.35)
+                      * (1 - window.KNSim.bhFracFor(sim, 'companion', 'galaxy'))}
+                 min={0.01} max={0.5} step={0.01}
                  fmt={(v) => (v * 100).toFixed(0) + '%'}
-                 onChange={(v) => { window.KNSim.setGasFraction(sim, 'companion', v); force(); }}
-                 scaleLabels={['0%', tr('of bound mass', '占束縛質量'), '80%']} />
+                 onChange={(v) => { window.KNSim.setGasFraction(sim, 'companion',
+                   v / (1 - window.KNSim.bhFracFor(sim, 'companion', 'galaxy'))); force(); }}
+                 scaleLabels={['1%', tr('of total mass', '占總質量'), '50%']} />
+          <Param sym="f₍BH₎" name={tr('Black hole mass share', '黑洞質量比')} unit=""
+                 val={window.KNSim.bhFracFor(sim, 'companion', 'galaxy')}
+                 min={0.0001} max={0.15} step={0.0001}
+                 fmt={(v) => window.KNUI_fmtShare(v)}
+                 onChange={(v) => { window.KNSim.setBHFraction(sim, 'companion', v); force(); }}
+                 scaleLabels={['0.01%', tr('of total mass', '占總質量'), '15%']} />
           </React.Fragment>
         )}
         </React.Fragment>
@@ -690,9 +728,11 @@ function BodyEditor({ sim, force, role }) {
         </div>
       )}
 
-      <Param sym={isCentral ? 'M' : 'M₂'} name={tr('Mass', '質量')} val={accessors.Msun} unit={accessors.massUnit}
+      <Param sym={isCentral ? 'M' : 'M₂'}
+             name={structTotalMode ? tr('Total mass', '總質量') : tr('Mass', '質量')}
+             val={accessors.Msun / fBH} unit={accessors.massUnit}
              min={accessors.mMin} max={accessors.mMax} step={0.01} scale="log"
-             fmt={(v) => phys.fmtSolarMass(v)} onChange={setMass}
+             fmt={(v) => phys.fmtSolarMass(v)} onChange={(v) => setMass(v * fBH)}
              scaleLabels={[phys.fmtSolarMass(accessors.mMin), 'log', phys.fmtSolarMass(accessors.mMax)]} />
       <Param sym={isCentral ? 'Q' : 'Q₂'} name={tr('Charge', '電荷')} unit="√(M)" val={accessors.Q}
              min={-1.5} max={1.5} step={0.01}

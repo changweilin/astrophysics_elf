@@ -42,7 +42,9 @@
       "Bash(/usr/bin/grep -n \"push\" sim.js)",
       "Bash(awk NR>=170 && NR<=235 *)",
       "Bash(echo \"check_exit=$?\")",
-      "Bash(echo \"exit=$?\")"
+      "Bash(echo \"exit=$?\")",
+      "PowerShell(node --check sim.js; node --check physics.js; node --check disc.js)",
+      "PowerShell(node .\\\\full-physics\\\\run-benchmarks.mjs)"
     ]
   }
 }
