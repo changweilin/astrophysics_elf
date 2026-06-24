@@ -110,7 +110,7 @@ html, body {
 .topbar .session b { color: var(--amber); font-weight: 500; }
 .topbar .session .ok { color: var(--cyan); }
 
-/* LEARN link → physics primer (learn.html). Sits in the session group. */
+/* LIBRARY link → physics library (library.html). Sits in the session group. */
 .topbar-link {
   font-family: var(--mono);
   font-size: 10px;

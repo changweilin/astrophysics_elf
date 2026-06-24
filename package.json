@@ -8,6 +8,8 @@
   "author": "Chang Wei Lin",
   "scripts": {
     "dev": "node serve.mjs",
+    "dev:all": "node dev-all.mjs",
+    "dev:api": "node scientists-backend/server.mjs",
     "start": "node serve.mjs",
     "test": "node test/physics.test.mjs && node test/interaction.test.mjs && node test/render-smoke.test.mjs && node full-physics/run-benchmarks.mjs"
   },

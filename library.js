@@ -1,4 +1,4 @@
-/* learn.js — renders the physics primer from window.KN_LEARN.
+/* library.js — renders the physics library from window.KN_LIBRARY.
  *
  * Plain DOM (no React/Babel) so the teaching page stays light and loads fast.
  * Bilingual by design: every text node is an {en, zh} pair. zh = Traditional
@@ -6,7 +6,7 @@
  * same localStorage key ('kn-lang') the lab uses, so a reader's choice carries
  * across both. Locales other than zh fall back to en here.
  *
- * Content block grammar (see learn-content.js):
+ * Content block grammar (see library-content.js):
  *   { p:   {en, zh} }                 paragraph (inline <var>/<b>/<i> HTML allowed)
  *   { h:   {en, zh} }                 sub-heading (h3)
  *   { list:[{en, zh}, ...] }          bullet list
@@ -113,7 +113,7 @@
 
   // ---- page assembly ---------------------------------------------------
   function render() {
-    var data = window.KN_LEARN;
+    var data = window.KN_LIBRARY;
     var main = document.getElementById('lp-main');
     var toc = document.getElementById('lp-toc-list');
     if (!data || !main) return;
@@ -121,7 +121,7 @@
     toc.innerHTML = '';
 
     document.documentElement.lang = (lang === 'zh') ? 'zh-Hant' : 'en';
-    document.title = t(data.docTitle || { en: 'Black Hole Lab — Physics Primer', zh: '黑洞實驗室 · 物理導讀' });
+    document.title = t(data.docTitle || { en: 'Black Hole Lab — Library', zh: '黑洞實驗室 · 圖書館' });
 
     // language selector state
     var sel = document.getElementById('lp-lang');

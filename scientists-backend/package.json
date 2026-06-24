@@ -1,0 +1,18 @@
+{
+  "name": "kn-scientists-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local LLM backend for the Kerr-Newman Lab 'Scientists' page. Roleplays famous physicists/astronomers over an Ollama-served model on an RTX 3060. Cleanly isolated from the static browser demo; talks to the frontend only through a small REST/SSE API.",
+  "license": "GPL-3.0-or-later",
+  "author": "Chang Wei Lin",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs",
+    "check": "node --check server.mjs && node --check config.mjs && node --check lib/ollama.mjs && node --check lib/model-resolver.mjs && node --check lib/context.mjs && node --check lib/sessions.mjs && node --check personas/scientists.mjs && node --check knowledge/wiki.mjs && node --check knowledge/build-finetune-dataset.mjs",
+    "build-dataset": "node knowledge/build-finetune-dataset.mjs"
+  }
+}

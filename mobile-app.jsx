@@ -578,7 +578,7 @@ function MobileApp() {
         <div className="session">
           <span>BL · RK2</span>
           <span className="live">● {tr('LIVE', '即時')}</span>
-          <a className="topbar-link" href="learn.html" title={tr('Physics primer', '物理導讀')}>{tr('LEARN', '教學')}</a>
+          <a className="topbar-link" href="library.html" title={tr('Library', '圖書館')}>{tr('LIBRARY', '圖書館')}</a>
           <LangToggle force={force} />
         </div>
       </div>

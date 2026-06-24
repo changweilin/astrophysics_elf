@@ -1,7 +1,7 @@
-/* learn-content.js — bilingual content for the Black Hole Lab physics primer.
+/* library-content.js — bilingual content for the Black Hole Lab physics library.
  *
  * Every text node is an { en, zh } pair (en = English, zh = Traditional Chinese,
- * Taiwan). These two are the priority locales; learn.js renders English for any
+ * Taiwan). These two are the priority locales; library.js renders English for any
  * other selection. Physics notation (M, Q, a, r+, ISCO, Kerr-Newman, ...) is
  * kept identical across languages, per the repo's i18n convention.
  *
@@ -9,7 +9,7 @@
  * so the gravitational radius GM/c^2 is written simply as M and lengths are in
  * units of M. Diagrams are schematic SVG (muted amber/cyan/violet — never neon).
  *
- * Block grammar is documented in learn.js. To finish a stubbed chapter, replace
+ * Block grammar is documented in library.js. To finish a stubbed chapter, replace
  * its { stub:... } block with real { p / h / eq / fig / call / list } blocks.
  */
 (function () {
@@ -53,14 +53,14 @@
     </g>
   </svg>`;
 
-  window.KN_LEARN = {
-    docTitle: { en: 'Black Hole Lab — Physics Primer', zh: '黑洞實驗室 · 物理導讀' },
+  window.KN_LIBRARY = {
+    docTitle: { en: 'Black Hole Lab — Library', zh: '黑洞實驗室 · 圖書館' },
 
     // ============================ PROLOGUE ============================
     prologue: {
       kicker: {
         en: 'A field guide to the Kerr-Newman Black Hole Laboratory',
-        zh: 'Kerr-Newman 黑洞實驗室 · 導讀手冊',
+        zh: 'Kerr-Newman 黑洞實驗室 · 圖書館',
         ja: 'Kerr-Newman ブラックホール研究室・実地ガイド',
         ko: 'Kerr-Newman 블랙홀 실험실 · 현장 안내서',
         de: 'Ein Feldführer zum Kerr-Newman-Schwarze-Löcher-Labor',
@@ -79,8 +79,8 @@
         it: 'Leggere la geometria di un buco nero'
       },
       lede: {
-        en: 'This primer explains, in pictures and a little math, every physical phenomenon you can switch on in the lab — from the event horizon to relativistic jets. Start here, then jump to any chapter from the index on the right.',
-        zh: '這份導讀用圖與少量數學，說明你在實驗室裡能開啟的每一種物理現象——從事件視界到相對論性噴流。先讀這裡，再從右側索引跳到任一章節。',
+        en: 'This library explains, in pictures and a little math, every physical phenomenon you can switch on in the lab — from the event horizon to relativistic jets. Start here, then jump to any chapter from the index on the right.',
+        zh: '這座圖書館用圖與少量數學，說明你在實驗室裡能開啟的每一種物理現象——從事件視界到相對論性噴流。先讀這裡，再從右側索引跳到任一章節。',
         ja: 'この入門書は、図と少しの数式で、研究室で切り替えられるあらゆる物理現象を——事象の地平面から相対論的ジェットまで——解説します。まずここを読み、右の索引から任意の章へ進んでください。',
         ko: '이 입문서는 그림과 약간의 수식으로, 실험실에서 켤 수 있는 모든 물리 현상을——사건의 지평선부터 상대론적 제트까지——설명합니다. 여기서 시작한 뒤 오른쪽 색인에서 원하는 장으로 이동하세요.',
         de: 'Diese Einführung erklärt mit Bildern und etwas Mathematik jedes physikalische Phänomen, das du im Labor einschalten kannst — vom Ereignishorizont bis zu relativistischen Jets. Beginne hier und springe dann über das Verzeichnis rechts zu jedem Kapitel.',
@@ -130,7 +130,7 @@
           es: '<b>La anatomía de un agujero negro en rotación.</b> Corte ecuatorial (theta = pi/2). Activa cada superficie en el laboratorio con HORIZON, ERGO, PHOTON, ISCO y DRAG.',
           it: '<b>L’anatomia di un buco nero rotante.</b> Sezione equatoriale (theta = pi/2). Attiva ogni superficie nel laboratorio con HORIZON, ERGO, PHOTON, ISCO e DRAG.'
         }},
-        { h: { en: 'How to read this primer', zh: '如何閱讀本導讀',
+        { h: { en: 'How to use this library', zh: '如何使用本圖書館',
           ja: 'この入門書の読み方', ko: '이 입문서를 읽는 법',
           de: 'Wie man diese Einführung liest', fr: 'Comment lire ce guide',
           es: 'Cómo leer esta introducción', it: 'Come leggere questa introduzione' }},
@@ -233,8 +233,8 @@
             it: 'Quando <var>M&sup2; = a&sup2; + Q&sup2;</var>, i due orizzonti si fondono in un unico buco nero <span class="term">estremale</span> — in rotazione o carico al massimo possibile. Spingi oltre e l’orizzonte svanisce, esponendo la singolarità. Il chip CLASS del laboratorio ti avverte quando ti avvicini a quel limite.'
           }},
           { call: 'key', body: {
-            en: 'Everything else in this primer — horizons, ergosphere, ISCO, jets — is a consequence of these three numbers. Change M, a or Q in the lab and every surface redraws itself.',
-            zh: '本導讀其餘的一切——視界、能層、ISCO、噴流——都是這三個數字的後果。在實驗室中改變 M、a 或 Q，所有界面都會跟著重畫。',
+            en: 'Everything else in this library — horizons, ergosphere, ISCO, jets — is a consequence of these three numbers. Change M, a or Q in the lab and every surface redraws itself.',
+            zh: '本圖書館其餘的一切——視界、能層、ISCO、噴流——都是這三個數字的後果。在實驗室中改變 M、a 或 Q，所有界面都會跟著重畫。',
             ja: '本書の他のすべて——地平面、エルゴ球、ISCO、ジェット——はこの三つの数の帰結です。研究室で M・a・Q を変えれば、すべての面が描き直されます。',
             ko: '이 입문서의 다른 모든 것——지평선, 에르고구, ISCO, 제트——은 이 세 수의 결과입니다. 실험실에서 M, a, Q 를 바꾸면 모든 면이 다시 그려집니다.',
             de: 'Alles andere in dieser Einführung — Horizonte, Ergosphäre, ISCO, Jets — ist eine Folge dieser drei Zahlen. Ändere M, a oder Q im Labor, und jede Fläche zeichnet sich neu.',

@@ -1,4 +1,4 @@
-/* Kerr-Newman Black Hole Laboratory — physics primer / teaching page.
+/* Kerr-Newman Black Hole Laboratory — physics library / teaching page.
  * Shares the instrument-panel palette with styles.css but is a calm, readable
  * long-form layout (a reading column + a sticky table of contents), not the
  * dense control surface of the lab. Effects are muted on purpose — soft amber
@@ -231,6 +231,6 @@ a:hover { color: var(--cyan-dim); text-decoration: underline; }
   display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
 }
 
-/* Loading placeholder before learn.js renders */
+/* Loading placeholder before library.js renders */
 .lp-loading { padding: 120px 0; text-align: center; color: var(--fg-3);
   font-family: var(--mono); letter-spacing: 0.1em; }

@@ -17,6 +17,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
+<!-- Shared cross-page navigation styles (kn-* classes; no clash with the app). -->
+<link rel="stylesheet" href="page-nav.css" />
+
 <!-- Responsive stylesheet: desktop -> styles.css, mobile -> mobile-styles.css.
      Only one is ever active, so their conflicting html/body/#root rules never clash. -->
 <link rel="stylesheet" id="mode-css" />
@@ -44,6 +47,13 @@
 </head>
 <body>
 <div id="root"></div>
+
+<!-- Cross-page navigation to the other two pages (shared kn-* styles). Plain
+     isolated anchors so they never touch the React app or its globals. -->
+<nav class="kn-pagenav kn-pagenav--float" aria-label="頁面導覽">
+  <a class="kn-navbtn" href="library.html" title="圖書館 · Library"><span class="kn-navdot"></span>圖書館</a>
+  <a class="kn-navbtn" href="scientists.html" title="科學家對談 · Talk with Scientists"><span class="kn-navdot"></span>科學家</a>
+</nav>
 
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
