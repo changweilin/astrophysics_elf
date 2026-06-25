@@ -13,7 +13,7 @@
 import { createServer } from 'node:http';
 import { config, normalizeLang } from './config.mjs';
 import {
-  listScientists, getScientist, buildSystemPrompt, rankScientists, nameOf,
+  listScientists, getScientist, buildSystemPrompt, rankScientists, nameOf, AUTO_ID,
 } from './personas/scientists.mjs';
 import { chatStream, ping } from './lib/ollama.mjs';
 import { refreshInstalled, installedModels, pickModel, effectiveModel } from './lib/model-resolver.mjs';
@@ -26,6 +26,8 @@ import {
   deleteDiscussion,
 } from './lib/sessions.mjs';
 import { runDiscussion } from './lib/discussion.mjs';
+import { assignScientist } from './lib/router.mjs';
+import { generateFollowups } from './lib/followups.mjs';
 import { retrieveContext } from './knowledge/wiki.mjs';
 
 // ---- small HTTP helpers ----
@@ -72,6 +74,77 @@ function sse(res, type, data) {
   res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
 }
 
+// ---- conversation rehydration ----
+//
+// Sessions live only in this process's memory, so a page reload, a saved-thread
+// resume, or a backend restart leaves the client holding a transcript the
+// backend has forgotten. The client replays that transcript and we seed a fresh
+// (empty) session from it, so the dialogue keeps its context. We only ever seed
+// an *empty* session, so a live continuing conversation is never double-counted.
+
+// Normalize a client-sent history ([{role:'user'|'sci'|'assistant', text|content}])
+// into the internal {role:'user'|'assistant', content} shape, dropping notices,
+// blanks, and anything unrecognized; capped to a sane length.
+function sanitizeHistory(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const m of raw) {
+    if (!m) continue;
+    const role = (m.role === 'assistant' || m.role === 'sci') ? 'assistant'
+      : m.role === 'user' ? 'user' : null;
+    if (!role) continue;
+    const content = typeof m.content === 'string' ? m.content
+      : typeof m.text === 'string' ? m.text : '';
+    if (!content.trim()) continue;
+    out.push({ role, content });
+  }
+  return out.slice(-config.context.rehydrateMaxMessages);
+}
+
+// Seed an empty single-chat session from replayed history. Returns true if it
+// actually seeded (so the caller knows the normal summarize check should run).
+function seedSessionIfEmpty(session, rawHistory) {
+  if (session.messages.length || session.summary) return false;
+  const seeded = sanitizeHistory(rawHistory);
+  if (!seeded.length) return false;
+  session.messages = seeded;
+  return true;
+}
+
+// Normalize replayed discussion rounds ([{question, conclusion}]).
+function sanitizeRounds(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const r of raw) {
+    if (!r) continue;
+    const question = typeof r.question === 'string' ? r.question.trim() : '';
+    const conclusion = typeof r.conclusion === 'string' ? r.conclusion.trim() : '';
+    if (!question || !conclusion) continue;
+    out.push({ question, conclusion });
+  }
+  return out.slice(-config.context.rehydrateMaxMessages);
+}
+
+// Seed an empty discussion from replayed rounds. Returns true if it seeded.
+function seedDiscussionIfEmpty(disc, rawRounds) {
+  if (disc.rounds.length || disc.summary) return false;
+  const rounds = sanitizeRounds(rawRounds);
+  if (!rounds.length) return false;
+  disc.rounds = rounds;
+  return true;
+}
+
+// Flatten retained (question -> conclusion) rounds into a {user, assistant}
+// transcript the shared summarizer / follow-up generator understand.
+function flattenRounds(rounds) {
+  const history = [];
+  for (const r of rounds) {
+    history.push({ role: 'user', content: r.question });
+    history.push({ role: 'assistant', content: r.conclusion });
+  }
+  return history;
+}
+
 // ---- route handlers ----
 
 async function handleHealth(req, res) {
@@ -105,16 +178,26 @@ async function handleChat(req, res) {
   const scientistId = String(body.scientistId || '');
   const lang = normalizeLang(body.lang);
   const sessionId = body.sessionId ? String(body.sessionId) : '';
+  const isAuto = scientistId === AUTO_ID;
 
-  const scientist = getScientist(scientistId);
-  if (!scientist) return sendJson(res, 400, { error: `unknown scientist: ${scientistId}` });
+  // In auto mode the answering persona is chosen per-question below; otherwise it
+  // must be a known scientist up front.
+  if (!isAuto && !getScientist(scientistId)) {
+    return sendJson(res, 400, { error: `unknown scientist: ${scientistId}` });
+  }
   if (!message) return sendJson(res, 400, { error: 'empty message' });
 
   // Resolve the per-language config, reconciling both the chat and summary model
   // names to the installed tags so chat AND summarization work whether or not the
   // preferred model is pulled.
   const model = effectiveModel(lang);
+  // The session id stays stable across turns. In auto mode it tracks 'auto', so
+  // each question can be answered by a different expert without resetting memory.
   const session = getOrCreateSession(sessionId, scientistId, lang);
+
+  // Rehydrate context from replayed history when this session is empty (page
+  // reload / saved-thread resume / restarted backend). No-op for a live session.
+  seedSessionIfEmpty(session, body.history);
 
   // Open the SSE stream.
   res.writeHead(200, {
@@ -129,6 +212,20 @@ async function handleChat(req, res) {
   req.on('close', () => ac.abort());
 
   try {
+    // Auto-assign: route this question to the best-matched scientist with an
+    // ISOLATED call. Its prompt/output never touch the session, so the routing
+    // decision does not consume the answer's context window.
+    let scientist;
+    if (isAuto) {
+      const pick = await assignScientist({ model, lang, message, signal: ac.signal });
+      scientist = pick.scientist;
+      sse(res, 'assigned', {
+        id: scientist.id, name: nameOf(scientist, lang), accent: scientist.accent || '', via: pick.via,
+      });
+    } else {
+      scientist = getScientist(scientistId);
+    }
+
     // Optional Wikipedia retrieval (best-effort; '' when disabled).
     const wikiContext = await retrieveContext(message, lang);
 
@@ -136,7 +233,8 @@ async function handleChat(req, res) {
     // growing summary itself doesn't keep tripping the threshold.
     const baseSystem = buildSystemPrompt(scientist, { wikiContext });
 
-    // Context management: summarize + restart at the configured fraction.
+    // Context management: summarize + restart at the configured fraction. This
+    // also compresses a large *rehydrated* history before it enters the prompt.
     if (shouldSummarize(model, baseSystem, session.messages, message)) {
       sse(res, 'summary', { state: 'start', lang });
       try {
@@ -157,7 +255,8 @@ async function handleChat(req, res) {
       sessionId: session.id,
       model: model.name,
       lang: model.lang,
-      scientistId,
+      scientistId: scientist.id,
+      auto: isAuto,
       usage: usageFraction(model, systemPrompt, session.messages),
     });
 
@@ -234,6 +333,33 @@ async function handleSummarize(req, res) {
   }
 }
 
+// Topic-aware follow-up suggestions for the single chat. Reads the running
+// session (or replayed history when the session was lost) and proposes a few
+// questions the user might ask next. This is an ISOLATED generation: it never
+// appends to the session, so neither the act of suggesting nor the unclicked
+// options consume the conversation's context window.
+async function handleFollowups(req, res) {
+  let body;
+  try { body = await readJson(req); } catch { return sendJson(res, 400, { error: 'bad JSON body' }); }
+  const lang = normalizeLang(body.lang);
+  if (!config.followups.enabled) return sendJson(res, 200, { ok: true, followups: [] });
+
+  const session = getSession(body.sessionId ? String(body.sessionId) : '');
+  let history = [];
+  let summary = '';
+  if (session) {
+    history = session.messages;
+    summary = session.summary;
+  } else {
+    history = sanitizeHistory(body.history);
+  }
+  if (!history.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
+
+  const model = effectiveModel(lang);
+  const followups = await generateFollowups({ model, lang, history, summary });
+  sendJson(res, 200, { ok: true, followups });
+}
+
 // ---- multi-scientist roundtable (Science Dialogue tab) ----
 
 // Compact panel memory carried into a new question: the running summary plus the
@@ -271,6 +397,10 @@ async function handleDiscuss(req, res) {
   const model = effectiveModel(lang);
   const disc = getOrCreateDiscussion(sessionId, ids, lang);
 
+  // Rehydrate panel memory from replayed (question -> conclusion) rounds when the
+  // discussion is empty (reload / resume / restarted backend).
+  const seeded = seedDiscussionIfEmpty(disc, body.rounds);
+
   // Rank the panel by expertise for THIS question (most-relevant leads + concludes).
   const ranked = rankScientists(message, ids).map((r) => r.scientist);
   const speakers = ranked.map((s) => ({ id: s.id, name: nameOf(s, lang), accent: s.accent || '' }));
@@ -287,8 +417,23 @@ async function handleDiscuss(req, res) {
   const emit = (type, data) => sse(res, type, data);
 
   try {
-    const memory = buildDiscussionMemory(disc, lang);
     emit('meta', { sessionId: disc.id, model: model.name, lang: model.lang, speakers, usage: 0 });
+
+    // If the rehydrated history is large, compress it into memory before carrying
+    // it into the new question (mirrors the single-chat 70% summarize rule).
+    if (seeded) {
+      const flat = flattenRounds(disc.rounds);
+      const flatTokens = estimateTokens(flat.map((m) => m.content).join('\n'));
+      if (flatTokens >= model.contextTokens * config.context.summarizeAtFraction) {
+        try {
+          const merged = await summarizeConversation(model, lang, flat, disc.summary);
+          restartDiscussionWithSummary(disc, merged);
+          emit('summary', { state: 'done', summaryCount: disc.summaryCount });
+        } catch { /* keep raw rounds if summarization fails */ }
+      }
+    }
+
+    const memory = buildDiscussionMemory(disc, lang);
 
     const result = await runDiscussion(
       { model, lang, scientists: ranked, question: message, memory, signal: ac.signal },
@@ -333,11 +478,7 @@ async function handleDiscussSummarize(req, res) {
 
   // Flatten the retained (question -> conclusion) pairs into a transcript the
   // shared summarizer understands, then fold it into the carried-over memory.
-  const history = [];
-  for (const r of disc.rounds) {
-    history.push({ role: 'user', content: r.question });
-    history.push({ role: 'assistant', content: r.conclusion });
-  }
+  const history = flattenRounds(disc.rounds);
   try {
     const merged = await summarizeConversation(model, lang, history, disc.summary);
     restartDiscussionWithSummary(disc, merged);
@@ -351,6 +492,31 @@ async function handleDiscussSummarize(req, res) {
   } catch (err) {
     sendJson(res, 500, { error: String(err && err.message || err) });
   }
+}
+
+// Topic-aware follow-up suggestions for a discussion, from its retained
+// (question -> conclusion) memory (or replayed rounds when the session was lost).
+// Isolated generation -- never mutates the discussion's memory.
+async function handleDiscussFollowups(req, res) {
+  let body;
+  try { body = await readJson(req); } catch { return sendJson(res, 400, { error: 'bad JSON body' }); }
+  const lang = normalizeLang(body.lang);
+  if (!config.followups.enabled) return sendJson(res, 200, { ok: true, followups: [] });
+
+  const disc = getDiscussion(body.sessionId ? String(body.sessionId) : '');
+  let rounds = [];
+  let summary = '';
+  if (disc) {
+    rounds = disc.rounds;
+    summary = disc.summary;
+  } else {
+    rounds = sanitizeRounds(body.rounds);
+  }
+  if (!rounds.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
+
+  const model = effectiveModel(lang);
+  const followups = await generateFollowups({ model, lang, history: flattenRounds(rounds), summary });
+  sendJson(res, 200, { ok: true, followups });
 }
 
 // ---- router ----
@@ -378,6 +544,9 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && path === '/api/session/summarize') {
       return await handleSummarize(req, res);
     }
+    if (req.method === 'POST' && path === '/api/followups') {
+      return await handleFollowups(req, res);
+    }
     if (req.method === 'POST' && path === '/api/discuss') {
       return await handleDiscuss(req, res);
     }
@@ -386,6 +555,9 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && path === '/api/discuss/summarize') {
       return await handleDiscussSummarize(req, res);
+    }
+    if (req.method === 'POST' && path === '/api/discuss/followups') {
+      return await handleDiscussFollowups(req, res);
     }
     sendJson(res, 404, { error: 'not found' });
   } catch (err) {

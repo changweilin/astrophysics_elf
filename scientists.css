@@ -131,6 +131,15 @@ html, body {
 .sci-card .who .nm { font-weight: 600; font-size: 0.9rem; }
 .sci-card .who .meta { font-size: 0.72rem; color: var(--ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* auto-assign entry: set apart from the named scientists with a dashed edge */
+.sci-card-auto { border-style: dashed; margin-bottom: 12px; }
+.sci-card-auto.active { border-style: solid; }
+.sci-avatar.auto {
+  background: linear-gradient(135deg, #8ea2c6, #6c7ba6); color: #0b0d12;
+  display: grid; place-items: center;
+}
+.sci-avatar.auto svg { width: 56%; height: 56%; }
+
 /* chat column */
 .sci-chat { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
 
@@ -195,6 +204,15 @@ html, body {
    matches the label instead of rendering at the unsized SVG default. */
 .sci-suggest button svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .sci-suggest button:disabled { opacity: 0.5; cursor: default; }
+
+/* follow-up suggestions: a labelled chip row beneath the latest answer */
+.sci-followups { align-self: stretch; display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+.sci-followups .fu-label {
+  display: flex; align-items: center; gap: 6px; font-size: 0.72rem;
+  letter-spacing: 0.5px; color: var(--ink-faint);
+}
+.sci-followups .fu-label svg { width: 14px; height: 14px; color: var(--accent); }
+.sci-followups .fu-chips { justify-content: flex-start; margin-top: 0; }
 
 /* composer */
 .sci-composer { border-top: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; background: rgba(11, 13, 18, 0.6); }
@@ -296,9 +314,10 @@ html, body {
 .sci-phase.concluding { color: var(--warn); }
 .sci-phase.concluding::before, .sci-phase.concluding::after { background: rgba(242, 193, 78, 0.3); }
 
-/* a speaker turn in a discussion: avatar + name caption + bubble */
-.sci-msg.discuss .sci-bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.sci-msg.discuss .sci-speaker { font-size: 0.72rem; font-weight: 600; color: var(--ink-faint); padding-left: 3px; }
+/* a speaker turn (discussion roundtable, or an auto-assigned single chat):
+   avatar + optional name caption + bubble */
+.sci-msg .sci-bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sci-msg .sci-speaker { font-size: 0.72rem; font-weight: 600; color: var(--ink-faint); padding-left: 3px; }
 
 /* closing synthesis card */
 .sci-conclusion {

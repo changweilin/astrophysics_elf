@@ -92,6 +92,10 @@ export const config = {
     // Heuristic chars-per-token when the inference server hasn't reported a real
     // token count yet. Mixed CJK/English sits around 2.5-3.
     charsPerToken: envNum('SCI_CHARS_PER_TOKEN', 2.8),
+    // When a thread is resumed (page reload / saved-thread / restarted backend),
+    // the client replays its visible history so the backend can rebuild context.
+    // Cap how many turns we seed; the summarizer compresses if it is still large.
+    rehydrateMaxMessages: envNum('SCI_REHYDRATE_MAX_MESSAGES', 80),
   },
 
   // --- Multi-scientist roundtable (Science Dialogue tab; see lib/discussion.mjs) ---
@@ -112,6 +116,17 @@ export const config = {
     // Reply length budgets: short for back-and-forth turns, longer for the wrap.
     turnTokens: envNum('SCI_DISCUSS_TURN_TOKENS', 320),
     conclusionTokens: envNum('SCI_DISCUSS_CONCLUSION_TOKENS', 640),
+  },
+
+  // --- Single-chat helpers (auto-assign routing + follow-up suggestions) ---
+  followups: {
+    // After a turn, propose this many on-topic follow-up questions (the model is
+    // asked for 3-4; the client shows whatever comes back). Set 0 to disable.
+    enabled: envBool('SCI_FOLLOWUPS', true),
+    // How many of the most recent turns to feed the suggestion generator.
+    contextTurns: envNum('SCI_FOLLOWUPS_CONTEXT_TURNS', 6),
+    // Generation length budget (short list of short questions).
+    maxTokens: envNum('SCI_FOLLOWUPS_TOKENS', 256),
   },
 
   // --- Knowledge augmentation (Wikipedia RAG; see knowledge/wiki.mjs) ---

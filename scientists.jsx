@@ -40,6 +40,8 @@ const T = {
     summarized: '已摘要先前對話並重啟脈絡(第 {n} 次)',
     summaryErr: '摘要失敗,已保留最近幾輪對話繼續',
     summaryStale: '後端的對話脈絡已重置(可能後端重新啟動過),這段對話會在你下次提問時重新開始。',
+    autoPlaceholder: '描述你的問題,系統會指派最合適的科學家回答...(Enter 送出,Shift+Enter 換行)',
+    followupsLabel: '接著可以問',
     ctx: '脈絡',
     suggestions: [
       '用思想實驗解釋時間膨脹',
@@ -134,6 +136,8 @@ const T = {
     summarized: 'Summarized earlier conversation and restarted context (#{n})',
     summaryErr: 'Summarization failed; kept the last few turns and continued',
     summaryStale: 'The backend context was reset (the backend may have restarted); this thread will resume on your next message.',
+    autoPlaceholder: 'Describe your question; the best-matched scientist will answer... (Enter to send, Shift+Enter for newline)',
+    followupsLabel: 'You might also ask',
     ctx: 'Context',
     suggestions: [
       'Explain time dilation with a thought experiment',
@@ -231,9 +235,17 @@ function renderText(text) {
 // for a recognizable SVG face; falls back to the coloured initial if the helper
 // or the id is missing. Works at any size (the circle wrapper clips the SVG).
 function SciAvatar({ id, accent, name, size = 38, className = '' }) {
-  const svg = (id && window.knSciAvatar) ? window.knSciAvatar(id, accent || '#7db3ff') : '';
   const dim = typeof size === 'number' ? size + 'px' : size;
   const fontSize = (typeof size === 'number' ? Math.round(size * 0.42) : 16) + 'px';
+  // The auto-assign persona has no portrait; show a route/shuffle glyph instead.
+  if (id === AUTO_ID) {
+    return (
+      <span className={'sci-avatar auto ' + className} style={{ width: dim, height: dim }}>
+        <IconShuffle />
+      </span>
+    );
+  }
+  const svg = (id && window.knSciAvatar) ? window.knSciAvatar(id, accent || '#7db3ff') : '';
   if (svg) {
     return (
       <span
@@ -253,6 +265,20 @@ function SciAvatar({ id, accent, name, size = 38, className = '' }) {
 
 // Cap on how many scientists may share one discussion (matches the backend).
 const DISCUSS_MAX = 5;
+
+// Single-chat "auto-assign" pseudo-persona. Picking it lets the backend route
+// each question to the best-matched real scientist (see lib/router.mjs); the id
+// is ASCII and matches the backend sentinel. It is NOT a real roster entry, so
+// it never appears in the Science Dialogue panel.
+const AUTO_ID = 'auto';
+const AUTO_PERSONA = {
+  id: AUTO_ID,
+  name: { zh: '隨機指派專家', en: 'Auto-assign expert' },
+  years: '',
+  fields: { zh: '依問題自動選最合適的科學家', en: 'Best-matched scientist per question' },
+  accent: '#8ea2c6',
+  auto: true,
+};
 
 // Inline header icons (stroke, currentColor; sized via CSS). Match the shared
 // nav icons used on the lab + library pages so the three top bars feel alike.
@@ -331,6 +357,22 @@ const IconPlus = () => (
     <path d="M12 5v14M5 12h14" />
   </svg>
 );
+// Auto-assign: crossing arrows (shuffle/route to the right expert).
+const IconShuffle = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 7h3.2a3 3 0 0 1 2.5 1.4l4.6 7.2a3 3 0 0 0 2.5 1.4H21" />
+    <path d="M4 17h3.2a3 3 0 0 0 2.5-1.4l4.6-7.2A3 3 0 0 1 16.8 7H21" />
+    <path d="m18 4 3 3-3 3" />
+    <path d="m18 14 3 3-3 3" />
+  </svg>
+);
+// Follow-up suggestions: a little spark / "what next".
+const IconSpark = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 4.5 13.4 9 18 10.4 13.4 11.8 12 16.3 10.6 11.8 6 10.4 10.6 9z" />
+    <path d="M18 4v3M19.5 5.5h-3" />
+  </svg>
+);
 
 // ---- local persistence ----
 // The live conversation and the saved-thread collection both survive a page
@@ -357,6 +399,21 @@ function uid() {
 function threadTitle(messages) {
   const first = (messages || []).find((m) => m.role === 'user');
   return first ? first.text : '';
+}
+
+// Reduce a discussion transcript to the compact (question -> conclusion) rounds
+// the backend keeps as panel memory, so a resumed discussion can be rehydrated.
+function extractRounds(messages) {
+  const rounds = [];
+  let q = null;
+  for (const m of messages || []) {
+    if (m.role === 'user') q = m.text;
+    else if (m.role === 'sci' && m.conclusion && q != null) {
+      rounds.push({ question: q, conclusion: m.text });
+      q = null;
+    }
+  }
+  return rounds;
 }
 
 function SciAppRoot() {
@@ -390,6 +447,12 @@ function SciAppRoot() {
   });
   const [openFav, setOpenFav] = useState(null); // a saved thread being viewed
 
+  // Topic-aware follow-up suggestions generated from the running conversation.
+  // Purely UI chips: only a clicked one becomes a turn, so the unclicked options
+  // (and the act of suggesting) never enter the context window.
+  const [followups, setFollowups] = useState([]);
+  const [discussFollowups, setDiscussFollowups] = useState([]);
+
   // ---- Science Dialogue (multi-scientist roundtable) state ----
   const [panel, setPanel] = useState(Array.isArray(persistedD.panel) ? persistedD.panel : []);
   const [discussMessages, setDiscussMessages] = useState(Array.isArray(persistedD.messages) ? persistedD.messages : []);
@@ -405,12 +468,31 @@ function SciAppRoot() {
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
 
-  const selected = scientists.find((s) => s.id === selectedId) || null;
+  // Latest messages, readable from the (memoized) sendMessage without stale closure.
+  const messagesRef = useRef(messages);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  const discussMessagesRef = useRef(discussMessages);
+  useEffect(() => { discussMessagesRef.current = discussMessages; }, [discussMessages]);
+
+  // When true, the next turn replays the visible history so the backend can
+  // rebuild context (set after a reload / saved-thread resume; cleared once the
+  // backend has streamed a turn back). Tokens guard stale follow-up responses.
+  const needHistoryRef = useRef(true);
+  const needDiscussHistoryRef = useRef(true);
+  const followupTokenRef = useRef(0);
+  const discussFollowupTokenRef = useRef(0);
+
+  const isAuto = selectedId === AUTO_ID;
+  const selected = isAuto ? AUTO_PERSONA : (scientists.find((s) => s.id === selectedId) || null);
   const panelScientists = panel.map((id) => scientists.find((s) => s.id === id)).filter(Boolean);
 
-  // A fresh random handful of starter questions per (language, scientist) so the
-  // empty state isn't always the same four. Stable while you talk to one persona.
-  const chatSuggestions = useMemo(() => sampleN(tr.suggestions, 4), [lang, selectedId]);
+  // A fresh random handful of starter questions per (language, scientist). Each
+  // scientist gets prompts suited to their own specialty; the auto persona (no
+  // starters) falls back to the broad general list.
+  const chatSuggestions = useMemo(() => {
+    const own = selected && selected.starters && selected.starters[lang];
+    return sampleN(own && own.length ? own : tr.suggestions, 4);
+  }, [lang, selectedId, scientists]);
 
   // persist language
   useEffect(() => { try { localStorage.setItem('kn_sci_lang', lang); } catch (e) {} }, [lang]);
@@ -444,9 +526,10 @@ function SciAppRoot() {
       const d = await fetch(backendUrl + '/api/scientists').then((r) => r.json());
       if (d && Array.isArray(d.scientists)) {
         setScientists(d.scientists);
-        // Keep the restored selection if it still exists, else default to first.
+        // Keep the restored selection if it still exists (or is the auto persona),
+        // else default to first.
         setSelectedId((prev) =>
-          (prev && d.scientists.some((s) => s.id === prev))
+          (prev && (prev === AUTO_ID || d.scientists.some((s) => s.id === prev)))
             ? prev
             : (d.scientists[0] && d.scientists[0].id) || '');
       }
@@ -465,11 +548,35 @@ function SciAppRoot() {
     setMessages((m) => [...m, { role: 'notice', kind, text }]);
   }
 
+  // Drop any follow-up chips and invalidate an in-flight suggestion request (the
+  // token bump makes a late response no-op).
+  const clearFollowups = useCallback(() => { followupTokenRef.current += 1; setFollowups([]); }, []);
+
+  // Ask the backend (isolated call) for a few on-topic follow-up questions from
+  // the running conversation. Fails silent -> just no chips.
+  const fetchFollowups = useCallback(async () => {
+    const token = (followupTokenRef.current += 1);
+    try {
+      const res = await fetch(backendUrl + '/api/followups', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: sessionId.current || undefined, lang, history: messagesRef.current }),
+      });
+      if (!res.ok) { if (token === followupTokenRef.current) setFollowups([]); return; }
+      const r = await res.json().catch(() => null);
+      if (token !== followupTokenRef.current) return; // a newer turn superseded us
+      setFollowups(r && Array.isArray(r.followups) ? r.followups : []);
+    } catch (e) {
+      if (token === followupTokenRef.current) setFollowups([]);
+    }
+  }, [backendUrl, lang]);
+
   function selectScientist(id) {
     if (id === selectedId) return;
     setSelectedId(id);
     setMessages([]);
     setUsage(0);
+    clearFollowups();
+    needHistoryRef.current = true;
     sessionId.current = ''; // fresh dialogue for the new persona
   }
 
@@ -485,6 +592,8 @@ function SciAppRoot() {
     sessionId.current = '';
     setMessages([]);
     setUsage(0);
+    clearFollowups();
+    needHistoryRef.current = true;
   }
 
   // Manually compress the running dialogue into a few key points. The backend
@@ -555,6 +664,8 @@ function SciAppRoot() {
       setDiscussMessages(fav.messages.slice());
       setDiscussUsage(0);
       discussSessionId.current = '';
+      needDiscussHistoryRef.current = true; // replay rounds to rebuild context
+      setDiscussFollowups([]);
       setOpenFav(null);
       setView('discuss');
       return;
@@ -563,6 +674,8 @@ function SciAppRoot() {
     setMessages(fav.messages.slice());
     setUsage(0);
     sessionId.current = '';
+    needHistoryRef.current = true; // replay history to rebuild context
+    clearFollowups();
     setOpenFav(null);
     setView('chat');
   }
@@ -574,7 +687,11 @@ function SciAppRoot() {
   const sendMessage = useCallback(async (text) => {
     const msg = (text != null ? text : input).trim();
     if (!msg || streaming || !selected) return;
+    // Replay the prior visible history once after a reload / resume so the backend
+    // can rebuild context for a session it no longer (or never) held.
+    const replayHistory = needHistoryRef.current ? messagesRef.current.slice() : null;
     setInput('');
+    clearFollowups();
     setMessages((m) => [...m, { role: 'user', text: msg }, { role: 'sci', text: '' }]);
     setStreaming(true);
 
@@ -592,6 +709,7 @@ function SciAppRoot() {
       });
     };
 
+    let ok = false;
     try {
       const res = await fetch(backendUrl + '/api/chat', {
         method: 'POST',
@@ -601,6 +719,7 @@ function SciAppRoot() {
           scientistId: selected.id,
           lang,
           message: msg,
+          history: replayHistory && replayHistory.length ? replayHistory : undefined,
         }),
         signal: ac.signal,
       });
@@ -624,19 +743,37 @@ function SciAppRoot() {
           handleEvent(ev, appendDelta);
         }
       }
+      ok = true;
     } catch (e) {
       if (!ac.signal.aborted) pushNotice('err', tr.errPrefix + (e && e.message || e));
     } finally {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, streaming, selected, backendUrl, lang, tr]);
+
+    // A completed turn means the backend now holds this dialogue, so stop
+    // replaying history; then suggest a few follow-ups (isolated -> no context).
+    if (ok) {
+      needHistoryRef.current = false;
+      fetchFollowups();
+    }
+  }, [input, streaming, selected, backendUrl, lang, tr, clearFollowups, fetchFollowups]);
 
   function handleEvent(ev, appendDelta) {
     if (ev.type === 'meta') {
       if (ev.sessionId) sessionId.current = ev.sessionId;
       if (ev.model) setActiveModel(ev.model);
       if (typeof ev.usage === 'number') setUsage(ev.usage);
+    } else if (ev.type === 'assigned') {
+      // Auto-assign mode: tag the in-progress bubble with the chosen expert so it
+      // shows that scientist's avatar and name.
+      setMessages((m) => {
+        const c = m.slice();
+        for (let i = c.length - 1; i >= 0; i--) {
+          if (c[i].role === 'sci') { c[i] = { ...c[i], id: ev.id, name: ev.name, accent: ev.accent }; break; }
+        }
+        return c;
+      });
     } else if (ev.type === 'token') {
       appendDelta(ev.text || '');
     } else if (ev.type === 'summary') {
@@ -690,6 +827,11 @@ function SciAppRoot() {
       setDiscussMessages((m) => [...m, { role: 'sci', id: ev.id, name: ev.name, accent: ev.accent, text: '', conclusion: ev.role === 'conclusion' }]);
     } else if (ev.type === 'token') {
       appendDiscussDelta(ev.text || '');
+    } else if (ev.type === 'summary') {
+      // Emitted when a large rehydrated history is compressed before the turn.
+      if (ev.state === 'start') pushDiscussNotice('summary', tr.summarizing);
+      else if (ev.state === 'done') pushDiscussNotice('summary', tr.summarized.replace('{n}', ev.summaryCount || 1));
+      else if (ev.state === 'error') pushDiscussNotice('summary', tr.summaryErr);
     } else if (ev.type === 'turn-done' || ev.type === 'done') {
       if (typeof ev.usage === 'number') setDiscussUsage(ev.usage);
     } else if (ev.type === 'error') {
@@ -697,15 +839,41 @@ function SciAppRoot() {
     }
   }
 
+  function clearDiscussFollowups() { discussFollowupTokenRef.current += 1; setDiscussFollowups([]); }
+
+  async function fetchDiscussFollowups() {
+    const token = (discussFollowupTokenRef.current += 1);
+    try {
+      const res = await fetch(backendUrl + '/api/discuss/followups', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: discussSessionId.current || undefined,
+          lang,
+          rounds: extractRounds(discussMessagesRef.current),
+        }),
+      });
+      if (!res.ok) { if (token === discussFollowupTokenRef.current) setDiscussFollowups([]); return; }
+      const r = await res.json().catch(() => null);
+      if (token !== discussFollowupTokenRef.current) return;
+      setDiscussFollowups(r && Array.isArray(r.followups) ? r.followups : []);
+    } catch (e) {
+      if (token === discussFollowupTokenRef.current) setDiscussFollowups([]);
+    }
+  }
+
   async function sendDiscuss(text) {
     const msg = (text != null ? text : discussInput).trim();
     if (!msg || discussStreaming || panel.length === 0) return;
+    // Replay prior rounds once after a reload / resume to rebuild panel memory.
+    const replayRounds = needDiscussHistoryRef.current ? extractRounds(discussMessagesRef.current) : null;
     setDiscussInput('');
+    clearDiscussFollowups();
     setDiscussMessages((m) => [...m, { role: 'user', text: msg }]);
     setDiscussStreaming(true);
 
     const ac = new AbortController();
     discussAbortRef.current = ac;
+    let ok = false;
     try {
       const res = await fetch(backendUrl + '/api/discuss', {
         method: 'POST',
@@ -715,6 +883,7 @@ function SciAppRoot() {
           scientistIds: panel,
           lang,
           message: msg,
+          rounds: replayRounds && replayRounds.length ? replayRounds : undefined,
         }),
         signal: ac.signal,
       });
@@ -738,11 +907,17 @@ function SciAppRoot() {
           handleDiscussEvent(ev);
         }
       }
+      ok = true;
     } catch (e) {
       if (!ac.signal.aborted) pushDiscussNotice('err', tr.errPrefix + (e && e.message || e));
     } finally {
       setDiscussStreaming(false);
       discussAbortRef.current = null;
+    }
+
+    if (ok) {
+      needDiscussHistoryRef.current = false;
+      fetchDiscussFollowups();
     }
   }
 
@@ -762,6 +937,8 @@ function SciAppRoot() {
     discussSessionId.current = '';
     setDiscussMessages([]);
     setDiscussUsage(0);
+    clearDiscussFollowups();
+    needDiscussHistoryRef.current = true;
   }
 
   async function summarizeDiscuss() {
@@ -899,6 +1076,7 @@ function SciAppRoot() {
           onClear={clearDiscuss}
           onSummarize={summarizeDiscuss}
           onSave={saveDiscussFavorite}
+          followups={discussFollowups}
           showPicker={showPanelPicker}
           setShowPicker={setShowPanelPicker}
           onRetry={loadBackend}
@@ -908,6 +1086,18 @@ function SciAppRoot() {
       <div className="sci-body">
         <nav className="sci-roster">
           <div className="sci-roster-label">{tr.roster}</div>
+          {scientists.length > 0 && (
+            <button
+              className={'sci-card sci-card-auto' + (isAuto ? ' active' : '')}
+              onClick={() => selectScientist(AUTO_ID)}
+            >
+              <SciAvatar id={AUTO_ID} accent={AUTO_PERSONA.accent} size={38} />
+              <span className="who">
+                <div className="nm">{nameFor(AUTO_PERSONA, lang)}</div>
+                <div className="meta">{fieldsFor(AUTO_PERSONA, lang)}</div>
+              </span>
+            </button>
+          )}
           {scientists.map((s) => (
             <button
               key={s.id}
@@ -931,6 +1121,7 @@ function SciAppRoot() {
               value={selectedId}
               onChange={(e) => selectScientist(e.target.value)}
             >
+              {scientists.length > 0 && <option value={AUTO_ID}>{nameFor(AUTO_PERSONA, lang)}</option>}
               {scientists.map((s) => (
                 <option key={s.id} value={s.id}>{nameFor(s, lang)} · {s.years}</option>
               ))}
@@ -994,27 +1185,51 @@ function SciAppRoot() {
                 }
                 return <div key={i} className={'sci-notice ' + (m.kind || '')}>{m.text}</div>;
               }
-              const isUser = m.role === 'user';
-              const isLastSci = !isUser && i === messages.length - 1;
+              if (m.role === 'user') {
+                return (
+                  <div key={i} className="sci-msg user">
+                    <div className="sci-bubble">{renderText(m.text)}</div>
+                  </div>
+                );
+              }
+              // sci turn. In auto-assign mode each answer carries its own scientist
+              // (id/name/accent set by the 'assigned' event); otherwise it's the
+              // selected persona.
+              const isLastSci = i === messages.length - 1;
+              const sciId = m.id || (selected && selected.id);
+              const sciAccent = m.accent || (selected && selected.accent);
               return (
-                <div key={i} className={'sci-msg ' + (isUser ? 'user' : 'sci')}>
-                  {!isUser && selected && (
-                    <SciAvatar id={selected.id} accent={selected.accent} name={(selected.name && selected.name.en) || selected.id} size={30} />
-                  )}
-                  <div className="sci-bubble">
-                    {renderText(m.text)}
-                    {isLastSci && streaming && <span className="sci-typing" />}
+                <div key={i} className="sci-msg sci">
+                  <SciAvatar id={sciId} accent={sciAccent} name={m.name || (selected && (selected.name && selected.name.en))} size={30} />
+                  <div className="sci-bubble-wrap">
+                    {m.name && <div className="sci-speaker">{m.name}</div>}
+                    <div className="sci-bubble">
+                      {renderText(m.text)}
+                      {isLastSci && streaming && <span className="sci-typing" />}
+                    </div>
                   </div>
                 </div>
               );
             })}
+
+            {/* On-topic follow-up suggestions from the conversation so far. */}
+            {!streaming && followups.length > 0 && (
+              <div className="sci-followups">
+                <div className="fu-label"><IconSpark />{tr.followupsLabel}</div>
+                <div className="sci-suggest fu-chips">
+                  {followups.map((q, i) => (
+                    <button key={i} onClick={() => sendMessage(q)} disabled={!selected || health !== 'online'}>{q}</button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="sci-composer">
             <textarea
               rows={1}
               value={input}
-              placeholder={tr.placeholder}
+              placeholder={isAuto ? tr.autoPlaceholder : tr.placeholder}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
               disabled={!selected}
@@ -1107,11 +1322,23 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete }) {
               }
               return <div key={i} className={'sci-notice ' + (m.kind || '')}>{m.text}</div>;
             }
-            const isUser = m.role === 'user';
+            if (m.role === 'user') {
+              return (
+                <div key={i} className="sci-msg user">
+                  <div className="sci-bubble">{renderText(m.text)}</div>
+                </div>
+              );
+            }
+            // Honor a per-message scientist (auto-assign threads) when present.
+            const sid = m.id || fav.scientistId;
+            const sacc = m.accent || fav.accent;
             return (
-              <div key={i} className={'sci-msg ' + (isUser ? 'user' : 'sci')}>
-                {!isUser && <SciAvatar id={fav.scientistId} accent={fav.accent} name={fav.name} size={30} />}
-                <div className="sci-bubble">{renderText(m.text)}</div>
+              <div key={i} className="sci-msg sci">
+                <SciAvatar id={sid} accent={sacc} name={m.name || fav.name} size={30} />
+                <div className="sci-bubble-wrap">
+                  {m.name && <div className="sci-speaker">{m.name}</div>}
+                  <div className="sci-bubble">{renderText(m.text)}</div>
+                </div>
               </div>
             );
           })
@@ -1180,7 +1407,7 @@ function DiscussMessages({ messages, tr, lang, streaming }) {
 function DiscussView({
   tr, lang, scientists, panel, panelScientists, onToggle, messages, input, setInput,
   streaming, usage, activeModel, health, backendUrl, statusLabel, statusClass,
-  onSend, onStop, onKey, onClear, onSummarize, onSave, showPicker, setShowPicker,
+  onSend, onStop, onKey, onClear, onSummarize, onSave, followups, showPicker, setShowPicker,
   onRetry, onSettings,
 }) {
   const scrollRef = useRef(null);
@@ -1277,6 +1504,18 @@ function DiscussView({
           )}
 
           <DiscussMessages messages={messages} tr={tr} lang={lang} streaming={streaming} />
+
+          {/* On-topic follow-up topics drawn from the discussion so far. */}
+          {!streaming && followups && followups.length > 0 && (
+            <div className="sci-followups">
+              <div className="fu-label"><IconSpark />{tr.followupsLabel}</div>
+              <div className="sci-suggest fu-chips">
+                {followups.map((q, i) => (
+                  <button key={i} onClick={() => onSend(q)} disabled={!hasPanel || health !== 'online'}>{q}</button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="sci-composer">

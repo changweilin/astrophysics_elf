@@ -130,17 +130,43 @@ Pass `--topics topics.txt` (one topic per line) to use your own topic list.
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/api/health` | - | status, resolved models, Ollama liveness |
-| GET | `/api/scientists` | - | persona list (id, names, fields, blurb, accent) |
-| POST | `/api/chat` | `{sessionId?, scientistId, lang, message}` | **SSE** stream |
+| GET | `/api/scientists` | - | persona list (id, names, fields, blurb, accent, `starters`) |
+| POST | `/api/chat` | `{sessionId?, scientistId, lang, message, history?}` | **SSE** stream |
 | POST | `/api/session/reset` | `{sessionId}` | `{ok}` |
 | POST | `/api/session/summarize` | `{sessionId, lang}` | `{ok, changed, summary, usage}` |
-| POST | `/api/discuss` | `{sessionId?, scientistIds[], lang, message}` | **SSE** roundtable stream |
+| POST | `/api/followups` | `{sessionId?, lang, history?}` | `{ok, followups[]}` |
+| POST | `/api/discuss` | `{sessionId?, scientistIds[], lang, message, rounds?}` | **SSE** roundtable stream |
 | POST | `/api/discuss/reset` | `{sessionId}` | `{ok}` |
 | POST | `/api/discuss/summarize` | `{sessionId, lang}` | `{ok, changed, summary, usage}` |
+| POST | `/api/discuss/followups` | `{sessionId?, lang, rounds?}` | `{ok, followups[]}` |
 
-SSE event types on `/api/chat`: `meta` (sessionId, model, lang, usage),
+SSE event types on `/api/chat`: `meta` (sessionId, model, lang, scientistId,
+`auto`, usage), `assigned` (routed `id`/`name`/`accent`/`via`, auto mode only),
 `token` (text delta), `summary` (start/done/error), `done` (token counts,
 usage), `error`.
+
+### Auto-assign, follow-ups, rehydration, and starters
+
+- **Auto-assign expert** — send `scientistId: "auto"` and the backend routes the
+  question to the best-matched scientist with an *isolated* LLM call (keyword
+  ranking is the fallback). The routing prompt/answer never enter the chat
+  session, so picking the expert does not consume the answer's context window.
+  An `assigned` SSE event tells the client which persona answered. The session
+  id stays `auto`, so each turn can be answered by a different expert while
+  keeping continuity.
+- **Follow-up suggestions** — `/api/followups` (and `/api/discuss/followups`)
+  return 3-4 short, on-topic next questions generated from the running
+  conversation by an isolated call; the generation and the unclicked options
+  never enter context. Set `SCI_FOLLOWUPS=0` to disable.
+- **Rehydration** — sessions are memory-only, so a page reload, a saved-thread
+  resume, or a backend restart leaves the client holding a transcript the
+  backend forgot. The client replays its visible `history` (chat) or `rounds`
+  (discussion) and the backend seeds an *empty* session/discussion from it,
+  summarizing first when that replayed history would exceed the 70% line. A live
+  session is never double-seeded.
+- **Per-scientist starters** — `/api/scientists` includes a `starters`
+  `{zh, en}` set tailored to each persona; the empty chat state samples from the
+  selected scientist's own questions rather than one global list.
 
 `/api/discuss` runs a multi-scientist roundtable (Science Dialogue tab): the
 panel is ranked by topic expertise (most-expert leads and concludes), each

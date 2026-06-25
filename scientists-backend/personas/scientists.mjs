@@ -306,16 +306,231 @@ export const SCIENTISTS = [
   },
 ];
 
+// Starter questions tailored to each scientist's own specialty. The single-chat
+// empty state samples a random handful of these (per scientist, per language) so
+// a new conversation opens with prompts that actually suit who you picked, rather
+// than one generic global list. Kept separate from the persona prompt fields so
+// the roleplay definitions above stay focused; merged into listScientists().
+export const STARTERS = {
+  einstein: {
+    zh: [
+      '用思想實驗解釋時間膨脹',
+      '等效原理是什麼?電梯實驗想說明什麼?',
+      '重力為什麼會讓時間變慢?',
+      '你為何說「上帝不擲骰子」?量子力學哪裡讓你不安?',
+      '質能等價 E=mc² 是怎麼來的?',
+      '重力波是時空的漣漪嗎?',
+    ],
+    en: [
+      'Explain time dilation with a thought experiment',
+      'What is the equivalence principle, and what does the elevator show?',
+      'Why does gravity slow down time?',
+      'Why did you say "God does not play dice"?',
+      'Where does E=mc^2 come from?',
+      'Are gravitational waves ripples in spacetime?',
+    ],
+  },
+  feynman: {
+    zh: [
+      '用最直覺的方式解釋什麼是光子',
+      '路徑積分到底在加總什麼?',
+      '費曼圖是怎麼幫我們算粒子交互作用的?',
+      '為什麼說「沒人真懂量子力學」?',
+      '虛粒子是真的存在,還是計算的把戲?',
+      '反物質為什麼可以看成倒著走的粒子?',
+    ],
+    en: [
+      'Explain what a photon is, as intuitively as possible',
+      'What is the path integral actually summing over?',
+      'How do Feynman diagrams help compute interactions?',
+      'Why do you say "nobody really understands quantum mechanics"?',
+      'Are virtual particles real, or a bookkeeping trick?',
+      'Why can antimatter be seen as particles going backwards in time?',
+    ],
+  },
+  newton: {
+    zh: [
+      '請用你的運動定律推導克卜勒第三定律',
+      '萬有引力的平方反比是怎麼想出來的?',
+      '潮汐為什麼一天有兩次?',
+      '微積分(流數法)是為了解決什麼問題?',
+      '白光通過稜鏡為什麼會分成七彩?',
+      '為什麼月球不會掉到地球上?',
+    ],
+    en: [
+      "Derive Kepler's third law from your laws of motion",
+      'How did you arrive at the inverse-square law of gravity?',
+      'Why are there two tides a day?',
+      'What problem did the calculus (fluxions) solve?',
+      'Why does a prism split white light into colours?',
+      "Why doesn't the Moon fall to the Earth?",
+    ],
+  },
+  galileo: {
+    zh: [
+      '木星的衛星如何動搖了地心說?',
+      '金星的相位變化證明了什麼?',
+      '斜面實驗如何揭示自由落體的規律?',
+      '為什麼重的物體不會比輕的先落地?',
+      '你用望遠鏡看到月球時看到了什麼?',
+      '慣性的概念顛覆了哪些舊觀念?',
+    ],
+    en: [
+      "How did Jupiter's moons undermine geocentrism?",
+      'What do the phases of Venus prove?',
+      'How did inclined planes reveal the law of falling bodies?',
+      "Why don't heavier objects fall faster than light ones?",
+      'What did you see on the Moon through the telescope?',
+      'How did inertia overturn the old ideas of motion?',
+    ],
+  },
+  kepler: {
+    zh: [
+      '行星軌道為什麼是橢圓而不是圓?',
+      '你的面積定律(第二定律)在說什麼?',
+      '第三定律如何連結軌道週期與距離?',
+      '你是怎麼從第谷的火星資料推出橢圓的?',
+      '「天體的和諧」對你有什麼意義?',
+    ],
+    en: [
+      'Why are planetary orbits ellipses, not circles?',
+      'What does your area law (second law) say?',
+      'How does the third law link period and distance?',
+      "How did you wring an ellipse out of Tycho's Mars data?",
+      'What did "the harmony of the spheres" mean to you?',
+    ],
+  },
+  copernicus: {
+    zh: [
+      '把太陽放在中心,為什麼比較簡單?',
+      '本輪是什麼?日心說如何避開它們?',
+      '行星逆行其實是怎麼回事?',
+      '你為什麼遲遲不敢發表日心模型?',
+    ],
+    en: [
+      'Why is putting the Sun at the centre simpler?',
+      'What are epicycles, and how does heliocentrism avoid them?',
+      'What is really going on with retrograde motion?',
+      'Why did you hesitate to publish the heliocentric model?',
+    ],
+  },
+  hubble: {
+    zh: [
+      '你是怎麼證明仙女座在銀河系之外的?',
+      '紅移如何告訴我們星系正在遠離?',
+      '哈伯定律是什麼?它暗示了什麼?',
+      '造父變星為什麼能當「標準燭光」量距離?',
+      '宇宙膨脹代表有一個中心嗎?',
+    ],
+    en: [
+      'How did you prove Andromeda lies beyond the Milky Way?',
+      'How does redshift tell us galaxies are receding?',
+      "What is Hubble's law, and what does it imply?",
+      'Why can Cepheids serve as standard candles?',
+      'Does cosmic expansion mean there is a centre?',
+    ],
+  },
+  hawking: {
+    zh: [
+      '黑洞真的會蒸發嗎?霍金輻射怎麼來的?',
+      '資訊掉進黑洞後會永遠消失嗎?',
+      '黑洞的熵和事件視界面積有什麼關係?',
+      '宇宙有開始嗎?「無邊界」是什麼意思?',
+      '奇異點代表物理學的終點嗎?',
+    ],
+    en: [
+      'Do black holes really evaporate? Where does Hawking radiation come from?',
+      'Is information lost forever when it falls into a black hole?',
+      "How is a black hole's entropy tied to its horizon area?",
+      'Did the universe have a beginning? What is "no boundary"?',
+      'Does the singularity mark the end of physics?',
+    ],
+  },
+  chandrasekhar: {
+    zh: [
+      '錢德拉塞卡極限決定了什麼?',
+      '白矮星靠什麼抵抗重力塌縮?',
+      '為什麼超過某個質量,恆星只能變成中子星或黑洞?',
+      '電子簡併壓力是什麼?',
+      '一顆恆星的一生會經歷哪些階段?',
+    ],
+    en: [
+      'What does the Chandrasekhar limit determine?',
+      'What holds a white dwarf up against gravity?',
+      'Why must stars above a mass limit become neutron stars or black holes?',
+      'What is electron degeneracy pressure?',
+      'What stages does a star pass through in its life?',
+    ],
+  },
+  sagan: {
+    zh: [
+      '「我們都是星塵」這句話是什麼意思?',
+      '宇宙中有其他生命的機會有多大?',
+      '德雷克方程式如何估算外星文明的數量?',
+      '「暗淡藍點」想傳達什麼?',
+      '我們該如何用懷疑精神分辨真偽?',
+    ],
+    en: [
+      'What does "we are made of star-stuff" mean?',
+      'How likely is life elsewhere in the universe?',
+      'How does the Drake equation estimate alien civilizations?',
+      'What is the message of the "pale blue dot"?',
+      'How does skeptical thinking help us tell truth from nonsense?',
+    ],
+  },
+  rubin: {
+    zh: [
+      '星系自轉曲線為什麼是暗物質的證據?',
+      '「遺失的質量」問題是怎麼被發現的?',
+      '暗物質暈是什麼?',
+      '如果不是暗物質,還有別的解釋嗎?',
+      '你怎麼測量星系邊緣恆星的速度?',
+    ],
+    en: [
+      'Why are galaxy rotation curves evidence for dark matter?',
+      'How was the "missing mass" problem discovered?',
+      'What is a dark matter halo?',
+      'If not dark matter, what else could explain it?',
+      "How do you measure the speed of stars at a galaxy's edge?",
+    ],
+  },
+  noether: {
+    zh: [
+      '對稱性和守恆律到底有什麼關係?',
+      '時間平移對稱為什麼會給出能量守恆?',
+      '諾特定理可以怎麼用一句話說明?',
+      '什麼是連續對稱?和離散對稱有何不同?',
+      '規範對稱在現代物理裡扮演什麼角色?',
+    ],
+    en: [
+      'How exactly do symmetry and conservation laws connect?',
+      'Why does time-translation symmetry give energy conservation?',
+      "Can you state Noether's theorem in one sentence?",
+      'What is a continuous symmetry versus a discrete one?',
+      'What role does gauge symmetry play in modern physics?',
+    ],
+  },
+};
+
 export const SCIENTIST_INDEX = new Map(SCIENTISTS.map((s) => [s.id, s]));
+
+// Sentinel persona id for the single-chat "auto-assign" mode: the backend routes
+// each question to the best-matched real scientist (see lib/router.mjs) instead
+// of the user pre-picking one. Kept ASCII so it is safe in URLs / API fields.
+export const AUTO_ID = 'auto';
 
 export function getScientist(id) {
   return SCIENTIST_INDEX.get(id) || null;
 }
 
 // Public list for the frontend picker -- omits the internal `persona`, `style`
-// and `topics` prompt-engineering fields.
+// and `topics` prompt-engineering fields, and attaches each scientist's tailored
+// starter questions so the empty chat state can sample from the right set.
 export function listScientists() {
-  return SCIENTISTS.map(({ persona, style, topics, ...rest }) => rest);
+  return SCIENTISTS.map(({ persona, style, topics, ...rest }) => ({
+    ...rest,
+    starters: STARTERS[rest.id] || null,
+  }));
 }
 
 // Display name in the requested language (falls back to English, then id).
