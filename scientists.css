@@ -185,8 +185,16 @@ html, body {
 .sci-empty { margin: auto; text-align: center; color: var(--ink-faint); max-width: 420px; line-height: 1.7; }
 .sci-empty h2 { color: var(--ink-dim); font-weight: 600; font-size: 1.05rem; }
 .sci-suggest { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
-.sci-suggest button { background: var(--panel); border: 1px solid var(--line); color: var(--ink-dim); border-radius: 999px; padding: 7px 13px; font-size: 0.82rem; cursor: pointer; font-family: var(--sans); }
+.sci-suggest button {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink-dim);
+  border-radius: 999px; padding: 7px 13px; font-size: 0.82rem; cursor: pointer; font-family: var(--sans);
+}
 .sci-suggest button:hover { color: var(--ink); border-color: #36405c; }
+/* Constrain any inline icon (e.g. the "+" on the Add-scientists button) so it
+   matches the label instead of rendering at the unsized SVG default. */
+.sci-suggest button svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.sci-suggest button:disabled { opacity: 0.5; cursor: default; }
 
 /* composer */
 .sci-composer { border-top: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; background: rgba(11, 13, 18, 0.6); }

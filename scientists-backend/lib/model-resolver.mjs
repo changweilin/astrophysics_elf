@@ -6,7 +6,7 @@
 // -- and silently upgrades to the preferred model once it appears. No config
 // edit is ever required to switch between "running now" and "running best".
 
-import { config } from '../config.mjs';
+import { config, resolveModel } from '../config.mjs';
 import { ping } from './ollama.mjs';
 
 let installed = [];   // exact tags reported by Ollama, e.g. 'qwen2.5:7b'
@@ -57,4 +57,27 @@ export function pickModel(lang) {
   }
   // Nothing installed matched -> keep preferred so the chat error is explicit.
   return { name: preferred, status: 'missing', preferred };
+}
+
+// Reconcile an arbitrary configured model name against what is actually pulled,
+// returning the installed tag (e.g. 'name:q4_k_m') when the base name matches.
+// Falls back to the name unchanged when Ollama is unreachable or nothing matches
+// so any resulting error still names the configured model explicitly.
+export function effectiveName(name) {
+  if (!name || !available) return name;
+  return findInstalled(name) || name;
+}
+
+// Build the effective per-language model object the handlers actually run with:
+// resolveModel()'s configured settings, but with BOTH the chat model and the
+// summary model reconciled to installed tags. Without this the summary model
+// (which defaults to the preferred name) can request an untagged ':latest' that
+// was never pulled, so chat works while summarization 404s.
+export function effectiveModel(lang) {
+  const cfg = resolveModel(lang);
+  const picked = pickModel(cfg.lang);
+  const m = config.ollama.models[cfg.lang] || config.ollama.models[config.ollama.defaultLang];
+  // Explicit summary model -> reconcile it; otherwise reuse the effective chat model.
+  const summaryModel = m.summaryModel ? effectiveName(m.summaryModel) : picked.name;
+  return { ...cfg, name: picked.name, summaryModel };
 }

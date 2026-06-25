@@ -11,12 +11,12 @@
 // shares no code with the static demo. The demo's serve.mjs is untouched.
 
 import { createServer } from 'node:http';
-import { config, resolveModel, normalizeLang } from './config.mjs';
+import { config, normalizeLang } from './config.mjs';
 import {
   listScientists, getScientist, buildSystemPrompt, rankScientists, nameOf,
 } from './personas/scientists.mjs';
 import { chatStream, ping } from './lib/ollama.mjs';
-import { refreshInstalled, installedModels, pickModel } from './lib/model-resolver.mjs';
+import { refreshInstalled, installedModels, pickModel, effectiveModel } from './lib/model-resolver.mjs';
 import {
   shouldSummarize, summarizeConversation, usageFraction, estimateTokens,
 } from './lib/context.mjs';
@@ -110,11 +110,10 @@ async function handleChat(req, res) {
   if (!scientist) return sendJson(res, 400, { error: `unknown scientist: ${scientistId}` });
   if (!message) return sendJson(res, 400, { error: 'empty message' });
 
-  // Resolve the per-language config, then swap in the effective (installed)
-  // model tag so the chat works whether or not the preferred model is pulled.
-  const cfg = resolveModel(lang);
-  const picked = pickModel(cfg.lang);
-  const model = { ...cfg, name: picked.name };
+  // Resolve the per-language config, reconciling both the chat and summary model
+  // names to the installed tags so chat AND summarization work whether or not the
+  // preferred model is pulled.
+  const model = effectiveModel(lang);
   const session = getOrCreateSession(sessionId, scientistId, lang);
 
   // Open the SSE stream.
@@ -216,9 +215,7 @@ async function handleSummarize(req, res) {
     return sendJson(res, 200, { ok: true, changed: false, summary: session.summary || '', summaryCount: session.summaryCount });
   }
 
-  const cfg = resolveModel(lang);
-  const picked = pickModel(cfg.lang);
-  const model = { ...cfg, name: picked.name };
+  const model = effectiveModel(lang);
   const scientist = getScientist(session.scientistId);
 
   try {
@@ -271,9 +268,7 @@ async function handleDiscuss(req, res) {
   if (!ids.length) return sendJson(res, 400, { error: 'no valid scientists selected' });
   if (!message) return sendJson(res, 400, { error: 'empty message' });
 
-  const cfg = resolveModel(lang);
-  const picked = pickModel(cfg.lang);
-  const model = { ...cfg, name: picked.name };
+  const model = effectiveModel(lang);
   const disc = getOrCreateDiscussion(sessionId, ids, lang);
 
   // Rank the panel by expertise for THIS question (most-relevant leads + concludes).
@@ -334,9 +329,7 @@ async function handleDiscussSummarize(req, res) {
     return sendJson(res, 200, { ok: true, changed: false, summary: disc.summary || '', summaryCount: disc.summaryCount });
   }
 
-  const cfg = resolveModel(lang);
-  const picked = pickModel(cfg.lang);
-  const model = { ...cfg, name: picked.name };
+  const model = effectiveModel(lang);
 
   // Flatten the retained (question -> conclusion) pairs into a transcript the
   // shared summarizer understands, then fold it into the carried-over memory.

@@ -46,8 +46,8 @@ model it is used automatically -- no config change needed.
 
 ```powershell
 # Install from https://ollama.com, then:
-ollama pull jcai/llama-3-taiwan-8b-instruct   # Traditional Chinese
-ollama pull phi4                              # English (or: ollama pull qwen3:8b)
+ollama pull jcai/llama-3-taiwan-8b-instruct:q4_k_m   # Traditional Chinese (no :latest tag is published)
+ollama pull phi4                                     # English (or: ollama pull qwen3:8b)
 ```
 
 If VRAM is tight on the 3060, prefer `qwen3:8b` for both and/or lower

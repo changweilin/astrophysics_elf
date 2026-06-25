@@ -2,7 +2,18 @@
    Babel, matching the rest of the demo). It talks to the local LLM backend
    purely over the REST/SSE contract; no engine code is imported here. */
 
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// Shuffle a copy (Fisher-Yates) and take the first n -- used to surface a fresh,
+// random handful of starter questions each time an empty conversation is shown.
+function sampleN(arr, n) {
+  const a = (arr || []).slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a.slice(0, n);
+}
 
 // ---- bilingual UI strings ----
 const T = {
@@ -25,17 +36,34 @@ const T = {
     emptyTitle: '挑一位科學家,開始提問',
     emptyBody: '用你習慣的語言發問即可;切換語言會自動換用該語言最強的本地模型。',
     summarizing: '脈絡已達上限,正在摘要先前對話...',
+    summarizingNow: '正在摘要這段對話...',
     summarized: '已摘要先前對話並重啟脈絡(第 {n} 次)',
     summaryErr: '摘要失敗,已保留最近幾輪對話繼續',
+    summaryStale: '後端的對話脈絡已重置(可能後端重新啟動過),這段對話會在你下次提問時重新開始。',
     ctx: '脈絡',
     suggestions: [
       '用思想實驗解釋時間膨脹',
       '黑洞的事件視界是什麼?',
       '請推導克卜勒第三定律',
       '暗物質的證據有哪些?',
+      '什麼是吸積盤,為什麼會發光?',
+      '重力透鏡如何讓我們看到黑洞背後的星系?',
+      '潮汐力為什麼會把人「麵條化」?',
+      '旋轉的黑洞如何拖曳周圍的時空?(參考系拖曳)',
+      '能層是什麼?彭羅斯過程怎麼從黑洞取出能量?',
+      '為什麼會有最內穩定圓軌道(ISCO)?',
+      '光子球與黑洞剪影是怎麼形成的?',
+      '重力波是什麼?我們是怎麼偵測到的?',
+      '錢德拉塞卡極限決定了什麼?',
+      '相對論性噴流是怎麼被加速出來的?',
+      '宇宙為什麼在膨脹?哈伯定律告訴我們什麼?',
+      '黑洞會蒸發嗎?霍金輻射是什麼?',
+      '對稱性與守恆律有什麼關係?(諾特定理)',
+      '電荷會如何改變黑洞的結構?',
     ],
     errPrefix: '發生錯誤:',
     noBackend: '無法連到後端。請先在本機啟動後端(scientists-backend 目錄執行 node server.mjs),或在設定中更正位址。',
+    backendOutdated: '後端找不到這個功能(版本可能過舊)。請到 scientists-backend 目錄重新啟動 node server.mjs 後再試。',
     backendTrying: '嘗試連線後端:',
     retry: '重試連線',
     tabChat: '對話',
@@ -71,6 +99,16 @@ const T = {
       '宇宙為何會加速膨脹?',
       '時間有開始嗎?',
       '對稱性如何決定守恆律?',
+      '資訊掉進黑洞後會永遠消失嗎?(資訊悖論)',
+      '暗物質真的存在,還是重力理論需要修正?',
+      '星系中心的超大質量黑洞是怎麼長大的?',
+      '重力可以被量子化嗎?',
+      '黑洞內部的奇異點代表物理的終點嗎?',
+      '我們有可能利用黑洞的旋轉取得能量嗎?',
+      '為什麼自然界的基本常數剛好適合生命?',
+      '兩個星系相撞時會發生什麼?',
+      '白矮星、中子星與黑洞之間的界線在哪裡?',
+      '重力波會為天文學打開什麼樣的新窗口?',
     ],
   },
   en: {
@@ -92,17 +130,34 @@ const T = {
     emptyTitle: 'Pick a scientist and start asking',
     emptyBody: 'Ask in whatever language you like; switching language auto-swaps to the strongest local model for it.',
     summarizing: 'Context near the limit -- summarizing the earlier conversation...',
+    summarizingNow: 'Summarizing this conversation...',
     summarized: 'Summarized earlier conversation and restarted context (#{n})',
     summaryErr: 'Summarization failed; kept the last few turns and continued',
+    summaryStale: 'The backend context was reset (the backend may have restarted); this thread will resume on your next message.',
     ctx: 'Context',
     suggestions: [
       'Explain time dilation with a thought experiment',
       "What is a black hole's event horizon?",
       "Derive Kepler's third law",
       'What is the evidence for dark matter?',
+      'What is an accretion disc, and why does it glow?',
+      'How does gravitational lensing let us see galaxies behind a black hole?',
+      'Why do tidal forces "spaghettify" you near a black hole?',
+      'How does a spinning black hole drag spacetime? (frame dragging)',
+      'What is the ergosphere, and how does the Penrose process extract energy?',
+      'Why is there an innermost stable circular orbit (ISCO)?',
+      'How do the photon sphere and the black-hole shadow form?',
+      'What are gravitational waves, and how do we detect them?',
+      'What does the Chandrasekhar limit determine?',
+      'How are relativistic jets accelerated?',
+      "Why is the universe expanding? What does Hubble's law tell us?",
+      'Do black holes evaporate? What is Hawking radiation?',
+      "How does symmetry relate to conservation laws? (Noether's theorem)",
+      "How does electric charge change a black hole's structure?",
     ],
     errPrefix: 'Error: ',
     noBackend: 'Cannot reach the backend. Start it locally (run `node server.mjs` in scientists-backend), or fix the URL in Settings.',
+    backendOutdated: 'The backend is missing this endpoint (it may be outdated). Restart `node server.mjs` in scientists-backend and try again.',
     backendTrying: 'Trying backend:',
     retry: 'Retry',
     tabChat: 'Chat',
@@ -138,6 +193,16 @@ const T = {
       "Why is the universe's expansion accelerating?",
       'Did time have a beginning?',
       'How does symmetry dictate conservation laws?',
+      'Does information vanish when it falls into a black hole? (the information paradox)',
+      'Is dark matter real, or does gravity need modifying?',
+      'How do supermassive black holes at galaxy centres grow?',
+      'Can gravity be quantized?',
+      'Does the singularity inside a black hole mark the end of physics?',
+      "Could we ever extract energy from a black hole's spin?",
+      'Why do the constants of nature seem fine-tuned for life?',
+      'What happens when two galaxies collide?',
+      'Where is the line between white dwarfs, neutron stars, and black holes?',
+      'What new window will gravitational waves open for astronomy?',
     ],
   },
 };
@@ -343,6 +408,10 @@ function SciAppRoot() {
   const selected = scientists.find((s) => s.id === selectedId) || null;
   const panelScientists = panel.map((id) => scientists.find((s) => s.id === id)).filter(Boolean);
 
+  // A fresh random handful of starter questions per (language, scientist) so the
+  // empty state isn't always the same four. Stable while you talk to one persona.
+  const chatSuggestions = useMemo(() => sampleN(tr.suggestions, 4), [lang, selectedId]);
+
   // persist language
   useEffect(() => { try { localStorage.setItem('kn_sci_lang', lang); } catch (e) {} }, [lang]);
 
@@ -426,16 +495,25 @@ function SciAppRoot() {
       pushNotice('summary', tr.summaryNothing);
       return;
     }
-    pushNotice('summary', tr.summarizing);
+    pushNotice('summary', tr.summarizingNow);
     try {
-      const r = await fetch(backendUrl + '/api/session/summarize', {
+      const res = await fetch(backendUrl + '/api/session/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: sessionId.current, lang }),
-      }).then((res) => res.json());
-      if (r && r.ok && r.changed) {
+      });
+      // A 404 means the backend no longer holds this session (it restarted, or
+      // the session was evicted). The visible history is still here, so just
+      // drop the stale id and let the next message open a fresh session.
+      if (res.status === 404) {
+        sessionId.current = '';
+        pushNotice('summary', tr.summaryStale);
+        return;
+      }
+      const r = await res.json().catch(() => null);
+      if (res.ok && r && r.ok && r.changed) {
         pushNotice('keypoints', r.summary || '');
         setUsage(typeof r.usage === 'number' ? r.usage : 0);
-      } else if (r && r.ok) {
+      } else if (res.ok && r && r.ok) {
         pushNotice('summary', tr.summaryNothing);
       } else {
         pushNotice('err', tr.errPrefix + ((r && r.error) || 'summarize failed'));
@@ -526,7 +604,7 @@ function SciAppRoot() {
         }),
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      if (!res.ok || !res.body) throw new Error(res.status === 404 ? tr.backendOutdated : 'HTTP ' + res.status);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -640,7 +718,7 @@ function SciAppRoot() {
         }),
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+      if (!res.ok || !res.body) throw new Error(res.status === 404 ? tr.backendOutdated : 'HTTP ' + res.status);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -692,16 +770,22 @@ function SciAppRoot() {
       pushDiscussNotice('summary', tr.summaryNothing);
       return;
     }
-    pushDiscussNotice('summary', tr.summarizing);
+    pushDiscussNotice('summary', tr.summarizingNow);
     try {
-      const r = await fetch(backendUrl + '/api/discuss/summarize', {
+      const res = await fetch(backendUrl + '/api/discuss/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: discussSessionId.current, lang }),
-      }).then((res) => res.json());
-      if (r && r.ok && r.changed) {
+      });
+      if (res.status === 404) {
+        discussSessionId.current = '';
+        pushDiscussNotice('summary', tr.summaryStale);
+        return;
+      }
+      const r = await res.json().catch(() => null);
+      if (res.ok && r && r.ok && r.changed) {
         pushDiscussNotice('keypoints', r.summary || '');
         setDiscussUsage(typeof r.usage === 'number' ? r.usage : 0);
-      } else if (r && r.ok) {
+      } else if (res.ok && r && r.ok) {
         pushDiscussNotice('summary', tr.summaryNothing);
       } else {
         pushDiscussNotice('err', tr.errPrefix + ((r && r.error) || 'summarize failed'));
@@ -881,7 +965,7 @@ function SciAppRoot() {
                 <h2>{tr.emptyTitle}</h2>
                 <p>{tr.emptyBody}</p>
                 <div className="sci-suggest">
-                  {tr.suggestions.map((q, i) => (
+                  {chatSuggestions.map((q, i) => (
                     <button key={i} onClick={() => sendMessage(q)} disabled={!selected || health !== 'online'}>{q}</button>
                   ))}
                 </div>
@@ -1102,6 +1186,8 @@ function DiscussView({
   const scrollRef = useRef(null);
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, streaming]);
   const hasPanel = panel.length > 0;
+  // Fresh random debate topics each time the (populated) panel's empty state shows.
+  const discussSuggestions = useMemo(() => sampleN(tr.discussSuggestions, 4), [lang, hasPanel]);
   return (
     <div className="sci-body">
       <nav className="sci-roster sci-roster-discuss">
@@ -1171,7 +1257,7 @@ function DiscussView({
                   <h2>{tr.discussEmptyTitle}</h2>
                   <p>{tr.discussEmptyBody}</p>
                   <div className="sci-suggest">
-                    {tr.discussSuggestions.map((q, i) => (
+                    {discussSuggestions.map((q, i) => (
                       <button key={i} onClick={() => onSend(q)} disabled={health !== 'online'}>{q}</button>
                     ))}
                   </div>
