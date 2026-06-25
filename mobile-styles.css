@@ -80,42 +80,15 @@ html, body {
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-.m-head .brand {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--fg-1);
-  display: flex; align-items: center; gap: 8px;
-}
-.m-head .brand .logo {
-  width: 22px; height: 22px;
-  border-radius: 6px;
-  display: block;
-  box-shadow: 0 0 0 1px var(--line), 0 1px 6px rgba(0, 0, 0, 0.45);
-}
-.m-head .brand strong { color: var(--fg-0); font-weight: 600; letter-spacing: 0.2em; }
-.m-head .session {
+/* Brand (.kn-brand) + page nav (.kn-pagenav) styles live in page-nav.css so the
+   mobile head matches the other pages. Keep the logo a touch smaller here. */
+.m-head .kn-brand img { width: 22px; height: 22px; }
+.m-head-actions {
   margin-left: auto;
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.10em;
-  color: var(--fg-3);
-  display: flex; gap: 10px; align-items: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
-.m-head .session .live { color: var(--cyan); }
-.m-head .topbar-link {
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  color: var(--fg-1);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 2px 7px;
-  text-decoration: none;
-}
-.m-head .topbar-link:active { border-color: var(--amber-dim); color: var(--amber); }
 
 /* Language selector */
 .lang-select {

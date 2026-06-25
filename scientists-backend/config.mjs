@@ -94,6 +94,26 @@ export const config = {
     charsPerToken: envNum('SCI_CHARS_PER_TOKEN', 2.8),
   },
 
+  // --- Multi-scientist roundtable (Science Dialogue tab; see lib/discussion.mjs) ---
+  discussion: {
+    // One "round" = every participant speaks once. The panel keeps going until
+    // it resolves, runs out of context budget, or hits this many rounds.
+    maxRounds: envNum('SCI_DISCUSS_MAX_ROUNDS', 3),
+    // Stop and move to the conclusion once the running transcript reaches this
+    // fraction of the model's window (the user-facing "touch 50% of context").
+    stopFraction: envNum('SCI_DISCUSS_STOP_AT', 0.5),
+    // After each completed round, ask a neutral moderator whether the question
+    // is fully answered; if so, conclude early. Set false to always run rounds.
+    moderator: envBool('SCI_DISCUSS_MODERATOR', true),
+    // How many past (question -> conclusion) pairs to carry as panel memory.
+    memoryRounds: envNum('SCI_DISCUSS_MEMORY_ROUNDS', 2),
+    // Hard ceiling on participants per discussion (keeps turns/latency bounded).
+    maxParticipants: envNum('SCI_DISCUSS_MAX_PARTICIPANTS', 5),
+    // Reply length budgets: short for back-and-forth turns, longer for the wrap.
+    turnTokens: envNum('SCI_DISCUSS_TURN_TOKENS', 320),
+    conclusionTokens: envNum('SCI_DISCUSS_CONCLUSION_TOKENS', 640),
+  },
+
   // --- Knowledge augmentation (Wikipedia RAG; see knowledge/wiki.mjs) ---
   wiki: {
     enabled: envBool('SCI_WIKI_RAG', false),

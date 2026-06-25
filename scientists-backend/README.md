@@ -133,10 +133,26 @@ Pass `--topics topics.txt` (one topic per line) to use your own topic list.
 | GET | `/api/scientists` | - | persona list (id, names, fields, blurb, accent) |
 | POST | `/api/chat` | `{sessionId?, scientistId, lang, message}` | **SSE** stream |
 | POST | `/api/session/reset` | `{sessionId}` | `{ok}` |
+| POST | `/api/session/summarize` | `{sessionId, lang}` | `{ok, changed, summary, usage}` |
+| POST | `/api/discuss` | `{sessionId?, scientistIds[], lang, message}` | **SSE** roundtable stream |
+| POST | `/api/discuss/reset` | `{sessionId}` | `{ok}` |
+| POST | `/api/discuss/summarize` | `{sessionId, lang}` | `{ok, changed, summary, usage}` |
 
 SSE event types on `/api/chat`: `meta` (sessionId, model, lang, usage),
 `token` (text delta), `summary` (start/done/error), `done` (token counts,
 usage), `error`.
+
+`/api/discuss` runs a multi-scientist roundtable (Science Dialogue tab): the
+panel is ranked by topic expertise (most-expert leads and concludes), each
+speaks in turn building on the others, and the loop stops when a neutral
+moderator judges the question resolved, the transcript reaches
+`SCI_DISCUSS_STOP_AT` (default 0.5) of the window, or `SCI_DISCUSS_MAX_ROUNDS`
+is hit -- then the lead delivers the conclusion. SSE event types: `meta`
+(sessionId, model, ranked `speakers`, usage), `phase`
+(`discussing`/`concluding`, round, stopReason), `speaker` (id, name, accent,
+`role` = turn|conclusion), `token` (id, text delta), `turn-done` (id, usage),
+`done` (rounds, resolved, stopReason, usage), `error`. Tunable via
+`SCI_DISCUSS_*` env vars (see `config.mjs`).
 
 ## Verify
 

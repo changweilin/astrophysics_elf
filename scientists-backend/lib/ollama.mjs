@@ -65,8 +65,11 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
   return { content: full, ...stats };
 }
 
-// Blocking chat used for summarization (no streaming needed). Returns the text.
-export async function chat({ model, messages, optionOverrides }) {
+// Blocking chat used for summarization + discussion moderator/conclusion (no
+// streaming needed). Honors an optional AbortSignal alongside the timeout.
+export async function chat({ model, messages, optionOverrides, signal }) {
+  const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
+  const composite = signal ? anySignal([signal, timeout]) : timeout;
   const res = await fetch(CHAT_URL(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -76,7 +79,7 @@ export async function chat({ model, messages, optionOverrides }) {
       stream: false,
       options: buildOptions(model, optionOverrides),
     }),
-    signal: AbortSignal.timeout(config.ollama.requestTimeoutMs),
+    signal: composite,
   });
   if (!res.ok) throw new Error(`Ollama chat failed (${res.status}): ${await safeText(res)}`);
   const data = await res.json();

@@ -66,64 +66,17 @@ html, body {
   display: flex;
   align-items: center;
   padding: 0 16px;
-  gap: 24px;
+  gap: 16px;
   border-bottom: 1px solid var(--line);
 }
-.topbar .brand {
-  display: flex; align-items: center; gap: 11px;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--fg-1);
-}
-.topbar .brand .logo {
-  width: 24px; height: 24px;
-  border-radius: 7px;
-  display: block;
-  box-shadow: 0 0 0 1px var(--line), 0 1px 7px rgba(0, 0, 0, 0.45);
-}
-.topbar .brand .wordmark {
-  display: flex; flex-direction: column; gap: 2px; line-height: 1;
-}
-.topbar .brand .wordmark strong {
-  color: var(--fg-0); font-weight: 600; letter-spacing: 0.22em;
-}
-.topbar .brand .wordmark .suffix {
-  font-size: 8.5px; letter-spacing: 0.26em; color: var(--fg-3);
-}
-.topbar .crumbs {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--fg-3);
-  letter-spacing: 0.12em;
-}
-.topbar .crumbs span { color: var(--fg-1); }
-.topbar .session {
+/* Right-aligned group: page-nav icons + language selector. The shared brand
+   (.kn-brand) and nav (.kn-pagenav) styles live in page-nav.css. */
+.topbar-actions {
   margin-left: auto;
-  display: flex; gap: 18px;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--fg-3);
-  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
-.topbar .session b { color: var(--amber); font-weight: 500; }
-.topbar .session .ok { color: var(--cyan); }
-
-/* LIBRARY link → physics library (library.html). Sits in the session group. */
-.topbar-link {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--fg-1);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 3px 9px;
-  text-decoration: none;
-  transition: border-color 0.12s, color 0.12s;
-}
-.topbar-link:hover { border-color: var(--amber-dim); color: var(--amber); }
 
 /* ---------- Language selector ---------- */
 .lang-select {

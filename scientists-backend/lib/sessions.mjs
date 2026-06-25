@@ -89,3 +89,84 @@ function evictIfNeeded() {
     sessions.delete(ordered[i].id);
   }
 }
+
+// ---- multi-scientist discussion sessions (Science Dialogue tab) ----
+//
+// A discussion remembers a panel (the set of scientist ids) plus a compact
+// memory of past question -> conclusion pairs, so a follow-up question keeps
+// continuity without replaying every scientist's every turn. The live, turn-by-
+// turn transcript of a single question is ephemeral and lives only in the
+// request handler; only the resulting (question, conclusion) pair is retained.
+
+const discussions = new Map(); // id -> discussion
+
+function makeDiscussion(scientistIds, lang) {
+  const now = Date.now();
+  return {
+    id: randomUUID(),
+    scientistIds: Array.isArray(scientistIds) ? scientistIds.slice() : [],
+    lang,
+    summary: '',          // carried-over memory from past summarizations
+    rounds: [],           // [{ question, conclusion }] -- one entry per user turn
+    summaryCount: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function getDiscussion(id) {
+  return id ? discussions.get(id) || null : null;
+}
+
+// Same arraysEqual semantics as the single chat: switching the panel under an
+// existing id starts a clean discussion but keeps the id stable for the client.
+function samePanel(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((v, i) => v === sb[i]);
+}
+
+export function getOrCreateDiscussion(id, scientistIds, lang) {
+  let d = getDiscussion(id);
+  if (!d) {
+    d = makeDiscussion(scientistIds, lang);
+    d.id = id || d.id;
+    discussions.set(d.id, d);
+    evictDiscussionsIfNeeded();
+    return d;
+  }
+  if (!samePanel(d.scientistIds, scientistIds)) {
+    d.scientistIds = Array.isArray(scientistIds) ? scientistIds.slice() : [];
+    d.rounds = [];
+    d.summary = '';
+    d.summaryCount = 0;
+  }
+  d.lang = lang;
+  return d;
+}
+
+export function appendDiscussionRound(discussion, question, conclusion) {
+  discussion.rounds.push({ question, conclusion });
+  discussion.updatedAt = Date.now();
+}
+
+export function restartDiscussionWithSummary(discussion, summary) {
+  discussion.summary = summary;
+  discussion.rounds = [];
+  discussion.summaryCount += 1;
+  discussion.updatedAt = Date.now();
+}
+
+export function deleteDiscussion(id) {
+  return discussions.delete(id);
+}
+
+function evictDiscussionsIfNeeded() {
+  if (discussions.size < config.maxSessions) return;
+  const ordered = [...discussions.values()].sort((a, b) => a.updatedAt - b.updatedAt);
+  const toRemove = discussions.size - config.maxSessions + 1;
+  for (let i = 0; i < toRemove && i < ordered.length; i++) {
+    discussions.delete(ordered[i].id);
+  }
+}

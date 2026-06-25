@@ -57,14 +57,7 @@ a:hover { color: var(--cyan-dim); text-decoration: underline; }
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
 }
-.lp-top .brand {
-  display: flex; align-items: center; gap: 10px;
-  font-family: var(--mono); font-size: 11px;
-  letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-1);
-}
-.lp-top .brand img { width: 24px; height: 24px; border-radius: 7px;
-  box-shadow: 0 0 0 1px var(--line), 0 1px 7px rgba(0,0,0,0.45); }
-.lp-top .brand strong { color: var(--fg-0); font-weight: 600; letter-spacing: 0.2em; }
+/* Brand (.kn-brand) + page nav (.kn-pagenav) styles live in page-nav.css. */
 .lp-top .spacer { margin-left: auto; }
 .lp-top .lp-back {
   font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;

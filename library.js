@@ -123,6 +123,10 @@
     document.documentElement.lang = (lang === 'zh') ? 'zh-Hant' : 'en';
     document.title = t(data.docTitle || { en: 'Black Hole Lab — Library', zh: '黑洞實驗室 · 圖書館' });
 
+    // Keep the shared brand suffix in step with the chosen language.
+    var suffixEl = document.querySelector('.kn-brand-suffix');
+    if (suffixEl) suffixEl.textContent = (lang === 'zh') ? '黑洞實驗室' : 'Black Hole Lab';
+
     // language selector state
     var sel = document.getElementById('lp-lang');
     if (sel && sel.value !== lang) sel.value = lang;

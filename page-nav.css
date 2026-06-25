@@ -1,57 +1,86 @@
-/* Shared cross-page navigation -- one source of truth so the links to the other
-   two pages look identical and are named identically on index.html, library.html
-   and scientists.html. Class-prefixed (kn-*) to never clash with any page's own
-   styles. Page order is fixed everywhere: 實驗室 (index) / 圖書館 (library) /
-   科學家 (scientists); each page shows the OTHER two, adjacent, in that order. */
+/* Shared cross-page chrome -- one source of truth so the product brand and the
+   links between the three pages (實驗室 index / 圖書館 library / 科學家
+   scientists) look identical everywhere. Class-prefixed (kn-*) to never clash
+   with any page's own styles. Each page shows the OTHER two pages, as icons. */
 
+/* ---- Product brand: logo + wordmark (identical on all three pages) ---- */
+.kn-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: #c2cad9;
+  font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+}
+.kn-brand img {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: block;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(120, 140, 180, 0.18), 0 1px 7px rgba(0, 0, 0, 0.45);
+}
+.kn-brand-name {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1;
+}
+.kn-brand-name strong {
+  color: #eef1f7;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.kn-brand-name .kn-brand-suffix {
+  font-size: 8.5px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: #79839a;
+}
+
+/* ---- Page navigation: icon buttons to the other two pages ---- */
 .kn-pagenav {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
-/* Floating variant for index.html, which has no header bar. */
-.kn-pagenav--float {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  z-index: 9000;
-}
-
 .kn-navbtn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 13px;
-  border-radius: 999px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   background: rgba(21, 25, 38, 0.82);
   color: #cdd6e6;
   border: 1px solid #2a3346;
   text-decoration: none;
-  font: 500 13px/1 'Inter', system-ui, -apple-system, 'Noto Sans TC', sans-serif;
-  white-space: nowrap;
   cursor: pointer;
-  opacity: 0.85;
+  opacity: 0.9;
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
-  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s, background 0.15s;
 }
 .kn-navbtn:hover {
   opacity: 1;
   color: #e6e9ef;
   border-color: #41557d;
+  background: rgba(30, 36, 54, 0.92);
   text-decoration: none;
 }
-.kn-navbtn .kn-navdot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #7db3ff;
-  box-shadow: 0 0 6px rgba(125, 179, 255, 0.55);
+.kn-navbtn svg {
+  width: 17px;
+  height: 17px;
+  display: block;
   flex: 0 0 auto;
 }
 
 @media (max-width: 760px) {
-  .kn-navbtn { padding: 6px 10px; font-size: 12px; }
+  .kn-brand-name .kn-brand-suffix { display: none; }
+  .kn-navbtn { width: 30px; height: 30px; }
+  .kn-navbtn svg { width: 16px; height: 16px; }
   .kn-pagenav { gap: 6px; }
 }

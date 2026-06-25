@@ -476,21 +476,15 @@ function App() {
   return (
     <div className="app">
       <div className="topbar">
-        <div className="brand">
-          <img className="logo" src="/logos/icon-192.png" alt="Astro ELF" width="24" height="24" />
-          <span className="wordmark"><strong>ASTRO ELF</strong><span className="suffix">{tr('BLACK HOLE LAB', '黑洞實驗室')}</span></span>
+        <div className="kn-brand">
+          <img src="/logos/icon-192.png" alt="" width="24" height="24" />
+          <span className="kn-brand-name"><strong>ASTRO ELF</strong><span className="kn-brand-suffix">{tr('BLACK HOLE LAB', '黑洞實驗室')}</span></span>
         </div>
-        <div className="crumbs">
-          {tr('INSTRUMENT', '儀器')} <span>/</span> {tr('SANDBOX', '沙盒')} <span>/</span> <span>{tr('session 04C', '工作階段 04C')}</span>
-        </div>
-        <div className="session">
-          <span>{tr('SOLVER', '解算器')} <b>RK2-MID</b></span>
-          <span>{tr('SUBSTEP', '子步')} <b>4×</b></span>
-          <span>{tr('FRAME', '座標系')} <b>BL-COORDS</b></span>
-          <span className="ok">● {tr('LIVE', '即時')}</span>
-          <a className="topbar-link" href="library.html" title={tr('Library — illustrated guide to every phenomenon', '圖書館——逐項圖解所有現象')}>
-            {tr('LIBRARY', '圖書館')}
-          </a>
+        <div className="topbar-actions">
+          <nav className="kn-pagenav" aria-label={tr('Pages', '頁面導覽')}>
+            <a className="kn-navbtn" href="library.html" title={tr('Library', '圖書館')} aria-label={tr('Library', '圖書館')}><KNIconBook /></a>
+            <a className="kn-navbtn" href="scientists.html" title={tr('Talk with Scientists', '科學家')} aria-label={tr('Scientists', '科學家')}><KNIconScientist /></a>
+          </nav>
           <LangToggle force={force} />
         </div>
       </div>
@@ -598,6 +592,29 @@ function FrameLock({ sim, force }) {
     </div>
   );
 }
+
+// Inline cross-page nav icons (stroke, currentColor; sized by .kn-navbtn svg).
+// Top-level consts are shared across the Babel scripts, so the mobile root
+// reuses these too. Each page links to the OTHER two pages as icons.
+const KNIconLab = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M9.5 3h5" />
+    <path d="M10 3v5.3L5.4 18a1.6 1.6 0 0 0 1.45 2.3h10.3A1.6 1.6 0 0 0 18.6 18L14 8.3V3" />
+    <path d="M7.6 14.5h8.8" />
+  </svg>
+);
+const KNIconBook = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 6.4C12 6.4 9.8 4.6 4.6 4.6V16.6C9.8 16.6 12 18.4 12 18.4" />
+    <path d="M12 6.4C12 6.4 14.2 4.6 19.4 4.6V16.6C14.2 16.6 12 18.4 12 18.4" />
+  </svg>
+);
+const KNIconScientist = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="8" r="3.3" />
+    <path d="M5.6 20a6.4 6.4 0 0 1 12.8 0" />
+  </svg>
+);
 
 // Language dropdown (8 locales). Shared style (.lang-select) lives in the
 // stylesheets. Defined once here and reused by the mobile root too.

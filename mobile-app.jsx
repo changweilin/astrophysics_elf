@@ -571,14 +571,15 @@ function MobileApp() {
     <div className="m-app">
       {/* Header */}
       <div className="m-head">
-        <div className="brand">
-          <img className="logo" src="/logos/icon-192.png" alt="Astro ELF" width="22" height="22" />
-          <span><strong>ASTRO ELF</strong></span>
+        <div className="kn-brand">
+          <img src="/logos/icon-192.png" alt="" width="22" height="22" />
+          <span className="kn-brand-name"><strong>ASTRO ELF</strong></span>
         </div>
-        <div className="session">
-          <span>BL · RK2</span>
-          <span className="live">● {tr('LIVE', '即時')}</span>
-          <a className="topbar-link" href="library.html" title={tr('Library', '圖書館')}>{tr('LIBRARY', '圖書館')}</a>
+        <div className="m-head-actions">
+          <nav className="kn-pagenav" aria-label={tr('Pages', '頁面導覽')}>
+            <a className="kn-navbtn" href="library.html" title={tr('Library', '圖書館')} aria-label={tr('Library', '圖書館')}><KNIconBook /></a>
+            <a className="kn-navbtn" href="scientists.html" title={tr('Scientists', '科學家')} aria-label={tr('Scientists', '科學家')}><KNIconScientist /></a>
+          </nav>
           <LangToggle force={force} />
         </div>
       </div>
