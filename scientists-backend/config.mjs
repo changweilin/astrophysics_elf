@@ -109,13 +109,29 @@ export const config = {
     // After each completed round, ask a neutral moderator whether the question
     // is fully answered; if so, conclude early. Set false to always run rounds.
     moderator: envBool('SCI_DISCUSS_MODERATOR', true),
-    // How many past (question -> conclusion) pairs to carry as panel memory.
+    // The panel carries ALL retained (question -> conclusion) rounds as memory;
+    // once that memory reaches this fraction of the window it is summarized and
+    // restarted (mirrors the single chat). Keep it below stopFraction so the
+    // live roundtable still has room to happen after the memory is loaded.
+    memorySummarizeAtFraction: envNum('SCI_DISCUSS_MEMORY_SUMMARIZE_AT', 0.35),
+    // Fallback only: if that summarization fails, keep at most this many of the
+    // most recent rounds verbatim instead of dropping the whole history.
     memoryRounds: envNum('SCI_DISCUSS_MEMORY_ROUNDS', 2),
     // Hard ceiling on participants per discussion (keeps turns/latency bounded).
     maxParticipants: envNum('SCI_DISCUSS_MAX_PARTICIPANTS', 5),
     // Reply length budgets: short for back-and-forth turns, longer for the wrap.
-    turnTokens: envNum('SCI_DISCUSS_TURN_TOKENS', 320),
-    conclusionTokens: envNum('SCI_DISCUSS_CONCLUSION_TOKENS', 640),
+    turnTokens: envNum('SCI_DISCUSS_TURN_TOKENS', 420),
+    conclusionTokens: envNum('SCI_DISCUSS_CONCLUSION_TOKENS', 900),
+    // If a turn/conclusion stops only because it hit its num_predict cap (rather
+    // than finishing), continue generation up to this many extra passes so a
+    // reply is never shown cut off mid-sentence. 0 disables continuation.
+    maxContinuations: envNum('SCI_DISCUSS_MAX_CONTINUATIONS', 2),
+    // Two turns whose character-bigram Jaccard similarity reaches this are
+    // treated as saying the same thing; a whole round of such turns ends the
+    // panel early (the lead still delivers the conclusion). Range 0..1;
+    // calibrated so clear restatements (~0.55-0.7) trip it but turns that add a
+    // new point (~0-0.15) do not.
+    repeatThreshold: envNum('SCI_DISCUSS_REPEAT_THRESHOLD', 0.45),
   },
 
   // --- Single-chat helpers (auto-assign routing + follow-up suggestions) ---

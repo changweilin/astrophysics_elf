@@ -362,18 +362,29 @@ async function handleFollowups(req, res) {
 
 // ---- multi-scientist roundtable (Science Dialogue tab) ----
 
-// Compact panel memory carried into a new question: the running summary plus the
-// most recent (question -> conclusion) pairs (full turn-by-turn history is not
-// replayed, to keep follow-ups inside the context budget).
+// Panel memory carried into a new question: the running summary plus EVERY
+// retained (question -> conclusion) pair, so a follow-up sees the whole prior
+// conversation. The full turn-by-turn transcript of each past question stays
+// ephemeral; only its (question, conclusion) is kept. When this grows too large
+// it is summarized and restarted (see handleDiscuss), so "include everything"
+// never overflows the window.
 function buildDiscussionMemory(disc, lang) {
   const parts = [];
   if (disc.summary) parts.push(disc.summary);
-  for (const r of disc.rounds.slice(-config.discussion.memoryRounds)) {
+  for (const r of disc.rounds) {
     parts.push(lang === 'zh'
       ? `問:${r.question}\n結論:${r.conclusion}`
       : `Q: ${r.question}\nConclusion: ${r.conclusion}`);
   }
   return parts.join('\n\n');
+}
+
+// Discussion analogue of context.shouldSummarize: true once the carried memory
+// (+ the new question) reaches the configured fraction of the window, so we
+// compress before the next roundtable instead of dropping or overflowing it.
+function shouldSummarizeDiscussionMemory(model, memoryText, nextQuestion) {
+  const limit = Math.max(256, model.contextTokens * config.discussion.memorySummarizeAtFraction);
+  return estimateTokens(memoryText) + estimateTokens(nextQuestion) >= limit;
 }
 
 async function handleDiscuss(req, res) {
@@ -398,8 +409,9 @@ async function handleDiscuss(req, res) {
   const disc = getOrCreateDiscussion(sessionId, ids, lang);
 
   // Rehydrate panel memory from replayed (question -> conclusion) rounds when the
-  // discussion is empty (reload / resume / restarted backend).
-  const seeded = seedDiscussionIfEmpty(disc, body.rounds);
+  // discussion is empty (reload / resume / restarted backend). After this,
+  // disc.rounds holds the full prior conversation -- live or rehydrated alike.
+  seedDiscussionIfEmpty(disc, body.rounds);
 
   // Rank the panel by expertise for THIS question (most-relevant leads + concludes).
   const ranked = rankScientists(message, ids).map((r) => r.scientist);
@@ -417,23 +429,30 @@ async function handleDiscuss(req, res) {
   const emit = (type, data) => sse(res, type, data);
 
   try {
-    emit('meta', { sessionId: disc.id, model: model.name, lang: model.lang, speakers, usage: 0 });
+    // No usage here: runDiscussion reports the real starting usage from the
+    // carried memory below, so a continued discussion isn't shown as 0%.
+    emit('meta', { sessionId: disc.id, model: model.name, lang: model.lang, speakers });
 
-    // If the rehydrated history is large, compress it into memory before carrying
-    // it into the new question (mirrors the single-chat 70% summarize rule).
-    if (seeded) {
-      const flat = flattenRounds(disc.rounds);
-      const flatTokens = estimateTokens(flat.map((m) => m.content).join('\n'));
-      if (flatTokens >= model.contextTokens * config.context.summarizeAtFraction) {
-        try {
-          const merged = await summarizeConversation(model, lang, flat, disc.summary);
-          restartDiscussionWithSummary(disc, merged);
-          emit('summary', { state: 'done', summaryCount: disc.summaryCount });
-        } catch { /* keep raw rounds if summarization fails */ }
+    // Context management: the panel's memory carries ALL prior (question ->
+    // conclusion) rounds and -- like the single chat -- is summarized and
+    // restarted once it grows too large, so a long discussion keeps full
+    // continuity without overflowing the window. This also compresses a large
+    // rehydrated history on the first turn after a reload.
+    let memory = buildDiscussionMemory(disc, lang);
+    if (disc.rounds.length && shouldSummarizeDiscussionMemory(model, memory, message)) {
+      emit('summary', { state: 'start', lang });
+      try {
+        const merged = await summarizeConversation(model, lang, flattenRounds(disc.rounds), disc.summary);
+        restartDiscussionWithSummary(disc, merged);
+        emit('summary', { state: 'done', summaryCount: disc.summaryCount });
+      } catch (e) {
+        // Don't let a summarization failure kill the panel; keep the most recent
+        // rounds verbatim and carry on.
+        disc.rounds = disc.rounds.slice(-config.discussion.memoryRounds);
+        emit('summary', { state: 'error', error: String(e && e.message || e) });
       }
+      memory = buildDiscussionMemory(disc, lang);
     }
-
-    const memory = buildDiscussionMemory(disc, lang);
 
     const result = await runDiscussion(
       { model, lang, scientists: ranked, question: message, memory, signal: ac.signal },

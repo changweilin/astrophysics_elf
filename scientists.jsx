@@ -481,6 +481,12 @@ function SciAppRoot() {
   const needDiscussHistoryRef = useRef(true);
   const followupTokenRef = useRef(0);
   const discussFollowupTokenRef = useRef(0);
+  // One-shot guards, paired with the needHistory refs above: when a thread is
+  // (re)loaded with prior turns (page reload / resumed saved thread), surface
+  // follow-up chips once -- so an existing conversation offers next questions
+  // without waiting for a fresh turn. False = "armed", true = "already offered".
+  const restoredFollowupRef = useRef(false);
+  const restoredDiscussFollowupRef = useRef(false);
 
   const isAuto = selectedId === AUTO_ID;
   const selected = isAuto ? AUTO_PERSONA : (scientists.find((s) => s.id === selectedId) || null);
@@ -570,6 +576,17 @@ function SciAppRoot() {
     }
   }, [backendUrl, lang]);
 
+  // Offer follow-ups for a RESTORED conversation (page reload / resumed thread)
+  // once the backend is reachable, so a pre-existing dialogue immediately shows
+  // on-topic next questions. One-shot per (re)loaded thread; the fetch is
+  // isolated, so neither suggesting nor the unclicked options touch the context.
+  useEffect(() => {
+    if (restoredFollowupRef.current || health !== 'online' || streaming || followups.length) return;
+    if (!messages.some((m) => m.role === 'sci' && m.text && m.text.trim())) return;
+    restoredFollowupRef.current = true;
+    fetchFollowups();
+  }, [health, streaming, messages, followups, fetchFollowups]);
+
   function selectScientist(id) {
     if (id === selectedId) return;
     setSelectedId(id);
@@ -577,6 +594,7 @@ function SciAppRoot() {
     setUsage(0);
     clearFollowups();
     needHistoryRef.current = true;
+    restoredFollowupRef.current = false;
     sessionId.current = ''; // fresh dialogue for the new persona
   }
 
@@ -594,6 +612,7 @@ function SciAppRoot() {
     setUsage(0);
     clearFollowups();
     needHistoryRef.current = true;
+    restoredFollowupRef.current = false;
   }
 
   // Manually compress the running dialogue into a few key points. The backend
@@ -665,6 +684,7 @@ function SciAppRoot() {
       setDiscussUsage(0);
       discussSessionId.current = '';
       needDiscussHistoryRef.current = true; // replay rounds to rebuild context
+      restoredDiscussFollowupRef.current = false; // re-offer follow-ups for it
       setDiscussFollowups([]);
       setOpenFav(null);
       setView('discuss');
@@ -675,6 +695,7 @@ function SciAppRoot() {
     setUsage(0);
     sessionId.current = '';
     needHistoryRef.current = true; // replay history to rebuild context
+    restoredFollowupRef.current = false; // re-offer follow-ups for it
     clearFollowups();
     setOpenFav(null);
     setView('chat');
@@ -755,6 +776,7 @@ function SciAppRoot() {
     // replaying history; then suggest a few follow-ups (isolated -> no context).
     if (ok) {
       needHistoryRef.current = false;
+      restoredFollowupRef.current = true; // live flow owns follow-ups from here
       fetchFollowups();
     }
   }, [input, streaming, selected, backendUrl, lang, tr, clearFollowups, fetchFollowups]);
@@ -861,6 +883,15 @@ function SciAppRoot() {
     }
   }
 
+  // Mirror of the single-chat restored-followups effect for the discussion tab:
+  // a reloaded / resumed panel thread offers on-topic follow-ups once online.
+  useEffect(() => {
+    if (restoredDiscussFollowupRef.current || health !== 'online' || discussStreaming || discussFollowups.length) return;
+    if (!extractRounds(discussMessages).length) return;
+    restoredDiscussFollowupRef.current = true;
+    fetchDiscussFollowups();
+  }, [health, discussStreaming, discussMessages, discussFollowups]);
+
   async function sendDiscuss(text) {
     const msg = (text != null ? text : discussInput).trim();
     if (!msg || discussStreaming || panel.length === 0) return;
@@ -917,6 +948,7 @@ function SciAppRoot() {
 
     if (ok) {
       needDiscussHistoryRef.current = false;
+      restoredDiscussFollowupRef.current = true; // live flow owns follow-ups now
       fetchDiscussFollowups();
     }
   }
@@ -939,6 +971,7 @@ function SciAppRoot() {
     setDiscussUsage(0);
     clearDiscussFollowups();
     needDiscussHistoryRef.current = true;
+    restoredDiscussFollowupRef.current = false;
   }
 
   async function summarizeDiscuss() {

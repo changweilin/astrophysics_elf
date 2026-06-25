@@ -24,7 +24,9 @@ function buildOptions(model, overrides = {}) {
 
 // Streaming chat. Invokes onToken(textChunk) for every delta and resolves with
 // final stats from Ollama (prompt_eval_count = real prompt tokens, eval_count =
-// generated tokens). Honors an AbortSignal so the HTTP handler can cancel.
+// generated tokens, done_reason = 'stop' when the model finished its thought or
+// 'length' when it was cut off at num_predict). Honors an AbortSignal so the
+// HTTP handler can cancel.
 export async function chatStream({ model, messages, signal, optionOverrides }, onToken) {
   const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
   const composite = signal ? anySignal([signal, timeout]) : timeout;
@@ -47,7 +49,7 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
   }
 
   let full = '';
-  let stats = { promptTokens: 0, completionTokens: 0 };
+  let stats = { promptTokens: 0, completionTokens: 0, doneReason: 'stop' };
 
   await readNdjson(res.body, (obj) => {
     if (obj.message && typeof obj.message.content === 'string' && obj.message.content) {
@@ -58,6 +60,7 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
       stats = {
         promptTokens: obj.prompt_eval_count || 0,
         completionTokens: obj.eval_count || 0,
+        doneReason: obj.done_reason || 'stop',
       };
     }
   });

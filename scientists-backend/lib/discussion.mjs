@@ -15,11 +15,43 @@
 import { config } from '../config.mjs';
 import { chatStream, chat } from './ollama.mjs';
 import { estimateTokens } from './context.mjs';
+import { shingles, maxSimilarity } from './text-similarity.mjs';
 import { nameOf, buildPanelPrompt, buildConclusionPrompt } from '../personas/scientists.mjs';
 
 // Render the running transcript as plain "Name: text" lines for the next prompt.
 function formatTranscript(turns) {
   return turns.map((t) => `${t.name}: ${t.content}`).join('\n\n');
+}
+
+// Nudge appended when continuing a reply that was cut off at its token cap.
+function continueNudge(lang) {
+  return lang === 'zh'
+    ? '(請接續剛才未說完的內容繼續講完,不要重複前面已經講過的部分。)'
+    : '(Continue from exactly where you left off and finish the thought; do not repeat what you already said.)';
+}
+
+// Stream a reply, transparently continuing if the model stopped only because it
+// hit the num_predict cap (done_reason 'length') instead of finishing its
+// thought. This is what keeps a turn or conclusion from being shown cut off
+// mid-sentence. Continuation tokens flow through the same onToken callback, so
+// the client sees one seamless bubble. Bounded by maxContinuations.
+async function streamComplete({ model, messages, signal, numPredict, maxContinuations = 0, lang }, onToken) {
+  const convo = messages.slice();
+  let full = '';
+  let last = { doneReason: 'stop', promptTokens: 0, completionTokens: 0 };
+  for (let attempt = 0; attempt <= maxContinuations; attempt++) {
+    const stats = await chatStream(
+      { model, messages: convo, signal, optionOverrides: { num_predict: numPredict } },
+      onToken,
+    );
+    full += stats.content;
+    last = stats;
+    if (stats.doneReason !== 'length' || !stats.content.trim()) break; // finished, or nothing more to extend
+    // Truncated: hand back what we have and ask it to keep going without repeating.
+    convo.push({ role: 'assistant', content: stats.content });
+    convo.push({ role: 'user', content: continueNudge(lang) });
+  }
+  return { content: full.trim(), truncated: last.doneReason === 'length' };
 }
 
 function L(lang) {
@@ -103,12 +135,23 @@ export async function runDiscussion({ model, lang, scientists, question, memory 
   const turns = []; // [{ id, name, accent, content }]
   const usageNow = () => Math.min(1, (baseTokens + estimateTokens(formatTranscript(turns))) / window);
 
+  // Report the starting usage from the carried memory (panel prompt + question +
+  // all retained/summarized rounds) so a continued discussion shows its real
+  // context fullness instead of resetting to 0% each new question.
+  emit('meta', { usage: usageNow() });
+
   let stopReason = 'maxRounds';
   let resolved = false;
+
+  // Shingle sets of every turn so far, for the repetition guard below.
+  const priorShingles = [];
 
   outer:
   for (let round = 0; round < dc.maxRounds; round++) {
     emit('phase', { phase: 'discussing', round: round + 1, maxRounds: dc.maxRounds });
+
+    let spoke = 0;     // turns actually produced this round
+    let redundant = 0; // of those, how many merely restated earlier turns
 
     for (const sci of scientists) {
       // Stop before adding another turn once we are near the budget (but always
@@ -122,21 +165,32 @@ export async function runDiscussion({ model, lang, scientists, question, memory 
       const system = buildPanelPrompt(sci, { colleagues, lang, summary: memory });
       const userMsg = turnUserMessage(lang, question, memory, turns, name);
 
-      let reply = '';
-      await chatStream({
+      const out = await streamComplete({
         model,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: userMsg },
         ],
         signal,
-        optionOverrides: { num_predict: dc.turnTokens || 320 },
-      }, (delta) => { reply += delta; emit('token', { id: sci.id, text: delta }); });
+        numPredict: dc.turnTokens || 320,
+        maxContinuations: dc.maxContinuations,
+        lang,
+      }, (delta) => emit('token', { id: sci.id, text: delta }));
+      const reply = out.content;
 
-      reply = reply.trim();
+      spoke++;
+      // Flag a turn that mostly restates earlier turns -- the looping the user saw.
+      if (priorShingles.length && maxSimilarity(reply, priorShingles) >= dc.repeatThreshold) redundant++;
+      priorShingles.push(shingles(reply));
+
       turns.push({ id: sci.id, name, accent: sci.accent || '', content: reply });
       emit('turn-done', { id: sci.id, usage: usageNow() });
     }
+
+    // Stall guard: once a full round (after the first, which sets the baseline)
+    // only restates earlier turns, the panel has converged or is looping -- stop
+    // and let the lead conclude rather than grinding out more identical rounds.
+    if (round >= 1 && spoke > 0 && redundant === spoke) { stopReason = 'stalled'; break; }
 
     // After a completed round, let the moderator end it early if the question
     // looks fully answered (skip on the final round -- we conclude regardless).
@@ -160,18 +214,18 @@ export async function runDiscussion({ model, lang, scientists, question, memory 
   });
   const conclUser = conclusionUserMessage(lang, question, memory, turns, leadName);
 
-  let conclusion = '';
-  await chatStream({
+  const conclOut = await streamComplete({
     model,
     messages: [
       { role: 'system', content: conclSystem },
       { role: 'user', content: conclUser },
     ],
     signal,
-    optionOverrides: { num_predict: dc.conclusionTokens || 640 },
-  }, (delta) => { conclusion += delta; emit('token', { id: lead.id, text: delta }); });
-
-  conclusion = conclusion.trim();
+    numPredict: dc.conclusionTokens || 640,
+    maxContinuations: dc.maxContinuations,
+    lang,
+  }, (delta) => emit('token', { id: lead.id, text: delta }));
+  const conclusion = conclOut.content;
   emit('turn-done', { id: lead.id, role: 'conclusion', usage: usageNow() });
 
   return {
