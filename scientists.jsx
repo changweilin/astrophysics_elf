@@ -464,8 +464,21 @@ function SciAppRoot() {
   const [models, setModels] = useState({ zh: '', en: '' });
   const [scientists, setScientists] = useState([]);
   
-  const [sortBy, setSortBy] = useState('default'); // 'default' | 'year' | 'alphabet' | 'specialty'
-  const [sortOrder, setSortOrder] = useState('asc'); // 'asc' | 'desc'
+  const [sortBy, setSortBy] = useState(() => {
+    try { return localStorage.getItem('kn_sci_sort_by') || 'year'; } catch (e) { return 'year'; }
+  });
+  const [sortOrder, setSortOrder] = useState(() => {
+    try { return localStorage.getItem('kn_sci_sort_order') || 'asc'; } catch (e) { return 'asc'; }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('kn_sci_sort_by', sortBy);
+      localStorage.setItem('kn_sci_sort_order', sortOrder);
+    } catch (e) {}
+  }, [sortBy, sortOrder]);
+
+  const [sessions, setSessions] = useState(() => persisted.sessions || {});
 
   const sortedScientists = useMemo(() => {
     if (sortBy === 'default') {
@@ -497,13 +510,39 @@ function SciAppRoot() {
     return list;
   }, [scientists, sortBy, sortOrder, lang]);
 
+  const getPersistedSession = useCallback((sciId) => {
+    if (!sciId) {
+      return { messages: [], usage: 0, activeModel: '', sessionId: '' };
+    }
+    if (persisted.sessions && persisted.sessions[sciId]) {
+      return persisted.sessions[sciId];
+    }
+    if (persisted.selectedId === sciId) {
+      return {
+        messages: persisted.messages || [],
+        usage: persisted.usage || 0,
+        activeModel: persisted.activeModel || '',
+        sessionId: persisted.sessionId || '',
+      };
+    }
+    return {
+      messages: [],
+      usage: 0,
+      activeModel: '',
+      sessionId: '',
+    };
+  }, [persisted]);
+
   const selectedIdState = useState(persisted.selectedId || '');
   const selectedId = selectedIdState[0], setSelectedId = selectedIdState[1];
-  const [messages, setMessages] = useState(Array.isArray(persisted.messages) ? persisted.messages : []); // {role:'user'|'sci'|'notice', text, kind?}
+
+  const initialSession = useMemo(() => getPersistedSession(persisted.selectedId || ''), [persisted.selectedId, getPersistedSession]);
+
+  const [messages, setMessages] = useState(initialSession.messages);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [usage, setUsage] = useState(persisted.usage || 0);
-  const [activeModel, setActiveModel] = useState(persisted.activeModel || '');
+  const [usage, setUsage] = useState(initialSession.usage);
+  const [activeModel, setActiveModel] = useState(initialSession.activeModel);
   const [showSettings, setShowSettings] = useState(false);
   const [bioId, setBioId] = useState(null);
 
@@ -532,7 +571,7 @@ function SciAppRoot() {
   const discussSessionId = useRef(persistedD.sessionId || '');
   const discussAbortRef = useRef(null);
 
-  const sessionId = useRef(persisted.sessionId || '');
+  const sessionId = useRef(initialSession.sessionId);
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
 
@@ -574,8 +613,20 @@ function SciAppRoot() {
   // Persist the live conversation so a reload keeps it (and the session id, so
   // the backend can continue the same dialogue while its session is alive).
   useEffect(() => {
-    saveJSON(PERSIST_KEY, { selectedId, messages, usage, activeModel, sessionId: sessionId.current });
-  }, [selectedId, messages, usage, activeModel, streaming]);
+    const activeSession = { messages, usage, activeModel, sessionId: sessionId.current };
+    saveJSON(PERSIST_KEY, {
+      selectedId,
+      sessions: {
+        ...sessions,
+        [selectedId]: activeSession,
+      },
+      // Keep top-level fields for backward compatibility
+      messages,
+      usage,
+      activeModel,
+      sessionId: sessionId.current,
+    });
+  }, [selectedId, messages, usage, activeModel, sessions, streaming]);
 
   // Persist the live discussion (panel + transcript + session id) across reloads.
   useEffect(() => {
@@ -602,13 +653,22 @@ function SciAppRoot() {
         setScientists(d.scientists);
         // Keep the restored selection if it still exists (or is the auto persona),
         // else default to first.
-        setSelectedId((prev) =>
-          (prev && (prev === AUTO_ID || d.scientists.some((s) => s.id === prev)))
-            ? prev
-            : (d.scientists[0] && d.scientists[0].id) || '');
+        const prev = selectedId;
+        const next = (prev && (prev === AUTO_ID || d.scientists.some((s) => s.id === prev)))
+          ? prev
+          : (d.scientists[0] && d.scientists[0].id) || '';
+        
+        if (next !== prev) {
+          const nextSession = (persisted.sessions && persisted.sessions[next]) || { messages: [], usage: 0, activeModel: '', sessionId: '' };
+          setSelectedId(next);
+          setMessages(nextSession.messages || []);
+          setUsage(nextSession.usage || 0);
+          setActiveModel(nextSession.activeModel || '');
+          sessionId.current = nextSession.sessionId || '';
+        }
       }
     } catch (e) { /* leave roster empty; health dot shows offline */ }
-  }, [backendUrl]);
+  }, [backendUrl, selectedId, persisted]);
 
   useEffect(() => { loadBackend(); }, [loadBackend]);
 
@@ -657,13 +717,29 @@ function SciAppRoot() {
 
   function selectScientist(id) {
     if (id === selectedId) return;
+    
+    // Save current active session
+    setSessions((prev) => ({
+      ...prev,
+      [selectedId]: {
+        messages,
+        usage,
+        activeModel,
+        sessionId: sessionId.current,
+      }
+    }));
+
+    // Load next session
+    const nextSession = sessions[id] || getPersistedSession(id);
     setSelectedId(id);
-    setMessages([]);
-    setUsage(0);
+    setMessages(nextSession.messages || []);
+    setUsage(nextSession.usage || 0);
+    setActiveModel(nextSession.activeModel || '');
+    sessionId.current = nextSession.sessionId || '';
+
     clearFollowups();
     needHistoryRef.current = true;
     restoredFollowupRef.current = false;
-    sessionId.current = ''; // fresh dialogue for the new persona
   }
 
   async function resetConversation() {
@@ -681,6 +757,17 @@ function SciAppRoot() {
     clearFollowups();
     needHistoryRef.current = true;
     restoredFollowupRef.current = false;
+
+    // Clear inside sessions dictionary
+    setSessions((prev) => ({
+      ...prev,
+      [selectedId]: {
+        messages: [],
+        usage: 0,
+        activeModel: activeModel,
+        sessionId: '',
+      }
+    }));
   }
 
   // Manually compress the running dialogue into a few key points. The backend
@@ -758,6 +845,17 @@ function SciAppRoot() {
       setView('discuss');
       return;
     }
+    // Save current active session
+    setSessions((prev) => ({
+      ...prev,
+      [selectedId]: {
+        messages,
+        usage,
+        activeModel,
+        sessionId: sessionId.current,
+      }
+    }));
+    
     setSelectedId(fav.scientistId);
     setMessages(fav.messages.slice());
     setUsage(0);

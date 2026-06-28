@@ -53,6 +53,12 @@
     lemaitre:      { skin: '#ecc5a2', hair: 'receding', hairC: '#555555', facial: 'none',   facialC: INK,    collar: 'priest',     clothes: '#1a1a1a', glasses: 'round', mouth: 'slight' },
     thorne:        { skin: '#ecc5a2', hair: 'receding', hairC: '#e2d1c3', facial: 'beardS', facialC: '#e2d1c3', collar: 'open',     clothes: '#3a5f6e', glasses: 'rect', mouth: 'smile' },
     bell:          { skin: '#edc8a6', hair: 'curlyF',   hairC: '#e6e9ef', facial: 'none',   facialC: INK,    collar: 'blouse',     clothes: '#63404b', glasses: 'round', mouth: 'smile' },
+    halley:        { skin: '#ecc5a2', hair: 'wig',      hairC: '#c4c7d2', facial: 'none',   facialC: INK,    collar: 'cravat',     clothes: '#4a6358', mouth: 'slight' },
+    herschel:      { skin: '#ecc5a2', hair: 'wig',      hairC: '#eef0f6', facial: 'none',   facialC: INK,    collar: 'cravat',     clothes: '#5b4a3a', mouth: 'smile' },
+    maxwell:       { skin: '#ecc5a2', hair: 'swept',    hairC: '#5a4d41', facial: 'beardF', facialC: '#5a4d41', collar: 'suit',       clothes: '#3d4b54', mouth: 'neutral' },
+    cannon:        { skin: '#edc8a6', hair: 'bun',      hairC: '#a9adba', facial: 'none',   facialC: INK,    collar: 'lace',       clothes: '#5c4366', mouth: 'slight' },
+    zwicky:        { skin: '#ecc5a2', hair: 'receding', hairC: '#a9adba', facial: 'none',   facialC: INK,    collar: 'suit',       clothes: '#543b35', mouth: 'slight' },
+    johnson:       { skin: '#d6a382', hair: 'curlyF',   hairC: '#a9adba', facial: 'none',   facialC: INK,    collar: 'blouse',     clothes: '#6b3f49', glasses: 'round', mouth: 'smile' },
   };
 
   function s(attrs) { return attrs; } // tiny readability shim
@@ -265,7 +271,8 @@
     einstein: true, feynman: true, newton: true, galileo: true, kepler: true,
     copernicus: true, hubble: true, hawking: true, chandrasekhar: true, sagan: true,
     rubin: true, noether: true, leavitt: true, lemaitre: true, thorne: true,
-    bell: true
+    bell: true, halley: true, herschel: true, maxwell: true, cannon: true,
+    zwicky: true, johnson: true
   };
   window.knSciAvatar = knSciAvatar;
   window.knSciAvatarHas = function (id) { return !!PNG_AVATARS[id]; };
