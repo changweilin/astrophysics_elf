@@ -717,7 +717,7 @@ function MobileApp() {
       <div className="m-drawer" ref={drawerRef}
         style={{ height: drawerH, transition: snapping ? 'height 0.22s ease' : 'none' }}>
         <div className="m-drawer-body">
-          {tab === 'hole'    && <TabBlackHole sim={MSIM} force={force} />}
+          {tab === 'hole'    && <TabBlackHole sim={MSIM} force={force} setPlaying={setPlaying} />}
           {tab === 'objects' && <TabObjects   sim={MSIM} force={force} />}
           {tab === 'spawn'   && <TabSpawn     sim={MSIM} force={force} onArm={armPlacement} />}
           {tab === 'disc'    && <TabDisc      sim={MSIM} force={force} />}

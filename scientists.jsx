@@ -21,6 +21,13 @@ const T = {
     title: '科學家對談',
     subtitle: '物理 · 數學 · 天文 · 宇宙學',
     roster: '選擇對談對象',
+    sortLabel: '排序方式',
+    sortDefault: '預設順序',
+    sortYear: '出生年分',
+    sortName: '姓名字母',
+    sortField: '專長領域',
+    asc: '升序',
+    desc: '降序',
     placeholder: '向這位科學家提問...(Enter 送出,Shift+Enter 換行)',
     send: '送出',
     stop: '停止',
@@ -117,6 +124,13 @@ const T = {
     title: 'Talk with Scientists',
     subtitle: 'Physics · Math · Astronomy · Cosmology',
     roster: 'Choose a scientist',
+    sortLabel: 'Sort By',
+    sortDefault: 'Default',
+    sortYear: 'Birth Year',
+    sortName: 'Name',
+    sortField: 'Specialty',
+    asc: 'Ascending',
+    desc: 'Descending',
     placeholder: 'Ask this scientist... (Enter to send, Shift+Enter for newline)',
     send: 'Send',
     stop: 'Stop',
@@ -231,17 +245,34 @@ function renderText(text) {
   });
 }
 
-// Comic-style portrait avatar. Uses window.knSciAvatar (scientist-avatars.js)
-// for a recognizable SVG face; falls back to the coloured initial if the helper
-// or the id is missing. Works at any size (the circle wrapper clips the SVG).
-function SciAvatar({ id, accent, name, size = 38, className = '' }) {
+// Comic-style portrait avatar. Loads the generated PNG from the /avatars/ folder
+// for a recognizable face; falls back to the procedural SVG or the coloured initial
+// if the helper or the id is missing. Works at any size (the circle wrapper clips the avatar).
+function SciAvatar({ id, accent, name, size = 38, className = '', onClick }) {
   const dim = typeof size === 'number' ? size + 'px' : size;
   const fontSize = (typeof size === 'number' ? Math.round(size * 0.42) : 16) + 'px';
+  const extraClass = onClick ? ' clickable' : '';
   // The auto-assign persona has no portrait; show a route/shuffle glyph instead.
   if (id === AUTO_ID) {
     return (
-      <span className={'sci-avatar auto ' + className} style={{ width: dim, height: dim }}>
+      <span className={'sci-avatar auto ' + className + extraClass} style={{ width: dim, height: dim }} onClick={onClick}>
         <IconShuffle />
+      </span>
+    );
+  }
+  // If the scientist is known, render the generated premium PNG avatar.
+  if (id && window.knSciAvatarHas && window.knSciAvatarHas(id)) {
+    return (
+      <span
+        className={'sci-avatar ' + className + extraClass}
+        style={{ width: dim, height: dim, background: 'transparent', overflow: 'hidden' }}
+        onClick={onClick}
+      >
+        <img
+          src={`/avatars/${id}.png`}
+          alt={name || id}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
       </span>
     );
   }
@@ -249,15 +280,16 @@ function SciAvatar({ id, accent, name, size = 38, className = '' }) {
   if (svg) {
     return (
       <span
-        className={'sci-avatar ' + className}
+        className={'sci-avatar ' + className + extraClass}
         style={{ width: dim, height: dim, background: 'transparent', overflow: 'hidden' }}
         dangerouslySetInnerHTML={{ __html: svg }}
+        onClick={onClick}
       />
     );
   }
   const initial = String(name || id || '?').trim().charAt(0).toUpperCase();
   return (
-    <span className={'sci-avatar ' + className} style={{ width: dim, height: dim, fontSize, background: accent || 'var(--accent)' }}>
+    <span className={'sci-avatar ' + className + extraClass} style={{ width: dim, height: dim, fontSize, background: accent || 'var(--accent)' }} onClick={onClick}>
       {initial}
     </span>
   );
@@ -431,13 +463,49 @@ function SciAppRoot() {
   const [health, setHealth] = useState('checking'); // 'checking' | 'online' | 'offline'
   const [models, setModels] = useState({ zh: '', en: '' });
   const [scientists, setScientists] = useState([]);
-  const [selectedId, setSelectedId] = useState(persisted.selectedId || '');
+  
+  const [sortBy, setSortBy] = useState('default'); // 'default' | 'year' | 'alphabet' | 'specialty'
+  const [sortOrder, setSortOrder] = useState('asc'); // 'asc' | 'desc'
+
+  const sortedScientists = useMemo(() => {
+    if (sortBy === 'default') {
+      return sortOrder === 'asc' ? scientists : [...scientists].reverse();
+    }
+    const list = [...scientists];
+    list.sort((a, b) => {
+      let valA, valB;
+      if (sortBy === 'year') {
+        const parseBirthYear = (yearsStr) => {
+          if (!yearsStr) return Infinity;
+          const match = yearsStr.match(/^-?\d+/);
+          return match ? parseInt(match[0], 10) : Infinity;
+        };
+        valA = parseBirthYear(a.years);
+        valB = parseBirthYear(b.years);
+      } else if (sortBy === 'alphabet') {
+        valA = nameFor(a, 'en').toLowerCase();
+        valB = nameFor(b, 'en').toLowerCase();
+      } else if (sortBy === 'specialty') {
+        valA = fieldsFor(a, lang).toLowerCase();
+        valB = fieldsFor(b, lang).toLowerCase();
+      }
+
+      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return list;
+  }, [scientists, sortBy, sortOrder, lang]);
+
+  const selectedIdState = useState(persisted.selectedId || '');
+  const selectedId = selectedIdState[0], setSelectedId = selectedIdState[1];
   const [messages, setMessages] = useState(Array.isArray(persisted.messages) ? persisted.messages : []); // {role:'user'|'sci'|'notice', text, kind?}
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [usage, setUsage] = useState(persisted.usage || 0);
   const [activeModel, setActiveModel] = useState(persisted.activeModel || '');
   const [showSettings, setShowSettings] = useState(false);
+  const [bioId, setBioId] = useState(null);
 
   // 'chat' (live single conversation) | 'favorites' (saved threads)
   const [view, setView] = useState('chat');
@@ -1074,7 +1142,7 @@ function SciAppRoot() {
       {view === 'favorites' ? (
         <div className="sci-favorites">
           {openFav ? (
-            <FavReader fav={openFav} tr={tr} lang={lang} onBack={() => setOpenFav(null)} onResume={() => resumeFavorite(openFav)} onDelete={() => deleteFavorite(openFav.id)} />
+            <FavReader fav={openFav} tr={tr} lang={lang} onBack={() => setOpenFav(null)} onResume={() => resumeFavorite(openFav)} onDelete={() => deleteFavorite(openFav.id)} onBio={setBioId} />
           ) : favorites.length === 0 ? (
             <div className="sci-empty"><h2>{tr.favEmptyTitle}</h2><p>{tr.favEmptyBody}</p></div>
           ) : (
@@ -1089,7 +1157,7 @@ function SciAppRoot() {
         <DiscussView
           tr={tr}
           lang={lang}
-          scientists={scientists}
+          scientists={sortedScientists}
           panel={panel}
           panelScientists={panelScientists}
           onToggle={togglePanelMember}
@@ -1114,11 +1182,36 @@ function SciAppRoot() {
           setShowPicker={setShowPanelPicker}
           onRetry={loadBackend}
           onSettings={() => setShowSettings(true)}
+          onBio={setBioId}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          sortOrder={sortOrder}
+          setSortOrder={setSortOrder}
         />
       ) : (
       <div className="sci-body">
         <nav className="sci-roster">
           <div className="sci-roster-label">{tr.roster}</div>
+          <div className="sci-sort-container">
+            <select
+              className="sci-sort-select"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              aria-label={tr.sortLabel}
+            >
+              <option value="default">{tr.sortDefault}</option>
+              <option value="year">{tr.sortYear}</option>
+              <option value="alphabet">{tr.sortName}</option>
+              <option value="specialty">{tr.sortField}</option>
+            </select>
+            <button
+              className="sci-sort-order-btn"
+              onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+              title={sortOrder === 'asc' ? tr.asc : tr.desc}
+            >
+              {sortOrder === 'asc' ? '↑' : '↓'}
+            </button>
+          </div>
           {scientists.length > 0 && (
             <button
               className={'sci-card sci-card-auto' + (isAuto ? ' active' : '')}
@@ -1131,13 +1224,22 @@ function SciAppRoot() {
               </span>
             </button>
           )}
-          {scientists.map((s) => (
+          {sortedScientists.map((s) => (
             <button
               key={s.id}
               className={'sci-card' + (s.id === selectedId ? ' active' : '')}
               onClick={() => selectScientist(s.id)}
             >
-              <SciAvatar id={s.id} accent={s.accent} name={(s.name && s.name.en) || s.id} size={38} />
+              <SciAvatar
+                id={s.id}
+                accent={s.accent}
+                name={(s.name && s.name.en) || s.id}
+                size={38}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setBioId(s.id);
+                }}
+              />
               <span className="who">
                 <div className="nm">{nameFor(s, lang)}</div>
                 <div className="meta">{s.years} · {fieldsFor(s, lang)}</div>
@@ -1155,15 +1257,47 @@ function SciAppRoot() {
               onChange={(e) => selectScientist(e.target.value)}
             >
               {scientists.length > 0 && <option value={AUTO_ID}>{nameFor(AUTO_PERSONA, lang)}</option>}
-              {scientists.map((s) => (
+              {sortedScientists.map((s) => (
                 <option key={s.id} value={s.id}>{nameFor(s, lang)} · {s.years}</option>
               ))}
             </select>
 
+            <div className="sci-sort-container mobile-only">
+              <select
+                className="sci-sort-select"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                aria-label={tr.sortLabel}
+              >
+                <option value="default">{tr.sortDefault}</option>
+                <option value="year">{tr.sortYear}</option>
+                <option value="alphabet">{tr.sortName}</option>
+                <option value="specialty">{tr.sortField}</option>
+              </select>
+              <button
+                className="sci-sort-order-btn"
+                onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                title={sortOrder === 'asc' ? tr.asc : tr.desc}
+              >
+                {sortOrder === 'asc' ? '↑' : '↓'}
+              </button>
+            </div>
+
             {selected && (
-              <div className="who">
-                <div className="nm">{nameFor(selected, lang)}</div>
-                <div className="meta">{fieldsFor(selected, lang)}</div>
+              <div className="sci-head-who-wrap" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {selected.id !== AUTO_ID && (
+                  <SciAvatar
+                    id={selected.id}
+                    accent={selected.accent}
+                    name={nameFor(selected, lang)}
+                    size={32}
+                    onClick={() => setBioId(selected.id)}
+                  />
+                )}
+                <div className="who">
+                  <div className="nm">{nameFor(selected, lang)}</div>
+                  <div className="meta">{fieldsFor(selected, lang)}</div>
+                </div>
               </div>
             )}
             <div className="spacer" />
@@ -1233,7 +1367,7 @@ function SciAppRoot() {
               const sciAccent = m.accent || (selected && selected.accent);
               return (
                 <div key={i} className="sci-msg sci">
-                  <SciAvatar id={sciId} accent={sciAccent} name={m.name || (selected && (selected.name && selected.name.en))} size={30} />
+                  <SciAvatar id={sciId} accent={sciAccent} name={m.name || (selected && (selected.name && selected.name.en))} size={30} onClick={sciId !== AUTO_ID ? () => setBioId(sciId) : undefined} />
                   <div className="sci-bubble-wrap">
                     {m.name && <div className="sci-speaker">{m.name}</div>}
                     <div className="sci-bubble">
@@ -1287,6 +1421,15 @@ function SciAppRoot() {
           }}
         />
       )}
+
+      {bioId && (
+        <BioModal
+          id={bioId}
+          scientists={scientists}
+          lang={lang}
+          onClose={() => setBioId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1330,7 +1473,7 @@ function FavCard({ fav, tr, lang, onOpen, onResume, onDelete }) {
 }
 
 // Full transcript of one saved thread, with resume / delete.
-function FavReader({ fav, tr, lang, onBack, onResume, onDelete }) {
+function FavReader({ fav, tr, lang, onBack, onResume, onDelete, onBio }) {
   const isDiscuss = fav.mode === 'discuss';
   return (
     <div className="sci-fav-reader">
@@ -1346,7 +1489,7 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete }) {
       </div>
       <div className="sci-scroll fav-reader-scroll">
         {isDiscuss ? (
-          <DiscussMessages messages={fav.messages || []} tr={tr} lang={lang} streaming={false} />
+          <DiscussMessages messages={fav.messages || []} tr={tr} lang={lang} streaming={false} onBio={onBio} />
         ) : (
           (fav.messages || []).map((m, i) => {
             if (m.role === 'notice') {
@@ -1367,7 +1510,7 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete }) {
             const sacc = m.accent || fav.accent;
             return (
               <div key={i} className="sci-msg sci">
-                <SciAvatar id={sid} accent={sacc} name={m.name || fav.name} size={30} />
+                <SciAvatar id={sid} accent={sacc} name={m.name || fav.name} size={30} onClick={sid !== AUTO_ID ? () => onBio(sid) : undefined} />
                 <div className="sci-bubble-wrap">
                   {m.name && <div className="sci-speaker">{m.name}</div>}
                   <div className="sci-bubble">{renderText(m.text)}</div>
@@ -1385,7 +1528,7 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete }) {
 // Science Dialogue view and by saved-thread playback). Speaker turns carry the
 // speaking scientist's avatar + name; the closing synthesis renders as a
 // distinct "conclusion" card.
-function DiscussMessages({ messages, tr, lang, streaming }) {
+function DiscussMessages({ messages, tr, lang, streaming, onBio }) {
   let lastSci = -1;
   for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].role === 'sci') { lastSci = i; break; } }
   return messages.map((m, i) => {
@@ -1415,7 +1558,7 @@ function DiscussMessages({ messages, tr, lang, streaming }) {
       return (
         <div key={i} className="sci-conclusion">
           <div className="cc-head">
-            <SciAvatar id={m.id} accent={m.accent} name={m.name} size={26} />
+            <SciAvatar id={m.id} accent={m.accent} name={m.name} size={26} onClick={onBio ? () => onBio(m.id) : undefined} />
             <span className="cc-title">{tr.conclusion} · {m.name}</span>
           </div>
           <div className="cc-body">{renderText(m.text)}{typing && <span className="sci-typing" />}</div>
@@ -1424,7 +1567,7 @@ function DiscussMessages({ messages, tr, lang, streaming }) {
     }
     return (
       <div key={i} className="sci-msg sci discuss">
-        <SciAvatar id={m.id} accent={m.accent} name={m.name} size={30} />
+        <SciAvatar id={m.id} accent={m.accent} name={m.name} size={30} onClick={onBio ? () => onBio(m.id) : undefined} />
         <div className="sci-bubble-wrap">
           <div className="sci-speaker">{m.name}</div>
           <div className="sci-bubble">{renderText(m.text)}{typing && <span className="sci-typing" />}</div>
@@ -1441,7 +1584,8 @@ function DiscussView({
   tr, lang, scientists, panel, panelScientists, onToggle, messages, input, setInput,
   streaming, usage, activeModel, health, backendUrl, statusLabel, statusClass,
   onSend, onStop, onKey, onClear, onSummarize, onSave, followups, showPicker, setShowPicker,
-  onRetry, onSettings,
+  onRetry, onSettings, onBio,
+  sortBy, setSortBy, sortOrder, setSortOrder,
 }) {
   const scrollRef = useRef(null);
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, streaming]);
@@ -1452,6 +1596,26 @@ function DiscussView({
     <div className="sci-body">
       <nav className="sci-roster sci-roster-discuss">
         <div className="sci-roster-label">{tr.discussRoster}</div>
+        <div className="sci-sort-container">
+          <select
+            className="sci-sort-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            aria-label={tr.sortLabel}
+          >
+            <option value="default">{tr.sortDefault}</option>
+            <option value="year">{tr.sortYear}</option>
+            <option value="alphabet">{tr.sortName}</option>
+            <option value="specialty">{tr.sortField}</option>
+          </select>
+          <button
+            className="sci-sort-order-btn"
+            onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+            title={sortOrder === 'asc' ? tr.asc : tr.desc}
+          >
+            {sortOrder === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
         {scientists.map((s) => {
           const on = panel.includes(s.id);
           return (
@@ -1536,7 +1700,7 @@ function DiscussView({
             </div>
           )}
 
-          <DiscussMessages messages={messages} tr={tr} lang={lang} streaming={streaming} />
+          <DiscussMessages messages={messages} tr={tr} lang={lang} streaming={streaming} onBio={onBio} />
 
           {/* On-topic follow-up topics drawn from the discussion so far. */}
           {!streaming && followups && followups.length > 0 && (
@@ -1574,6 +1738,11 @@ function DiscussView({
           panel={panel}
           onToggle={onToggle}
           onClose={() => setShowPicker(false)}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          sortOrder={sortOrder}
+          setSortOrder={setSortOrder}
+          onBio={onBio}
         />
       )}
     </div>
@@ -1582,12 +1751,32 @@ function DiscussView({
 
 // Modal list to add/remove panel members (the primary control on mobile, where
 // the roster column is hidden).
-function PanelPicker({ tr, lang, scientists, panel, onToggle, onClose }) {
+function PanelPicker({ tr, lang, scientists, panel, onToggle, onClose, sortBy, setSortBy, sortOrder, setSortOrder, onBio }) {
   const full = panel.length >= DISCUSS_MAX;
   return (
     <div className="sci-modal-backdrop" onClick={onClose}>
       <div className="sci-modal sci-panel-modal" onClick={(e) => e.stopPropagation()}>
         <h3>{tr.managePanel}</h3>
+        <div className="sci-sort-container" style={{ borderBottom: 'none', paddingBottom: 0, marginBottom: 12 }}>
+          <select
+            className="sci-sort-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            aria-label={tr.sortLabel}
+          >
+            <option value="default">{tr.sortDefault}</option>
+            <option value="year">{tr.sortYear}</option>
+            <option value="alphabet">{tr.sortName}</option>
+            <option value="specialty">{tr.sortField}</option>
+          </select>
+          <button
+            className="sci-sort-order-btn"
+            onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+            title={sortOrder === 'asc' ? tr.asc : tr.desc}
+          >
+            {sortOrder === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
         {full && <div className="sci-notice summary" style={{ alignSelf: 'flex-start' }}>{tr.panelFull}</div>}
         <div className="sci-panel-list">
           {scientists.map((s) => {
@@ -1599,7 +1788,16 @@ function PanelPicker({ tr, lang, scientists, panel, onToggle, onClose }) {
                 onClick={() => onToggle(s.id)}
                 disabled={!on && full}
               >
-                <SciAvatar id={s.id} accent={s.accent} name={(s.name && s.name.en) || s.id} size={34} />
+                <SciAvatar
+                  id={s.id}
+                  accent={s.accent}
+                  name={(s.name && s.name.en) || s.id}
+                  size={34}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onBio) onBio(s.id);
+                  }}
+                />
                 <span className="who">
                   <div className="nm">{nameFor(s, lang)}</div>
                   <div className="meta">{fieldsFor(s, lang)}</div>
@@ -1629,6 +1827,50 @@ function SettingsModal({ tr, initial, onClose, onSave }) {
         <div className="row">
           <button className="sci-iconbtn" onClick={onClose}>{tr.cancel}</button>
           <button className="sci-send" onClick={() => onSave(url)}>{tr.save}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BioModal({ id, scientists, lang, onClose }) {
+  const s = (scientists || []).find((x) => x.id === id);
+  if (!s) return null;
+  const name = nameFor(s, lang);
+  const fields = fieldsFor(s, lang);
+  const blurb = blurbFor(s, lang);
+  return (
+    <div className="sci-modal-backdrop" onClick={onClose}>
+      <div className="sci-modal bio-modal" onClick={(e) => e.stopPropagation()} style={{ borderColor: s.accent || 'var(--accent)' }}>
+        <button className="bio-close" onClick={onClose} aria-label="close">&times;</button>
+        <div className="bio-modal-content">
+          <div className="bio-avatar-container" style={{ background: `linear-gradient(135deg, ${(s.accent || '#7db3ff')}44, ${(s.accent || '#7db3ff')}11)` }}>
+            <SciAvatar id={id} accent={s.accent} name={name} size={110} />
+          </div>
+          <div className="bio-info">
+            <h2 className="bio-name">{name}</h2>
+            <div className="bio-years">{s.years}</div>
+            <div className="bio-fields-badge" style={{ backgroundColor: `${(s.accent || '#7db3ff')}22`, color: s.accent || 'var(--accent)', border: `1px solid ${(s.accent || '#7db3ff')}44` }}>
+              {fields}
+            </div>
+            <p className="bio-blurb">{blurb}</p>
+            {s.details && s.details[lang] && (
+              <div className="bio-details-sections">
+                <div className="bio-detail-section">
+                  <h4>{lang === 'zh' ? '生平背景' : 'Life & Background'}</h4>
+                  <p>{s.details[lang].life}</p>
+                </div>
+                <div className="bio-detail-section">
+                  <h4>{lang === 'zh' ? '研究專長' : 'Areas of Expertise'}</h4>
+                  <p>{s.details[lang].expertise}</p>
+                </div>
+                <div className="bio-detail-section">
+                  <h4>{lang === 'zh' ? '主要成就' : 'Key Achievements'}</h4>
+                  <p>{s.details[lang].achievements}</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

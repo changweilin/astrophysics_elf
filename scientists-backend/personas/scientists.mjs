@@ -18,8 +18,20 @@ export const SCIENTISTS = [
     fields: { zh: '相對論 / 重力 / 量子', en: 'Relativity / Gravity / Quantum' },
     accent: '#6fb1ff',
     blurb: {
-      zh: '狹義與廣義相對論之父,擅長用思想實驗拆解時空與重力。',
+      zh: '狹義與廣義相對論之父，擅長用思想實驗拆解時空與重力。',
       en: 'Father of special and general relativity; reasons through thought experiments about spacetime and gravity.',
+    },
+    details: {
+      zh: {
+        life: '1879年出生於德國烏姆的猶太人家庭。在瑞士聯邦理工學院畢業後，於瑞士專利局任職期間發表了多篇開創性論文。1933年為躲避納粹而移居美國，任職於普林斯頓高等研究院，直至逝世。',
+        expertise: '理論物理學、時空幾何學、熱力學與統計力學。擅長使用直觀的「思想實驗」來推導極具革命性的物理規律。',
+        achievements: '提出狹義與廣義相對論，解釋了光電效應（獲1921年諾貝爾物理學獎），解釋了布朗運動，並奠定了現代宇宙學與量子力學的基礎。'
+      },
+      en: {
+        life: 'Born to a Jewish family in Ulm, Germany in 1879. After graduating from ETH Zurich, he published his groundbreaking papers while working as a patent clerk in Bern. In 1933, he emigrated to the US to escape the Nazi regime and joined the Institute for Advanced Study in Princeton.',
+        expertise: 'Theoretical physics, geometry of spacetime, and statistical mechanics. Renowned for using intuitive "thought experiments" to derive revolutionary physical laws.',
+        achievements: 'Developed special and general relativity, explained the photoelectric effect (Nobel Prize in 1921), analyzed Brownian motion, and laid the foundations for modern cosmology and quantum mechanics.'
+      }
     },
     persona:
       'You are Albert Einstein. You think in vivid Gedankenexperimente (riding a light beam, the falling elevator), '
@@ -46,8 +58,20 @@ export const SCIENTISTS = [
     fields: { zh: '量子電動力學 / 物理教學', en: 'QED / Physics teaching' },
     accent: '#ffb86b',
     blurb: {
-      zh: '量子電動力學奠基者,最會把艱深物理講成生活直覺。',
+      zh: '量子電動力學奠基者，最會把艱深物理講成生活直覺。',
       en: 'QED pioneer and the great explainer; turns hard physics into everyday intuition.',
+    },
+    details: {
+      zh: {
+        life: '1918年出生於紐約。二戰期間參與了曼哈頓計劃，後任職於康乃爾大學與加州理工學院。他以特立獨行的個性、熱愛森巴鼓和破解保險箱著稱。',
+        expertise: '量子電動力學、量子計算、粒子物理學、科普教育。倡導直覺理解與「不能解釋給大一學生聽就代表你沒懂」的物理教學法。',
+        achievements: '共同開發量子電動力學（獲1965年諾貝爾物理學獎），發明了直觀描述粒子交互作用的「費曼圖」，提出路徑積分表述，並預言了奈米技術與量子計算。'
+      },
+      en: {
+        life: 'Born in New York in 1918. He worked on the Manhattan Project during WWII and later taught at Cornell and Caltech. Known for his eccentric personality, love of bongo drums, and safecracking.',
+        expertise: 'Quantum electrodynamics, quantum computing, particle physics, and physics pedagogy. Famous for the Feynman technique of learning through simple explanations.',
+        achievements: 'Co-developed quantum electrodynamics (Nobel Prize in 1965), invented Feynman diagrams for particle interactions, developed the path-integral formulation, and pioneered nanotechnology and quantum computing.'
+      }
     },
     persona:
       'You are Richard Feynman. You explain from first principles with concrete, hands-on analogies, refuse to hide behind '
@@ -72,8 +96,20 @@ export const SCIENTISTS = [
     fields: { zh: '古典力學 / 重力 / 光學 / 微積分', en: 'Mechanics / Gravity / Optics / Calculus' },
     accent: '#9d8cff',
     blurb: {
-      zh: '古典力學與萬有引力的建立者,也是微積分的共同發明人。',
+      zh: '古典力學與萬有引力的建立者，也是微積分的共同發明人。',
       en: 'Built classical mechanics and universal gravitation; co-invented the calculus.',
+    },
+    details: {
+      zh: {
+        life: '1643年出生於英格蘭林肯郡。在劍橋大學三一學院就讀，為避瘟疫回到家鄉期間迎來了他研究的黃金兩年。曾任皇家造幣廠廠長及皇家學會會長。',
+        expertise: '數學、古典力學、光學、天體物理。發展出以幾何和幾何流數法為基礎的嚴謹演繹科學方法。',
+        achievements: '撰寫《自然哲學的數學原理》，確立了三大運動定律與萬有引力定律；共同發明微積分；發明反射望遠鏡並創立了光的微粒說與顏色理論。'
+      },
+      en: {
+        life: 'Born in Lincolnshire, England in 1643. He studied at Trinity College, Cambridge. During the Great Plague, he retreated to his birthplace, initiating his two golden years of discoveries. Later served as Master of the Mint and President of the Royal Society.',
+        expertise: 'Mathematics, classical mechanics, optics, and astronomy. Developed a rigorous deductive scientific method based on geometry and his method of fluxions.',
+        achievements: 'Authored the "Principia", establishing the three laws of motion and universal gravitation; co-invented calculus; invented the reflecting telescope; and formulated the particle theory of light.'
+      }
     },
     persona:
       'You are Isaac Newton. You are rigorous, geometric, and methodical, fond of deriving results "by the method of fluxions" '
@@ -98,8 +134,20 @@ export const SCIENTISTS = [
     fields: { zh: '觀測天文 / 運動學', en: 'Observational astronomy / Kinematics' },
     accent: '#ff8da3',
     blurb: {
-      zh: '近代觀測天文學之父,以望遠鏡與斜面實驗推翻舊宇宙觀。',
+      zh: '近代觀測天文學之父，以望遠鏡與斜面實驗推翻舊宇宙觀。',
       en: 'Father of observational astronomy; overturned the old cosmos with telescope and inclined-plane experiments.',
+    },
+    details: {
+      zh: {
+        life: '1564年出生於義大利比薩。曾任教於比薩大學與帕多瓦大學。因公開支持哥白尼的日心說，晚年遭教廷宗教裁判所判處終身軟禁。',
+        expertise: '觀測天文學、實驗運動學、科學方法論。堅信自然界的規律是用數學語言寫成的，強調系統性實驗的重要性。',
+        achievements: '改良望遠鏡並發現了木星的四顆衛星、金星的相位與太陽黑子；提出慣性原理的前身；通過斜面與落體實驗推翻了亞里斯多德的運動論。'
+      },
+      en: {
+        life: 'Born in Pisa, Italy in 1564. He taught at the Universities of Pisa and Padua. For advocating Copernicus\' heliocentric system, he was convicted of heresy by the Roman Inquisition and spent his final years under house arrest.',
+        expertise: 'Observational astronomy, experimental kinematics, and scientific methodology. Believed the book of nature is written in mathematics and pioneered empirical testing.',
+        achievements: 'Improved the telescope, discovering Jupiter\'s four largest moons, the phases of Venus, and sunspots; formulated early concepts of inertia; and disproved Aristotelian physics through falling-body experiments.'
+      }
     },
     persona:
       'You are Galileo Galilei. You trust the telescope and the experiment over authority, delight in the moons of Jupiter and '
@@ -123,8 +171,20 @@ export const SCIENTISTS = [
     fields: { zh: '行星運動 / 天體力學', en: 'Planetary motion / Celestial mechanics' },
     accent: '#7fd6c2',
     blurb: {
-      zh: '以三大定律描述行星橢圓軌道,連結幾何與天文。',
+      zh: '以三大定律描述行星橢圓軌道，連結幾何與天文。',
       en: 'Described planetary orbits with his three laws, uniting geometry and astronomy.',
+    },
+    details: {
+      zh: {
+        life: '1571年出生於神聖羅馬帝國威爾。曾擔任第谷·布拉赫的助手，在第谷逝世後繼承其觀測數據並接任皇家數學家職務。一生在宗教與戰爭動盪中困頓掙扎。',
+        expertise: '天體力學、幾何光學、天文數學。致力於尋找宇宙背後的幾何幾何結構與上帝的和諧規律。',
+        achievements: '提出著名的行星運動三大定律（橢圓軌道、面積定律、調和定律），為牛頓的萬有引力提供了理論基石；改良了折射望遠鏡並發表了光學理論。'
+      },
+      en: {
+        life: 'Born in Weil der Stadt, Germany in 1571. Worked as an assistant to Tycho Brahe and succeeded him as Imperial Mathematician. Struggled with financial difficulties and religious turmoil throughout his life.',
+        expertise: 'Celestial mechanics, geometrical optics, and mathematical astronomy. Dedicated to uncovering the geometric harmony and divine order of the heavens.',
+        achievements: 'Formulated the three laws of planetary motion, providing the foundation for Newton\'s gravity; improved the refracting telescope (Keplerian telescope); and published fundamental theories of optics.'
+      }
     },
     persona:
       'You are Johannes Kepler. You search for the harmony and geometry behind the heavens, derived the elliptical orbits from '
@@ -147,8 +207,20 @@ export const SCIENTISTS = [
     fields: { zh: '日心說 / 天文', en: 'Heliocentrism / Astronomy' },
     accent: '#c7b06f',
     blurb: {
-      zh: '提出日心模型,將地球從宇宙中心移開。',
+      zh: '提出日心模型，將地球從宇宙中心移開。',
       en: 'Proposed the heliocentric model, moving Earth from the centre of the cosmos.',
+    },
+    details: {
+      zh: {
+        life: '1473年出生於波蘭托倫。曾在義大利多所大學學習法律、醫學與天文。回國後擔任瓦爾米亞教區聖堂參議會神職人員，主要在弗龍堡從事學術與管理工作。',
+        expertise: '天文觀測、幾何建模、數學。追求宇宙模型的簡潔性與美學和諧。',
+        achievements: '發表《天體運行論》，提出日心說模型，成功解釋了行星的公轉與逆行運動，將地球從宇宙中心移除，引發了科學革命的開端。'
+      },
+      en: {
+        life: 'Born in Toruń, Poland in 1473. He studied law, medicine, and astronomy at Italian universities. Upon returning, he served as a canon in Frombork, where he conducted his research and administrative duties.',
+        expertise: 'Astronomical observation, geometric modeling, and mathematics. Pursued aesthetic harmony and simplicity in models of the cosmos.',
+        achievements: 'Published "De revolutionibus orbium coelestium", proposing the heliocentric system, explaining planetary retrograde motion, and shifting Earth away from the center of the universe.'
+      }
     },
     persona:
       'You are Nicolaus Copernicus. You favour a Sun-centred cosmos for its simplicity and harmony, are careful and cautious in '
@@ -169,8 +241,20 @@ export const SCIENTISTS = [
     fields: { zh: '星系 / 宇宙膨脹', en: 'Galaxies / Cosmic expansion' },
     accent: '#8fb4ff',
     blurb: {
-      zh: '證實銀河外星系存在,發現宇宙膨脹的哈伯定律。',
+      zh: '證實銀河外星系存在，發現宇宙膨脹的哈伯定律。',
       en: 'Proved galaxies exist beyond the Milky Way; found the expansion law that bears his name.',
+    },
+    details: {
+      zh: {
+        life: '1889年出生於美國密蘇里州。在牛津大學攻讀法律後轉投天文學。二戰期間服役於美軍，在威爾遜山天文台利用當時世界最大的望遠鏡進行觀測。',
+        expertise: '觀測天文學、星系形態學、光譜觀測。擅長處理天文底片數據，專注於測量遙遠天體的紅移與光度。',
+        achievements: '證實銀河系外「島宇宙」（星系）的存在；發現遠方星系的退行速度與距離成正比（哈伯定律），提供了宇宙膨脹的第一手觀測證據。'
+      },
+      en: {
+        life: 'Born in Missouri, USA in 1889. He studied law at Oxford as a Rhodes Scholar before pursuing astronomy. Served in the military during both World Wars and conducted observations at Mount Wilson Observatory.',
+        expertise: 'Observational astronomy, galaxy morphology, and spectroscopy. Expert in photographic data, focusing on measurement of galactic distances and redshifts.',
+        achievements: 'Proved the existence of galaxies beyond the Milky Way; discovered the linear relationship between galactic distance and recession velocity (Hubble\'s Law), proving cosmic expansion.'
+      }
     },
     persona:
       'You are Edwin Hubble. You speak as the observer at the great telescopes, measuring redshifts and Cepheids, and you frame '
@@ -192,8 +276,20 @@ export const SCIENTISTS = [
     fields: { zh: '黑洞 / 宇宙學 / 量子重力', en: 'Black holes / Cosmology / Quantum gravity' },
     accent: '#a0a8ff',
     blurb: {
-      zh: '黑洞輻射與奇點理論的代表人物,擅長深入淺出談宇宙。',
+      zh: '黑洞輻射與奇點理論的代表人物，擅長深入淺出談宇宙。',
       en: 'Known for black-hole radiation and singularity theorems; a master of accessible cosmology.',
+    },
+    details: {
+      zh: {
+        life: '1942年出生於英國牛津。21歲時被診斷出患有漸凍症，醫生預言只能活兩年。他以驚人的毅力與漸凍症對抗了五十餘年，並長期擔任劍橋大學盧卡斯數學教授。',
+        expertise: '廣義相對論、黑洞物理學、量子宇宙學。擅長將量子力學效應與宏觀的重力場幾何結合。',
+        achievements: '證明黑洞並非完全黑暗，而是會發射輻射並逐漸蒸發（霍金輻射）；與潘洛斯共同證明廣義相對論中的奇點定理；發表科普鉅著《時間簡史》。'
+      },
+      en: {
+        life: 'Born in Oxford, England in 1942. Diagnosed with motor neurone disease (ALS) at age 21 and given two years to live, he defied the diagnosis for over 50 years. He held the prestigious post of Lucasian Professor of Mathematics at Cambridge.',
+        expertise: 'General relativity, black-hole thermodynamics, and quantum cosmology. Specialized in applying quantum theory to strong gravitational fields.',
+        achievements: 'Proved that black holes emit thermal radiation and can evaporate (Hawking radiation); proved singularity theorems with Penrose; and authored the bestseller "A Brief History of Time".'
+      }
     },
     persona:
       'You are Stephen Hawking. You combine deep results on black holes and the early universe with dry British wit and a gift '
@@ -216,8 +312,20 @@ export const SCIENTISTS = [
     fields: { zh: '恆星結構 / 緻密天體', en: 'Stellar structure / Compact objects' },
     accent: '#ffd17f',
     blurb: {
-      zh: '導出白矮星質量上限(錢德拉塞卡極限),恆星演化理論巨擘。',
+      zh: '導出白矮星質量上限（錢德拉塞卡極限），恆星演化理論巨擘。',
       en: 'Derived the white-dwarf mass limit; a giant of stellar-structure theory.',
+    },
+    details: {
+      zh: {
+        life: '1910年出生於英屬印度拉合爾。19歲乘船前往英國留學期間，在甲板上心算出了白矮星的質量上限。後半生在美國芝加哥大學與葉凱士天文台從事研究與教學。',
+        expertise: '恆星內部結構與演化、相對論性天體物理、輻射轉移。以極致的數學嚴謹性與系統性研究著稱。',
+        achievements: '導出白矮星的最大穩定質量上限（錢德拉塞卡極限，約1.4倍太陽質量），證明了大質量恆星必然塌縮成中子星或黑洞；榮獲1983年諾貝爾物理學獎。'
+      },
+      en: {
+        life: 'Born in Lahore, British India in 1910. At age 19, during his voyage to England, he calculated the mass limit of white dwarfs on deck. He spent most of his career researching and teaching at the University of Chicago.',
+        expertise: 'Stellar structure and evolution, relativistic astrophysics, and radiative transfer. Celebrated for his absolute mathematical rigor and exhaustive monographs.',
+        achievements: 'Derived the maximum mass of a stable white dwarf star (Chandrasekhar limit, ~1.4 solar masses), proving massive stars collapse into neutron stars or black holes; awarded the Nobel Prize in 1983.'
+      }
     },
     persona:
       'You are Subrahmanyan Chandrasekhar. You are precise, formal, and deeply analytical, at home in the mathematics of stellar '
@@ -241,8 +349,20 @@ export const SCIENTISTS = [
     fields: { zh: '行星科學 / 科普 / 宇宙學', en: 'Planetary science / Science communication / Cosmology' },
     accent: '#7fd0ff',
     blurb: {
-      zh: '《宇宙》的說書人,以詩意而嚴謹的口吻帶人認識宇宙。',
+      zh: '《宇宙》的說書人，以詩意而嚴謹的口吻帶人認識宇宙。',
       en: 'The storyteller of "Cosmos"; poetic yet rigorous guide to the universe.',
+    },
+    details: {
+      zh: {
+        life: '1934年出生於紐約。曾任康乃爾大學教授，是NASA多個無人太空探測器計劃（航海家、海盜號）的顧問。致力於倡導理性懷疑主義與外星生命探測。',
+        expertise: '行星天文學、大氣物理、天文生物學、科學傳播。擅長以富有詩意和哲學思辨的文字向大眾介紹宇宙學與生命起源。',
+        achievements: '解釋了金星的溫室效應與火星的季節變化；主導編製了航海家金唱片；策劃了著名的「暗淡藍點」地球照片；創作並主持了全球熱播的《宇宙》電視系列節目。'
+      },
+      en: {
+        life: 'Born in New York in 1934. He was a professor at Cornell University and an advisor to NASA for planetary missions (Voyager, Viking). Passionate advocate for scientific skepticism and the search for extraterrestrial life.',
+        expertise: 'Planetary science, atmospheric physics, astrobiology, and science communication. Known for bridging science with poetic philosophy and humanism.',
+        achievements: 'Discovered the runaway greenhouse effect on Venus; led the creation of the Voyager Golden Records; conceived the "Pale Blue Dot" photograph; and co-created the famous television series and book "Cosmos".'
+      }
     },
     persona:
       'You are Carl Sagan. You speak with poetic wonder ("billions and billions", the "pale blue dot"), insist on evidence and '
@@ -268,6 +388,18 @@ export const SCIENTISTS = [
       zh: '以星系自轉曲線提供暗物質存在的關鍵觀測證據。',
       en: 'Provided the rotation-curve evidence that made the case for dark matter.',
     },
+    details: {
+      zh: {
+        life: '1928年出生於費城。作為女性在當時的學術界遭遇了極大的性別歧視（如被拒絕進入普林斯頓研究生課程）。後加入卡內基科學研究所，終身為推動女性參與科學而努力。',
+        expertise: '星系動力學、觀測宇宙學、光譜測量。精通光譜儀操作，專門觀測旋渦星系的外圍恆星運動。',
+        achievements: '測量旋渦星系的自轉曲線，發現星系邊緣的旋轉速度並未隨距離下降，為宇宙中存在大量「暗物質」提供了首個無可爭議的觀測證據。'
+      },
+      en: {
+        life: 'Born in Philadelphia in 1928. She faced severe gender barriers in academia (e.g., banned from Princeton\'s graduate astronomy program). Later joined the Carnegie Institution, advocating for women in science throughout her life.',
+        expertise: 'Galaxy dynamics, observational cosmology, and slit spectroscopy. Expert in operating spectrographs to measure star velocities in spiral galaxies.',
+        achievements: 'Measured spiral galaxy rotation curves, showing flat velocity profiles at large distances, providing the first direct observational evidence for the existence of dark matter.'
+      }
+    },
     persona:
       'You are Vera Rubin. You speak as the patient observer of galaxy rotation curves, careful with data, generous to students, '
       + 'and quietly persistent about following anomalies wherever they lead.',
@@ -287,8 +419,20 @@ export const SCIENTISTS = [
     fields: { zh: '抽象代數 / 對稱與守恆', en: 'Abstract algebra / Symmetry & conservation' },
     accent: '#9fe0a0',
     blurb: {
-      zh: '證明對稱與守恆律的深刻聯繫(諾特定理),現代代數奠基者。',
+      zh: '證明對稱與守恆律的深刻聯繫（諾特定理），現代代數奠基者。',
       en: 'Proved the deep link between symmetry and conservation (Noether\'s theorem); founder of modern algebra.',
+    },
+    details: {
+      zh: {
+        life: '1882年出生於德國埃爾朗根的數學家家庭。因女性身分，她曾多年被拒絕給予正式教職和薪資，甚至只能用男教授的名義授課。1933年流亡美國後任職於布林莫爾學院。',
+        expertise: '抽象代數、變分法、數學物理。被愛因斯坦譽為歷史上最偉大的女性數學家。她徹底改變了代數的思考方式。',
+        achievements: '證明了物理學的核心定理「諾特定理」，揭示了每一個連續對稱性都對應著一個守恆定律（如時間不變性對應能量守恆），奠定了現代量子場論與相對論的基礎。'
+      },
+      en: {
+        life: 'Born in Erlangen, Germany in 1882. As a woman, she was denied paid academic positions for years, often lecturing under male colleagues\' names. In 1933, she fled Nazi Germany and joined Bryn Mawr College in the US.',
+        expertise: 'Abstract algebra, calculus of variations, and mathematical physics. Praised by Einstein as the most significant creative mathematical genius since the higher education of women began.',
+        achievements: 'Formulated Noether\'s theorem, proving that every continuous symmetry of a physical system corresponds to a conservation law (e.g., time symmetry implies energy conservation), a foundation of modern physics.'
+      }
     },
     persona:
       'You are Emmy Noether. You think structurally and abstractly, love uncovering the symmetry behind a conservation law, and '
@@ -302,6 +446,138 @@ export const SCIENTISTS = [
       'momentum conservation', 'energy conservation', 'gauge', 'continuous symmetry',
       '對稱', '守恆', '諾特定理', '不變性', '群', '代數', '環', '理想', '拉格朗日', '動量守恆', '能量守恆',
       '規範', '連續對稱',
+    ],
+  },
+  {
+    id: 'leavitt',
+    name: { zh: '利維特', en: 'Henrietta Swan Leavitt' },
+    years: '1868-1921',
+    fields: { zh: '恆星光度學 / 造父變星', en: 'Stellar photometry / Cepheid variables' },
+    accent: '#d3a4ff',
+    blurb: {
+      zh: '發現造父變星的周光關係，為測量宇宙尺度奠定了基礎。',
+      en: 'Discovered the period-luminosity relation of Cepheid variables, laying the foundation for cosmic distance scales.',
+    },
+    details: {
+      zh: {
+        life: '1868年出生於美國麻薩諸塞州。畢業於拉德克利夫學院，隨後進入哈佛大學天文台擔任助理，成為被稱為「哈佛計算員」的女性傑出學者之一。一生深受聽力障礙之苦。',
+        expertise: '恆星光度學、變星分析、天文攝影。擅長在極其繁瑣的照相底片測量中尋找星光變化的數學規律。',
+        achievements: '研究了數千顆小麥哲倫星雲中的變星，於1912年發現了造父變星的「周光關係」（利維特定律）。這項發現成為首個「標準燭光」，使得天文學家（如哈伯）能精確測量銀河系外的距離，進而證實宇宙膨脹。'
+      },
+      en: {
+        life: 'Born in Massachusetts, USA in 1868. Graduated from Radcliffe College and later worked as a "computer" at the Harvard College Observatory, cataloging stars. She suffered from severe hearing loss throughout her career.',
+        expertise: 'Stellar photometry, variable star analysis, and photographic astronomy. Expert at finding mathematical patterns of stellar brightness variations from photographic plates.',
+        achievements: 'Discovered the period-luminosity relation of Cepheid variables (Leavitt\'s Law) in 1912. This served as the first "standard candle," allowing astronomers to measure distances to other galaxies and enabling Hubble\'s discovery of cosmic expansion.'
+      }
+    },
+    persona:
+      'You are Henrietta Swan Leavitt. You are modest, deeply methodical, and observational. You worked as a "computer" at Harvard College Observatory, cataloging stars. '
+      + 'You focus on finding patterns in photographic plates and variable stars, and are proud of Leavitt\'s Law that allowed astronomers to measure the universe.',
+    style:
+      'Speak with quiet dedication and scholarly modesty of the late-19th/early-20th century. Focus on observational data, '
+      + 'the patient study of photographic plates, and the beauty of finding mathematical order in variable stars. Never boastful; always accurate, precise, and encouraging.',
+    topics: [
+      'cepheid', 'variable star', 'period-luminosity', 'leavitt', 'leavitt law', 'standard candle', 'photometry', 'magellanic cloud', 'astrophotography', 'distance scale',
+      '造父變星', '周光關係', '利維特定律', '標準燭光', '光度學', '麥哲倫雲', '距離尺度',
+    ],
+  },
+  {
+    id: 'lemaitre',
+    name: { zh: '勒梅特', en: 'Georges Lemaître' },
+    years: '1894-1966',
+    fields: { zh: '物理宇宙學 / 宇宙膨脹', en: 'Cosmology / Cosmic expansion' },
+    accent: '#ff9b85',
+    blurb: {
+      zh: '首位提出宇宙膨脹與大霹靂理論的物理學家兼天主教神父。',
+      en: 'First physicist to propose cosmic expansion and the Big Bang theory, bridging science and faith.',
+    },
+    details: {
+      zh: {
+        life: '1894年出生於比利時。在一戰期間擔任炮兵軍官，後被晉鐸為天主教神父。他在魯汶大學取得博士學位，隨後前往劍橋與麻省理工學院深造，並終身在魯汶大學擔任物理教授。',
+        expertise: '廣義相對論、物理宇宙學、天文數學。專注於尋找愛因斯坦場方程式的動力學解，並探討宇宙的起源。',
+        achievements: '於1927年獨立於哈伯導出宇宙膨脹定律（現稱哈伯-勒梅特定律）；在1931年提出宇宙起源於「原始原子」（即「大霹靂」理論的前身，被愛因斯坦最初反對，但最終贏得科學界認同）。'
+      },
+      en: {
+        life: 'Born in Belgium in 1894. Served as an artillery officer in WWI, and was later ordained as a Catholic priest. Obtained his doctorate at Louvain and studied at Cambridge and MIT before becoming a professor at Louvain.',
+        expertise: 'General relativity, physical cosmology, and mathematical physics. Specialized in dynamical solutions to Einstein\'s field equations and the physical origins of the universe.',
+        achievements: 'Derived the expansion of the universe in 1927 (pre-dating Hubble\'s observational publication, now Hubble-Lemaître law) and proposed the "primeval atom" hypothesis (Big Bang theory) in 1931.'
+      }
+    },
+    persona:
+      'You are Georges Lemaître. You are a Belgian Catholic priest and physicist. You derived the expansion of the universe from Einstein\'s equations '
+      + 'and proposed the "primeval atom" (Big Bang). You see no conflict between scientific inquiry and spiritual truth, and you speak with mathematical rigor and polite humor.',
+    style:
+      'Speak with polite, intellectual Belgian-European cadence, mixing mathematical cosmology with gentle philosophical wisdom. '
+      + 'Refer to the universe\'s beginning as the "primeval atom" or "cosmic egg". Be humble but clear about deriving expansion before Hubble. Sincere and warm.',
+    topics: [
+      'big bang', 'primeval atom', 'cosmic egg', 'expansion', 'expanding universe', 'lemaitre', 'hubble-lemaitre', 'friedmann-lemaitre', 'cosmology', 'general relativity', 'redshift',
+      '大霹靂', '大爆炸', '原始原子', '宇宙蛋', '宇宙膨脹', '勒梅特', '哈伯-勒梅特', '宇宙學', '廣義相對論',
+    ],
+  },
+  {
+    id: 'thorne',
+    name: { zh: '索恩', en: 'Kip Thorne' },
+    years: '1940-',
+    fields: { zh: '重力波 / 蟲洞 / 星際效應', en: 'Gravitational waves / Wormholes / Interstellar science' },
+    accent: '#7be5ff',
+    blurb: {
+      zh: '重力波觀測的先驅，也是黑洞、蟲洞與《星際效應》物理的權威。',
+      en: 'Pioneer in gravitational wave detection (LIGO); leading expert on wormholes and the science of "Interstellar".',
+    },
+    details: {
+      zh: {
+        life: '1940年出生於美國猶他州。畢業於加州理工學院，並在普林斯頓大學取得博士學位（師從惠勒）。長期擔任加州理工學院費曼理論物理教授，榮獲2017年諾貝爾物理學獎。',
+        expertise: '重力物理學、相對論性天體物理學、古典與量子光學。長於探討彎曲時空的奇異結構與重力波探測技術。',
+        achievements: '共同發起與籌建了雷射干涉重力波天文台（LIGO），成功探測到雙黑洞旋近產生的重力波；對蟲洞的物理可行性及克爾黑洞結構做出了開創性工作；擔任電影《星際效應》的科學顧問，確保其黑洞視覺呈現符合廣義相對論。'
+      },
+      en: {
+        life: 'Born in Utah, USA in 1940. Graduated from Caltech and received his PhD from Princeton under John Wheeler. He was the Feynman Professor of Theoretical Physics at Caltech and won the Nobel Prize in Physics in 2017.',
+        expertise: 'Gravitational physics, relativistic astrophysics, and experimental gravity. Expert on the geometry of curved spacetime, wormholes, and gravitational wave detection.',
+        achievements: 'Co-founded the LIGO project, which successfully detected gravitational waves from colliding black holes; formulated theories on traversable wormholes; and served as executive producer and science advisor for the film "Interstellar".'
+      }
+    },
+    persona:
+      'You are Kip Thorne. You are optimistic, visionary, and deeply knowledgeable about the geometry of curved spacetime. You co-founded LIGO, '
+      + 'proving gravitational waves. You love discussing wormholes, time travel constraints, kerr black holes (Gargantua!), and making general relativity accessible to the public.',
+    style:
+      'Speak with warm, friendly, modern American academic energy (Caltech style). Use vivid analogies of warped spacetime, gravitational waves, '
+      + 'and black holes. Enthusiastically recall the journey to detect gravitational waves with LIGO and designing the black hole in Interstellar. Welcoming and clear.',
+    topics: [
+      'gravitational wave', 'ligo', 'laser interferometer', 'black hole', 'kerr black hole', 'gargantua', 'wormhole', 'time travel', 'warped spacetime', 'interstellar', 'kip thorne',
+      '重力波', '雷射干涉儀', '黑洞', '克爾黑洞', '巨人黑洞', '蟲洞', '時空旅行', '彎曲時空', '星際效應', '索恩',
+    ],
+  },
+  {
+    id: 'bell',
+    name: { zh: '貝爾·伯奈爾', en: 'Jocelyn Bell Burnell' },
+    years: '1943-',
+    fields: { zh: '射電天文學 / 脈衝星 / 中子星', en: 'Radio astronomy / Pulsars / Neutron stars' },
+    accent: '#ffd4e5',
+    blurb: {
+      zh: '發現首顆脈衝星（快速旋轉的中子星），揭示了緻密天體的存在。',
+      en: 'Discovered the first radio pulsars (fast-spinning neutron stars), proving compact stellar objects exist.',
+    },
+    details: {
+      zh: {
+        life: '1943年出生於北愛爾蘭。在格拉斯哥大學取得物理學士，隨後在劍橋大學攻讀博士學位，期間參與建造了大型射電望遠鏡。曾任皇家天文學會會長，終身致力於科學教育。',
+        expertise: '電波天文學、高能天體物理、中子星物理。擅長從海量的天文訊號中捕捉微弱的異常特徵。',
+        achievements: '1967年作為研究生分析 miles 長的記錄紙帶時，發現了一個極其規律且快速的電波脈衝（被命名為LGM-1，即「小綠人」）。這項發現證實了中子星（脈衝星）的存在，震驚了天文界，雖然導師獲得了諾貝爾獎，但她的貢獻贏得了全世界學術界的尊崇。'
+      },
+      en: {
+        life: 'Born in Northern Ireland in 1943. Completed her degree at the University of Glasgow and PhD at Cambridge University, where she helped construct a massive radio telescope. Later served as President of the Royal Astronomical Society.',
+        expertise: 'Radio astronomy, compact stars, and observational astrophysics. Exceptional at identifying tiny anomalies within huge scientific data streams.',
+        achievements: 'Discovered the first radio pulsar in 1967 (labeled LGM-1 for "Little Green Men") by spotting a periodic signal in paper chart data. This discovery proved the existence of neutron stars, revolutionizing stellar astrophysics.'
+      }
+    },
+    persona:
+      'You are Jocelyn Bell Burnell. You are incredibly observant, resilient, and precise. You discovered pulsars as a graduate student by noticing "scruff" on paper chart recordings. '
+      + 'You are gracious about being left off the Nobel Prize, focusing instead on advocating for women and underrepresented groups in physics.',
+    style:
+      'Speak with warm, humble, yet sharp British/Irish academic tone. Describe the manual analysis of miles of paper charts and the excitement of finding that first periodic signal (LGM-1). '
+      + 'Focus on observation, precision, and the extreme physics of neutron stars. Courteous, encouraging, and inspirational.',
+    topics: [
+      'pulsar', 'pulsars', 'neutron star', 'radio astronomy', 'radio telescope', 'periodicity', 'compact star', 'bell burnell', 'lgm-1', 'scruff', 'lighthouse effect',
+      '脈衝星', '中子星', '射電天文學', '電波天文學', '電波望遠鏡', '週期性', '緻密星', '貝爾·伯奈爾', '燈塔效應',
     ],
   },
 ];
@@ -507,7 +783,71 @@ export const STARTERS = {
       'Why does time-translation symmetry give energy conservation?',
       "Can you state Noether's theorem in one sentence?",
       'What is a continuous symmetry versus a discrete one?',
-      'What role does gauge symmetry play in modern physics?',
+      'What role does gauge geometry play in modern physics?',
+    ],
+  },
+  leavitt: {
+    zh: [
+      '什麼是造父變星的周光關係？',
+      '你是如何發現這個規律的？',
+      '為什麼周光關係能用來測量天體距離？',
+      '你在哈佛大學天文台工作時的「計算員」經歷是怎樣的？',
+      '麥哲倫雲如何幫助你做出這個重大的發現？',
+    ],
+    en: [
+      'What is the period-luminosity relation of Cepheid variables?',
+      'How did you discover this relation?',
+      'Why can the period-luminosity relation measure cosmic distances?',
+      'What was your experience as a "computer" at Harvard Observatory?',
+      'How did the Magellanic Clouds help you make this discovery?',
+    ],
+  },
+  lemaitre: {
+    zh: [
+      '什麼是「原始原子」假說？它如何演變成大霹靂理論？',
+      '你是如何從廣義相對論導出宇宙膨脹的？',
+      '作為一位神父和物理學家，你如何看待科學與宗教的關係？',
+      '你與愛因斯坦對於宇宙膨脹的觀點有何不同？',
+      '為什麼宇宙學定律現在被稱為哈伯-勒梅特定律？',
+    ],
+    en: [
+      "What is the 'primeval atom' hypothesis, and how did it lead to the Big Bang?",
+      'How did you derive the expansion of the universe from general relativity?',
+      'As a priest and physicist, how do you reconcile science and religion?',
+      'How did your view of cosmic expansion differ from Einstein\'s?',
+      'Why is the expansion law now known as the Hubble-Lemaître law?',
+    ],
+  },
+  thorne: {
+    zh: [
+      '我們是怎麼用 LIGO 偵測到重力波的？',
+      '蟲洞真的存在嗎？我們有可能穿過它旅行嗎？',
+      '電影《星際效應》中的巨人黑洞（Gargantua）在物理上有多寫實？',
+      '重力波的偵測對天文學有什麼重大意義？',
+      '旋轉黑洞附近的時空如何被扭曲？',
+    ],
+    en: [
+      'How did we detect gravitational waves using LIGO?',
+      'Do wormholes really exist, and could we travel through them?',
+      'How physically realistic is the black hole Gargantua in the movie Interstellar?',
+      'Why is the detection of gravitational waves so important for astronomy?',
+      'How is spacetime warped near a spinning black hole?',
+    ],
+  },
+  bell: {
+    zh: [
+      '你是如何發現第一顆脈衝星的？「小綠人（LGM-1）」是怎麼回事？',
+      '什麼是脈衝星？它和中子星有什麼關係？',
+      '為什麼脈衝星像宇宙中的「燈塔」？',
+      '在分析大量紙帶數據時，你是如何注意到那份「雜訊」的？',
+      '脈衝星的發現如何改變了我們對恆星演化終點的理解？',
+    ],
+    en: [
+      'How did you discover the first pulsar? What is the story behind LGM-1?',
+      'What is a pulsar, and how is it related to a neutron star?',
+      'Why do pulsars behave like cosmic lighthouses?',
+      'How did you spot that tiny "scruff" of a signal in miles of paper chart data?',
+      'How did the discovery of pulsars change our understanding of stellar death?',
     ],
   },
 };

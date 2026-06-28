@@ -49,6 +49,10 @@
     sagan:         { skin: '#e7bf9b', hair: 'mop',      hairC: DKBROWN, facial: 'none',     facialC: INK,    collar: 'turtle',     clothes: '#5a6b6a', mouth: 'grin' },
     rubin:         { skin: '#edc8a6', hair: 'curlyF',   hairC: '#8a7a6e', facial: 'none',   facialC: INK,    collar: 'blouse',     clothes: '#6a5577', glasses: 'round', mouth: 'smile' },
     noether:       { skin: '#edc8a6', hair: 'bun',      hairC: NEARBLK, facial: 'none',     facialC: INK,    collar: 'lace',       clothes: '#4a6b4d', glasses: 'round', mouth: 'slight' },
+    leavitt:       { skin: '#edc8a6', hair: 'bun',      hairC: '#5a4d41', facial: 'none',   facialC: INK,    collar: 'lace',       clothes: '#4f4056', mouth: 'slight' },
+    lemaitre:      { skin: '#ecc5a2', hair: 'receding', hairC: '#555555', facial: 'none',   facialC: INK,    collar: 'priest',     clothes: '#1a1a1a', glasses: 'round', mouth: 'slight' },
+    thorne:        { skin: '#ecc5a2', hair: 'receding', hairC: '#e2d1c3', facial: 'beardS', facialC: '#e2d1c3', collar: 'open',     clothes: '#3a5f6e', glasses: 'rect', mouth: 'smile' },
+    bell:          { skin: '#edc8a6', hair: 'curlyF',   hairC: '#e6e9ef', facial: 'none',   facialC: INK,    collar: 'blouse',     clothes: '#63404b', glasses: 'round', mouth: 'smile' },
   };
 
   function s(attrs) { return attrs; } // tiny readability shim
@@ -102,6 +106,10 @@
         break;
       case 'blouse':
         collar = '<path d="M27 49 L31 55 L29 50 M37 49 L33 55 L35 50" fill="' + lighten(c, 0.18) + '" stroke="' + INK + '" stroke-width="1"/>';
+        break;
+      case 'priest':
+        collar = '<path d="M25 50 Q32 47 39 50 L39 56 Q32 53 25 56 Z" fill="' + NEARBLK + '" stroke="' + INK + '" stroke-width="1.3"/>'
+          + '<rect x="30" y="50" width="4" height="6" fill="' + WHITE + '" stroke="' + INK + '" stroke-width="0.8"/>';
         break;
       default: collar = '';
     }
@@ -253,6 +261,12 @@
     return svg;
   }
 
+  var PNG_AVATARS = {
+    einstein: true, feynman: true, newton: true, galileo: true, kepler: true,
+    copernicus: true, hubble: true, hawking: true, chandrasekhar: true, sagan: true,
+    rubin: true, noether: true, leavitt: true, lemaitre: true, thorne: true,
+    bell: true
+  };
   window.knSciAvatar = knSciAvatar;
-  window.knSciAvatarHas = function (id) { return !!F[id]; };
+  window.knSciAvatarHas = function (id) { return !!PNG_AVATARS[id]; };
 })();

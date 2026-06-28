@@ -747,7 +747,7 @@ function MBodyEditor({ sim, force, role }) {
 }
 
 // ─── BLACK HOLE tab ────────────────────────────────────────
-function TabBlackHole({ sim, force }) {
+function TabBlackHole({ sim, force, setPlaying }) {
   const [activeBody, setActiveBody] = useStateM('central');
   const p = sim.params;
   const phys = window.KNphysics;
@@ -966,14 +966,14 @@ function TabBlackHole({ sim, force }) {
           <h3>{tr('Binary Companion', '雙星伴星')}</h3>
           <span className="idx">§05</span>
         </div>
-        <TabBinary sim={sim} force={force} />
+        <TabBinary sim={sim} force={force} setPlaying={setPlaying} />
       </div>
     </>
   );
 }
 
 // ─── BINARY companion sub-panel ───────────────────────────
-function TabBinary({ sim, force }) {
+function TabBinary({ sim, force, setPlaying }) {
   const bin = sim.binary;
   if (!bin) return <div className="m-diag"><div className="line">{tr('Binary engine not initialised.', '雙星引擎尚未初始化。')}</div></div>;
 
@@ -1006,6 +1006,7 @@ function TabBinary({ sim, force }) {
               bin.enabled = true;
               bin.classical = false;   // re-enabling an existing pair resumes inspiral
             }
+            if (setPlaying) setPlaying(false); // Pause the simulation when companion is added!
             bin.merged  = false;
             bin.mergerFlash = 0;
             bin.d0 = bin.d;
