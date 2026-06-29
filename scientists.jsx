@@ -406,6 +406,52 @@ const IconSpark = () => (
   </svg>
 );
 
+const IconUndo = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 7v6h6" />
+    <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+  </svg>
+);
+
+const IconCopy = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+
+function CopyButton({ text, title }) {
+  const [copied, setCopied] = useState(false);
+  const onClick = (e) => {
+    e.stopPropagation();
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      try {
+        const el = document.createElement('textarea');
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {}
+    });
+  };
+  return (
+    <button
+      className={'sci-action-btn copy' + (copied ? ' copied' : '')}
+      onClick={onClick}
+      title={copied ? '已複製 / Copied!' : title}
+    >
+      {copied ? <IconCheck /> : <IconCopy />}
+    </button>
+  );
+}
+
 // ---- local persistence ----
 // The live conversation and the saved-thread collection both survive a page
 // reload (and let you continue talking later) by living in localStorage.
@@ -512,7 +558,7 @@ function SciAppRoot() {
 
   const getPersistedSession = useCallback((sciId) => {
     if (!sciId) {
-      return { messages: [], usage: 0, activeModel: '', sessionId: '' };
+      return { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [] };
     }
     if (persisted.sessions && persisted.sessions[sciId]) {
       return persisted.sessions[sciId];
@@ -523,6 +569,7 @@ function SciAppRoot() {
         usage: persisted.usage || 0,
         activeModel: persisted.activeModel || '',
         sessionId: persisted.sessionId || '',
+        followups: persisted.followups || [],
       };
     }
     return {
@@ -530,6 +577,7 @@ function SciAppRoot() {
       usage: 0,
       activeModel: '',
       sessionId: '',
+      followups: [],
     };
   }, [persisted]);
 
@@ -557,7 +605,7 @@ function SciAppRoot() {
   // Topic-aware follow-up suggestions generated from the running conversation.
   // Purely UI chips: only a clicked one becomes a turn, so the unclicked options
   // (and the act of suggesting) never enter the context window.
-  const [followups, setFollowups] = useState([]);
+  const [followups, setFollowups] = useState(initialSession.followups || []);
   const [discussFollowups, setDiscussFollowups] = useState([]);
 
   // ---- Science Dialogue (multi-scientist roundtable) state ----
@@ -613,7 +661,7 @@ function SciAppRoot() {
   // Persist the live conversation so a reload keeps it (and the session id, so
   // the backend can continue the same dialogue while its session is alive).
   useEffect(() => {
-    const activeSession = { messages, usage, activeModel, sessionId: sessionId.current };
+    const activeSession = { messages, usage, activeModel, sessionId: sessionId.current, followups };
     saveJSON(PERSIST_KEY, {
       selectedId,
       sessions: {
@@ -626,7 +674,7 @@ function SciAppRoot() {
       activeModel,
       sessionId: sessionId.current,
     });
-  }, [selectedId, messages, usage, activeModel, sessions, streaming]);
+  }, [selectedId, messages, usage, activeModel, sessions, followups, streaming]);
 
   // Persist the live discussion (panel + transcript + session id) across reloads.
   useEffect(() => {
@@ -659,12 +707,13 @@ function SciAppRoot() {
           : (d.scientists[0] && d.scientists[0].id) || '';
         
         if (next !== prev) {
-          const nextSession = (persisted.sessions && persisted.sessions[next]) || { messages: [], usage: 0, activeModel: '', sessionId: '' };
+          const nextSession = (persisted.sessions && persisted.sessions[next]) || { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [] };
           setSelectedId(next);
           setMessages(nextSession.messages || []);
           setUsage(nextSession.usage || 0);
           setActiveModel(nextSession.activeModel || '');
           sessionId.current = nextSession.sessionId || '';
+          setFollowups(nextSession.followups || []);
         }
       }
     } catch (e) { /* leave roster empty; health dot shows offline */ }
@@ -726,6 +775,7 @@ function SciAppRoot() {
         usage,
         activeModel,
         sessionId: sessionId.current,
+        followups,
       }
     }));
 
@@ -736,6 +786,7 @@ function SciAppRoot() {
     setUsage(nextSession.usage || 0);
     setActiveModel(nextSession.activeModel || '');
     sessionId.current = nextSession.sessionId || '';
+    setFollowups(nextSession.followups || []);
 
     clearFollowups();
     needHistoryRef.current = true;
@@ -766,6 +817,7 @@ function SciAppRoot() {
         usage: 0,
         activeModel: activeModel,
         sessionId: '',
+        followups: [],
       }
     }));
   }
@@ -853,6 +905,7 @@ function SciAppRoot() {
         usage,
         activeModel,
         sessionId: sessionId.current,
+        followups,
       }
     }));
     
@@ -869,6 +922,29 @@ function SciAppRoot() {
 
   function stopStreaming() {
     if (abortRef.current) abortRef.current.abort();
+  }
+
+  function undoMessage(index) {
+    if (streaming) return;
+    const targetMsg = messages[index];
+    if (!targetMsg || targetMsg.role !== 'user') return;
+
+    setInput(targetMsg.text);
+
+    const nextMessages = messages.slice(0, index);
+    setMessages(nextMessages);
+
+    setSessions((prev) => ({
+      ...prev,
+      [selectedId]: {
+        ...prev[selectedId],
+        messages: nextMessages,
+      }
+    }));
+
+    clearFollowups();
+    needHistoryRef.current = true;
+    restoredFollowupRef.current = false;
   }
 
   const sendMessage = useCallback(async (text) => {
@@ -1453,7 +1529,20 @@ function SciAppRoot() {
               if (m.role === 'user') {
                 return (
                   <div key={i} className="sci-msg user">
-                    <div className="sci-bubble">{renderText(m.text)}</div>
+                    <div className="sci-bubble-wrap">
+                      <div className="sci-bubble">{renderText(m.text)}</div>
+                      <div className="sci-msg-actions">
+                        <button
+                          className="sci-action-btn undo"
+                          onClick={() => undoMessage(i)}
+                          title={lang === 'zh' ? '收回此訊息' : 'Undo this message'}
+                          disabled={streaming}
+                        >
+                          <IconUndo />
+                        </button>
+                        <CopyButton text={m.text} title={lang === 'zh' ? '複製訊息' : 'Copy message'} />
+                      </div>
+                    </div>
                   </div>
                 );
               }
@@ -1463,6 +1552,7 @@ function SciAppRoot() {
               const isLastSci = i === messages.length - 1;
               const sciId = m.id || (selected && selected.id);
               const sciAccent = m.accent || (selected && selected.accent);
+              const showCopy = !(isLastSci && streaming);
               return (
                 <div key={i} className="sci-msg sci">
                   <SciAvatar id={sciId} accent={sciAccent} name={m.name || (selected && (selected.name && selected.name.en))} size={30} onClick={sciId !== AUTO_ID ? () => setBioId(sciId) : undefined} />
@@ -1472,6 +1562,11 @@ function SciAppRoot() {
                       {renderText(m.text)}
                       {isLastSci && streaming && <span className="sci-typing" />}
                     </div>
+                    {showCopy && (
+                      <div className="sci-msg-actions">
+                        <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+                      </div>
+                    )}
                   </div>
                 </div>
               );

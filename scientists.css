@@ -566,3 +566,58 @@ html, body {
     width: 100%;
   }
 }
+
+/* Message action buttons (Undo / Copy) */
+.sci-msg-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+  opacity: 0.25;
+  transition: opacity 0.15s ease;
+}
+.sci-msg:hover .sci-msg-actions {
+  opacity: 1;
+}
+.sci-msg.user .sci-msg-actions {
+  justify-content: flex-end;
+  padding-right: 4px;
+}
+.sci-msg.sci .sci-msg-actions {
+  justify-content: flex-start;
+  padding-left: 4px;
+}
+.sci-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+.sci-action-btn:hover {
+  color: var(--ink);
+  border-color: #36405c;
+  background: var(--panel);
+}
+.sci-action-btn svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.sci-action-btn.copy.copied {
+  color: var(--ok);
+  border-color: var(--ok);
+  background: rgba(111, 207, 151, 0.15);
+}
+.sci-action-btn.undo:hover {
+  color: var(--err);
+  border-color: var(--err);
+  background: rgba(239, 111, 111, 0.15);
+}
