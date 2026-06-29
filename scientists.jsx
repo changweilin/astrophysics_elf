@@ -593,6 +593,44 @@ function SciAppRoot() {
   const [activeModel, setActiveModel] = useState(initialSession.activeModel);
   const [showSettings, setShowSettings] = useState(false);
   const [bioId, setBioId] = useState(null);
+  const [showSinglePicker, setShowSinglePicker] = useState(false);
+  const appRef = useRef(null);
+  const translateYRef = useRef(0);
+
+  const lastScrollTop = useRef(0);
+  const handleScroll = useCallback((e) => {
+    if (window.innerWidth > 760) return;
+    const scrollTop = e.currentTarget.scrollTop;
+    
+    if (scrollTop <= 5) {
+      translateYRef.current = 0;
+      if (appRef.current) {
+        appRef.current.style.setProperty('--header-translate', '0px');
+      }
+      lastScrollTop.current = scrollTop;
+      return;
+    }
+    
+    const dy = scrollTop - lastScrollTop.current;
+    
+    // Calculate new translation, clamping it between -153 and 0
+    let next = translateYRef.current - dy;
+    next = Math.max(-153, Math.min(0, next));
+    
+    translateYRef.current = next;
+    if (appRef.current) {
+      appRef.current.style.setProperty('--header-translate', `${next}px`);
+    }
+    
+    lastScrollTop.current = scrollTop;
+  }, []);
+
+  useEffect(() => {
+    translateYRef.current = 0;
+    if (appRef.current) {
+      appRef.current.style.setProperty('--header-translate', '0px');
+    }
+  }, [view]);
 
   // 'chat' (live single conversation) | 'favorites' (saved threads)
   const [view, setView] = useState('chat');
@@ -1285,7 +1323,7 @@ function SciAppRoot() {
   const statusClass = health === 'online' ? 'ok' : health === 'offline' ? 'err' : '';
 
   return (
-    <div className="sci-app">
+    <div className="sci-app" ref={appRef}>
       <header className="sci-header">
         <div className="kn-brand">
           <img src="/logos/icon-192.png" alt="" width="24" height="24" />
@@ -1361,6 +1399,7 @@ function SciAppRoot() {
           setSortBy={setSortBy}
           sortOrder={sortOrder}
           setSortOrder={setSortOrder}
+          onScroll={handleScroll}
         />
       ) : (
       <div className="sci-body">
@@ -1425,37 +1464,14 @@ function SciAppRoot() {
         <section className="sci-chat">
           <div className="sci-chat-head">
             {/* mobile picker */}
-            <select
-              className="sci-roster-select sci-iconbtn"
-              value={selectedId}
-              onChange={(e) => selectScientist(e.target.value)}
+            <button
+              className="sci-iconbtn sci-managebtn"
+              onClick={() => setShowSinglePicker(true)}
+              title={tr.roster}
+              aria-label={tr.roster}
             >
-              {scientists.length > 0 && <option value={AUTO_ID}>{nameFor(AUTO_PERSONA, lang)}</option>}
-              {sortedScientists.map((s) => (
-                <option key={s.id} value={s.id}>{nameFor(s, lang)} · {s.years}</option>
-              ))}
-            </select>
-
-            <div className="sci-sort-container mobile-only">
-              <select
-                className="sci-sort-select"
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                aria-label={tr.sortLabel}
-              >
-                <option value="default">{tr.sortDefault}</option>
-                <option value="year">{tr.sortYear}</option>
-                <option value="alphabet">{tr.sortName}</option>
-                <option value="specialty">{tr.sortField}</option>
-              </select>
-              <button
-                className="sci-sort-order-btn"
-                onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-                title={sortOrder === 'asc' ? tr.asc : tr.desc}
-              >
-                {sortOrder === 'asc' ? '↑' : '↓'}
-              </button>
-            </div>
+              <IconUsers />
+            </button>
 
             {selected && (
               <div className="sci-head-who-wrap" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1491,7 +1507,7 @@ function SciAppRoot() {
             </div>
           </div>
 
-          <div className="sci-scroll" ref={scrollRef}>
+          <div className="sci-scroll" ref={scrollRef} onScroll={handleScroll}>
             {messages.length === 0 && (
               <div className="sci-empty">
                 <h2>{tr.emptyTitle}</h2>
@@ -1612,6 +1628,22 @@ function SciAppRoot() {
             setBackendUrl(window.SCI.getBackendUrl());
             setShowSettings(false);
           }}
+        />
+      )}
+
+      {showSinglePicker && (
+        <SinglePicker
+          tr={tr}
+          lang={lang}
+          scientists={sortedScientists}
+          selectedId={selectedId}
+          onSelect={selectScientist}
+          onClose={() => setShowSinglePicker(false)}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          sortOrder={sortOrder}
+          setSortOrder={setSortOrder}
+          onBio={setBioId}
         />
       )}
 
@@ -1779,6 +1811,7 @@ function DiscussView({
   onSend, onStop, onKey, onClear, onSummarize, onSave, followups, showPicker, setShowPicker,
   onRetry, onSettings, onBio,
   sortBy, setSortBy, sortOrder, setSortOrder,
+  onScroll,
 }) {
   const scrollRef = useRef(null);
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, streaming]);
@@ -1858,7 +1891,7 @@ function DiscussView({
           </div>
         </div>
 
-        <div className="sci-scroll" ref={scrollRef}>
+        <div className="sci-scroll" ref={scrollRef} onScroll={onScroll}>
           {messages.length === 0 && (
             <div className="sci-empty">
               {!hasPanel ? (
@@ -1938,6 +1971,86 @@ function DiscussView({
           onBio={onBio}
         />
       )}
+    </div>
+  );
+}
+
+// Modal list to select a single scientist on mobile (the primary control on mobile,
+// where the roster column is hidden).
+function SinglePicker({ tr, lang, scientists, selectedId, onSelect, onClose, sortBy, setSortBy, sortOrder, setSortOrder, onBio }) {
+  return (
+    <div className="sci-modal-backdrop" onClick={onClose}>
+      <div className="sci-modal sci-panel-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{tr.roster}</h3>
+        <div className="sci-sort-container" style={{ borderBottom: 'none', paddingBottom: 0, marginBottom: 12 }}>
+          <select
+            className="sci-sort-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            aria-label={tr.sortLabel}
+          >
+            <option value="default">{tr.sortDefault}</option>
+            <option value="year">{tr.sortYear}</option>
+            <option value="alphabet">{tr.sortName}</option>
+            <option value="specialty">{tr.sortField}</option>
+          </select>
+          <button
+            className="sci-sort-order-btn"
+            onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+            title={sortOrder === 'asc' ? tr.asc : tr.desc}
+          >
+            {sortOrder === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
+        <div className="sci-panel-list">
+          {/* Auto-assign option */}
+          <button
+            className={'sci-panel-item' + (selectedId === AUTO_ID ? ' active' : '')}
+            onClick={() => { onSelect(AUTO_ID); onClose(); }}
+          >
+            <SciAvatar id={AUTO_ID} accent={AUTO_PERSONA.accent} size={34} />
+            <span className="who">
+              <div className="nm">{nameFor(AUTO_PERSONA, lang)}</div>
+              <div className="meta">{fieldsFor(AUTO_PERSONA, lang)}</div>
+            </span>
+            <span className={'sci-toggle' + (selectedId === AUTO_ID ? ' on' : '')}>
+              {selectedId === AUTO_ID && <IconCheck />}
+            </span>
+          </button>
+          
+          {scientists.map((s) => {
+            const on = s.id === selectedId;
+            return (
+              <button
+                key={s.id}
+                className={'sci-panel-item' + (on ? ' active' : '')}
+                onClick={() => { onSelect(s.id); onClose(); }}
+              >
+                <SciAvatar
+                  id={s.id}
+                  accent={s.accent}
+                  name={(s.name && s.name.en) || s.id}
+                  size={34}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onBio) onBio(s.id);
+                  }}
+                />
+                <span className="who">
+                  <div className="nm">{nameFor(s, lang)}</div>
+                  <div className="meta">{s.years} · {fieldsFor(s, lang)}</div>
+                </span>
+                <span className={'sci-toggle' + (on ? ' on' : '')}>
+                  {on && <IconCheck />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="row">
+          <button className="sci-send" onClick={onClose}>{tr.done}</button>
+        </div>
+      </div>
     </div>
   );
 }

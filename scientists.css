@@ -358,15 +358,101 @@ html, body {
 
 /* ---- mobile ---- */
 @media (max-width: 760px) {
-  .sci-body { grid-template-columns: 1fr; }
-  .sci-roster { display: none; }
-  .sci-roster-select { display: block; }
-  .sci-managebtn { display: inline-flex; }
-  .sci-chat-head { flex-wrap: wrap; }
-  .sci-meter .bar { width: 64px; }
-  .sci-msg { max-width: 94%; }
+  .sci-app {
+    position: relative;
+    overflow: hidden;
+    height: 100%;
+  }
+
+  .sci-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 49px;
+    z-index: 30;
+    background: var(--bg) !important;
+    transform: translateY(var(--header-translate, 0px));
+    will-change: transform;
+    transition: transform 0.08s ease-out;
+  }
+
+  .sci-tabs {
+    position: absolute;
+    top: 49px;
+    left: 0;
+    right: 0;
+    height: 47px;
+    z-index: 29;
+    background: var(--bg) !important;
+    transform: translateY(var(--header-translate, 0px));
+    will-change: transform;
+    transition: transform 0.08s ease-out;
+  }
+
+  .sci-body {
+    grid-template-columns: 1fr;
+    height: 100%;
+  }
+
+  .sci-roster {
+    display: none;
+  }
+
+  .sci-managebtn {
+    display: inline-flex;
+  }
+
+  .sci-chat {
+    height: 100%;
+    grid-template-rows: 1fr auto; /* no row for chat-head as it is absolute */
+    position: relative;
+  }
+
+  .sci-chat-head {
+    position: absolute;
+    top: 96px; /* 49 + 47 */
+    left: 0;
+    right: 0;
+    height: 57px;
+    z-index: 28;
+    background: var(--bg) !important;
+    transform: translateY(var(--header-translate, 0px));
+    will-change: transform;
+    transition: transform 0.08s ease-out;
+    flex-wrap: wrap;
+  }
+
+  .sci-scroll {
+    grid-row: 1;
+    padding-top: 153px; /* 49 + 47 + 57 */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sci-composer {
+    grid-row: 2;
+    z-index: 20;
+    background: var(--bg);
+  }
+
+  .sci-favorites {
+    padding-top: 96px;
+    height: 100%;
+  }
+
+  .sci-meter .bar {
+    width: 64px;
+  }
+
+  .sci-msg {
+    max-width: 94%;
+  }
+
   /* keep the panel-member stack compact on small screens */
-  .sci-panel-stack.head .stacked:nth-child(n+4) { display: none; }
+  .sci-panel-stack.head .stacked:nth-child(n+4) {
+    display: none;
+  }
 }
 
 /* clickable avatar effects */
