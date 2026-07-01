@@ -16,7 +16,7 @@ import {
   listScientists, getScientist, buildSystemPrompt, rankScientists, nameOf, AUTO_ID,
 } from './personas/scientists.mjs';
 import { chatStream, ping } from './lib/ollama.mjs';
-import { refreshInstalled, installedModels, pickModel, effectiveModel } from './lib/model-resolver.mjs';
+import { refreshInstalled, installedModels, pickModel, resolveRequestedModel } from './lib/model-resolver.mjs';
 import {
   shouldSummarize, summarizeConversation, usageFraction, estimateTokens,
 } from './lib/context.mjs';
@@ -134,6 +134,26 @@ function seedDiscussionIfEmpty(disc, rawRounds) {
   return true;
 }
 
+// The backend's shown-followups memory lives only on the in-memory session, so
+// it is lost whenever the backend restarts. The client separately keeps its own
+// running list of every follow-up it has ever shown for this thread (persisted
+// in localStorage across reloads / scientist switches) and resends it with every
+// request; merging the two means the "don't repeat yourself" memory survives a
+// backend restart even though the server-side copy alone would not.
+function mergeClientFollowups(existing, raw) {
+  const clientList = Array.isArray(raw) ? raw.filter((q) => typeof q === 'string' && q.trim()).slice(-40) : [];
+  if (!clientList.length) return existing;
+  const seen = new Set(existing.map((q) => q.toLowerCase()));
+  const merged = existing.slice();
+  for (const q of clientList) {
+    const key = q.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(q);
+  }
+  return merged.slice(-40);
+}
+
 // Flatten retained (question -> conclusion) rounds into a {user, assistant}
 // transcript the shared summarizer / follow-up generator understand.
 function flattenRounds(rounds) {
@@ -200,8 +220,9 @@ async function handleChat(req, res) {
 
   // Resolve the per-language config, reconciling both the chat and summary model
   // names to the installed tags so chat AND summarization work whether or not the
-  // preferred model is pulled.
-  const model = effectiveModel(lang);
+  // preferred model is pulled. An explicit body.model (the model-picker dropdown)
+  // overrides the per-language auto-pick when it names an installed tag.
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
   // The session id stays stable across turns. In auto mode it tracks 'auto', so
   // each question can be answered by a different expert without resetting memory.
   const session = getOrCreateSession(sessionId, scientistId, lang);
@@ -325,7 +346,7 @@ async function handleSummarize(req, res) {
     return sendJson(res, 200, { ok: true, changed: false, summary: session.summary || '', summaryCount: session.summaryCount });
   }
 
-  const model = effectiveModel(lang);
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
   const scientist = getScientist(session.scientistId);
 
   try {
@@ -366,9 +387,10 @@ async function handleFollowups(req, res) {
   } else {
     history = sanitizeHistory(body.history);
   }
+  existing = mergeClientFollowups(existing, body.existingFollowups);
   if (!history.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
 
-  const model = effectiveModel(lang);
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
   const followups = await generateFollowups({ model, lang, history, summary, existing });
   rememberFollowups(session, followups);
   sendJson(res, 200, { ok: true, followups });
@@ -419,7 +441,7 @@ async function handleDiscuss(req, res) {
   if (!ids.length) return sendJson(res, 400, { error: 'no valid scientists selected' });
   if (!message) return sendJson(res, 400, { error: 'empty message' });
 
-  const model = effectiveModel(lang);
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
   const disc = getOrCreateDiscussion(sessionId, ids, lang);
 
   // Rehydrate panel memory from replayed (question -> conclusion) rounds when the
@@ -507,7 +529,7 @@ async function handleDiscussSummarize(req, res) {
     return sendJson(res, 200, { ok: true, changed: false, summary: disc.summary || '', summaryCount: disc.summaryCount });
   }
 
-  const model = effectiveModel(lang);
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
 
   // Flatten the retained (question -> conclusion) pairs into a transcript the
   // shared summarizer understands, then fold it into the carried-over memory.
@@ -547,9 +569,10 @@ async function handleDiscussFollowups(req, res) {
   } else {
     rounds = sanitizeRounds(body.rounds);
   }
+  existing = mergeClientFollowups(existing, body.existingFollowups);
   if (!rounds.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
 
-  const model = effectiveModel(lang);
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
   const followups = await generateFollowups({ model, lang, history: flattenRounds(rounds), summary, existing });
   rememberFollowups(disc, followups);
   sendJson(res, 200, { ok: true, followups });

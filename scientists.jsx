@@ -329,6 +329,11 @@ function SciAvatar({ id, accent, name, size = 38, className = '', onClick }) {
 // Cap on how many scientists may share one discussion (matches the backend).
 const DISCUSS_MAX = 5;
 
+// Combined height (px) of the mobile .sci-header (49) + .sci-tabs (47) bars
+// that sit above the per-view .sci-chat-head row -- kept in sync with the
+// hard-coded values in scientists.css's mobile media query.
+const HEADER_STACK_PX = 96;
+
 // Single-chat "auto-assign" pseudo-persona. Picking it lets the backend route
 // each question to the best-matched real scientist (see lib/router.mjs); the id
 // is ASCII and matches the backend sentinel. It is NOT a real roster entry, so
@@ -483,39 +488,82 @@ function CopyButton({ text, title }) {
   );
 }
 
+// Undo needs an explicit confirm step (it drops messages) but a bare "click
+// again within 3s" affordance is invisible on touch (no hover for the tooltip
+// that explains it) and impossible to back out of on purpose. Show a small
+// popup with an explicit Confirm/Cancel choice instead; it stays open until
+// answered or dismissed by clicking outside.
 function UndoButton({ onUndo, title, disabled, lang }) {
   const [confirming, setConfirming] = useState(false);
-  const timerRef = useRef(null);
-
-  const onClick = (e) => {
-    e.stopPropagation();
-    if (confirming) {
-      onUndo();
-      setConfirming(false);
-      if (timerRef.current) clearTimeout(timerRef.current);
-    } else {
-      setConfirming(true);
-      timerRef.current = setTimeout(() => {
-        setConfirming(false);
-      }, 3000);
-    }
-  };
+  const wrapRef = useRef(null);
 
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+    if (!confirming) return;
+    const onOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setConfirming(false);
     };
-  }, []);
+    document.addEventListener('mousedown', onOutside);
+    document.addEventListener('touchstart', onOutside);
+    return () => {
+      document.removeEventListener('mousedown', onOutside);
+      document.removeEventListener('touchstart', onOutside);
+    };
+  }, [confirming]);
 
   return (
-    <button
-      className={'sci-action-btn undo' + (confirming ? ' confirming' : '')}
-      onClick={onClick}
-      title={confirming ? (lang === 'zh' ? '再次點擊以確認收回' : 'Click again to confirm undo') : title}
-      disabled={disabled}
+    <span className="sci-undo-wrap" ref={wrapRef}>
+      <button
+        className={'sci-action-btn undo' + (confirming ? ' confirming' : '')}
+        onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+        title={title}
+        disabled={disabled}
+      >
+        <IconUndo />
+      </button>
+      {confirming && (
+        <div className="sci-undo-confirm" onClick={(e) => e.stopPropagation()}>
+          <span>{lang === 'zh' ? '收回這則訊息?' : 'Undo this message?'}</span>
+          <div className="sci-undo-confirm-actions">
+            <button type="button" className="sci-undo-confirm-btn cancel" onClick={() => setConfirming(false)}>
+              {lang === 'zh' ? '取消' : 'Cancel'}
+            </button>
+            <button
+              type="button"
+              className="sci-undo-confirm-btn ok"
+              onClick={() => { setConfirming(false); onUndo(); }}
+            >
+              {lang === 'zh' ? '確認' : 'Confirm'}
+            </button>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+// The model-picker "dropdown": once /api/health has reported the installed
+// Ollama tags, the model chip becomes a real <select> (matching the existing
+// .sci-lang-select pattern) so clicking it lists every installed model plus an
+// "Auto" entry that hands the pick back to the backend's per-language default.
+// Falls back to the old plain chip when the list hasn't loaded yet.
+function ModelChip({ activeModel, installedModels, modelOverride, setModelOverride, lang }) {
+  if (!installedModels || !installedModels.length) {
+    return activeModel ? <span className="sci-modelchip">{activeModel}</span> : null;
+  }
+  const title = lang === 'zh' ? '切換模型' : 'Switch model';
+  return (
+    <select
+      className="sci-modelchip sci-model-select"
+      value={modelOverride || ''}
+      onChange={(e) => setModelOverride(e.target.value)}
+      title={title}
+      aria-label={title}
     >
-      {confirming ? <IconCheck /> : <IconUndo />}
-    </button>
+      <option value="">{(lang === 'zh' ? '自動:' : 'Auto:') + ' ' + (activeModel || '...')}</option>
+      {installedModels.map((m) => (
+        <option key={m} value={m}>{m}</option>
+      ))}
+    </select>
   );
 }
 
@@ -576,7 +624,20 @@ function SciAppRoot() {
   const [health, setHealth] = useState('checking'); // 'checking' | 'online' | 'offline'
   const [models, setModels] = useState({ zh: '', en: '' });
   const [scientists, setScientists] = useState([]);
-  
+
+  // Every Ollama tag actually installed (from /api/health), for the model-picker
+  // dropdown. '' override means "let the backend auto-pick per language".
+  const [installedModels, setInstalledModels] = useState([]);
+  const [modelOverride, setModelOverride] = useState(() => {
+    try { return localStorage.getItem('kn_sci_model_override') || ''; } catch (e) { return ''; }
+  });
+  useEffect(() => {
+    try {
+      if (modelOverride) localStorage.setItem('kn_sci_model_override', modelOverride);
+      else localStorage.removeItem('kn_sci_model_override');
+    } catch (e) {}
+  }, [modelOverride]);
+
   const [sortBy, setSortBy] = useState(() => {
     try { return localStorage.getItem('kn_sci_sort_by') || 'year'; } catch (e) { return 'year'; }
   });
@@ -625,7 +686,7 @@ function SciAppRoot() {
 
   const getPersistedSession = useCallback((sciId) => {
     if (!sciId) {
-      return { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [], input: '' };
+      return { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [], shownFollowups: [], input: '' };
     }
     if (persisted.sessions && persisted.sessions[sciId]) {
       return persisted.sessions[sciId];
@@ -637,6 +698,7 @@ function SciAppRoot() {
         activeModel: persisted.activeModel || '',
         sessionId: persisted.sessionId || '',
         followups: persisted.followups || [],
+        shownFollowups: persisted.shownFollowups || [],
         input: persisted.input || '',
       };
     }
@@ -646,6 +708,7 @@ function SciAppRoot() {
       activeModel: '',
       sessionId: '',
       followups: [],
+      shownFollowups: [],
       input: '',
     };
   }, [persisted]);
@@ -693,9 +756,16 @@ function SciAppRoot() {
   }, []);
 
   const lastScrollTop = useRef(0);
+  // Set right before the autoscroll-to-bottom effect forces scrollTop during a
+  // streaming reply, and cleared a frame later. The forced scroll fires its own
+  // 'scroll' event, and without this guard handleScroll reads that as a user
+  // drag and yanks the header stack toward fully-collapsed on every token --
+  // the "screen jitter while generating" this is here to prevent.
+  const autoScrollLockRef = useRef(false);
   const handleScroll = useCallback((e) => {
     if (window.innerWidth > 760) return;
     const scrollTop = e.currentTarget.scrollTop;
+    if (autoScrollLockRef.current) { lastScrollTop.current = scrollTop; return; }
 
     if (scrollTop <= 5) {
       translateYRef.current = 0;
@@ -708,11 +778,12 @@ function SciAppRoot() {
 
     const dy = scrollTop - lastScrollTop.current;
 
-    // Calculate new translation, clamping between -(actual chat-head height) and 0
-    // so a wrapped (taller) header can tuck fully away instead of leaving its
-    // overflow rows stuck on screen.
+    // Calculate new translation, clamping between -(full header stack height)
+    // and 0, so the header/tabs/chat-head tuck fully away TOGETHER (in sync) as
+    // one unit -- not just the chat-head row -- and a wrapped (taller) chat-head
+    // still tucks away completely instead of leaving overflow rows on screen.
     let next = translateYRef.current - dy;
-    next = Math.max(-chatHeadHeightRef.current, Math.min(0, next));
+    next = Math.max(-(HEADER_STACK_PX + chatHeadHeightRef.current), Math.min(0, next));
 
     translateYRef.current = next;
     if (appRef.current) {
@@ -741,7 +812,33 @@ function SciAppRoot() {
   // Purely UI chips: only a clicked one becomes a turn, so the unclicked options
   // (and the act of suggesting) never enter the context window.
   const [followups, setFollowups] = useState(initialSession.followups || []);
-  const [discussFollowups, setDiscussFollowups] = useState([]);
+  const [discussFollowups, setDiscussFollowups] = useState(Array.isArray(persistedD.followups) ? persistedD.followups : []);
+
+  // Every follow-up question ever shown in this thread (not just the currently
+  // displayed chips) -- sent back to the backend so its "don't repeat yourself"
+  // memory survives a backend restart, a scientist switch, or a page reload,
+  // none of which the backend's own in-memory session copy survives on its own.
+  const [shownFollowups, setShownFollowups] = useState(initialSession.shownFollowups || []);
+  const [discussShownFollowups, setDiscussShownFollowups] = useState(Array.isArray(persistedD.shownFollowups) ? persistedD.shownFollowups : []);
+  const shownFollowupsRef = useRef(shownFollowups);
+  useEffect(() => { shownFollowupsRef.current = shownFollowups; }, [shownFollowups]);
+  const discussShownFollowupsRef = useRef(discussShownFollowups);
+  useEffect(() => { discussShownFollowupsRef.current = discussShownFollowups; }, [discussShownFollowups]);
+
+  // Merge newly-shown follow-up questions into the running "ever shown" memory,
+  // deduping case-insensitively and capping like the backend's own list.
+  function mergeShown(prev, fresh) {
+    if (!fresh || !fresh.length) return prev;
+    const seen = new Set(prev.map((q) => q.toLowerCase()));
+    const merged = prev.slice();
+    for (const q of fresh) {
+      const key = q.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(q);
+    }
+    return merged.slice(-40);
+  }
 
   // ---- Science Dialogue (multi-scientist roundtable) state ----
   const [panel, setPanel] = useState(Array.isArray(persistedD.panel) ? persistedD.panel : []);
@@ -796,7 +893,7 @@ function SciAppRoot() {
   // Persist the live conversation so a reload keeps it (and the session id, so
   // the backend can continue the same dialogue while its session is alive).
   useEffect(() => {
-    const activeSession = { messages, usage, activeModel, sessionId: sessionId.current, followups, input };
+    const activeSession = { messages, usage, activeModel, sessionId: sessionId.current, followups, shownFollowups, input };
     saveJSON(PERSIST_KEY, {
       selectedId,
       sessions: {
@@ -810,12 +907,16 @@ function SciAppRoot() {
       sessionId: sessionId.current,
       input,
     });
-  }, [selectedId, messages, usage, activeModel, sessions, followups, streaming, input]);
+  }, [selectedId, messages, usage, activeModel, sessions, followups, shownFollowups, streaming, input]);
 
   // Persist the live discussion (panel + transcript + session id) across reloads.
   useEffect(() => {
-    saveJSON(PERSIST_DISCUSS_KEY, { panel, messages: discussMessages, usage: discussUsage, activeModel: discussModel, sessionId: discussSessionId.current, input: discussInput });
-  }, [panel, discussMessages, discussUsage, discussModel, discussStreaming, discussInput]);
+    saveJSON(PERSIST_DISCUSS_KEY, {
+      panel, messages: discussMessages, usage: discussUsage, activeModel: discussModel,
+      sessionId: discussSessionId.current, input: discussInput,
+      followups: discussFollowups, shownFollowups: discussShownFollowups,
+    });
+  }, [panel, discussMessages, discussUsage, discussModel, discussStreaming, discussInput, discussFollowups, discussShownFollowups]);
 
   // Persist the saved-thread collection whenever it changes.
   useEffect(() => { saveJSON(FAV_KEY, favorites); }, [favorites]);
@@ -830,6 +931,7 @@ function SciAppRoot() {
       const h = await fetch(backendUrl + '/api/health').then((r) => r.json());
       setHealth(h && h.ok ? 'online' : 'offline');
       if (h && h.models) setModels(h.models);
+      setInstalledModels(h && Array.isArray(h.installed) ? h.installed : []);
     } catch (e) { setHealth('offline'); }
     try {
       const d = await fetch(backendUrl + '/api/scientists').then((r) => r.json());
@@ -841,15 +943,16 @@ function SciAppRoot() {
         const next = (prev && (prev === AUTO_ID || d.scientists.some((s) => s.id === prev)))
           ? prev
           : (d.scientists[0] && d.scientists[0].id) || '';
-        
+
         if (next !== prev) {
-          const nextSession = (persisted.sessions && persisted.sessions[next]) || { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [], input: '' };
+          const nextSession = (persisted.sessions && persisted.sessions[next]) || { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [], shownFollowups: [], input: '' };
           setSelectedId(next);
           setMessages(nextSession.messages || []);
           setUsage(nextSession.usage || 0);
           setActiveModel(nextSession.activeModel || '');
           sessionId.current = nextSession.sessionId || '';
           setFollowups(nextSession.followups || []);
+          setShownFollowups(nextSession.shownFollowups || []);
           setInput(nextSession.input || '');
         }
       }
@@ -861,7 +964,10 @@ function SciAppRoot() {
   // autoscroll on new content
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    autoScrollLockRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => { autoScrollLockRef.current = false; });
   }, [messages, streaming]);
 
   function pushNotice(kind, text) {
@@ -879,16 +985,27 @@ function SciAppRoot() {
     try {
       const res = await fetch(backendUrl + '/api/followups', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sessionId.current || undefined, lang, history: messagesRef.current }),
+        body: JSON.stringify({
+          sessionId: sessionId.current || undefined,
+          lang,
+          history: messagesRef.current,
+          model: modelOverride || undefined,
+          // Everything ever shown in this thread, so the "don't repeat" memory
+          // survives even if the backend's own copy was lost (restart / a
+          // rebuilt session) -- see mergeClientFollowups() in server.mjs.
+          existingFollowups: shownFollowupsRef.current,
+        }),
       });
       if (!res.ok) { if (token === followupTokenRef.current) setFollowups([]); return; }
       const r = await res.json().catch(() => null);
       if (token !== followupTokenRef.current) return; // a newer turn superseded us
-      setFollowups(r && Array.isArray(r.followups) ? r.followups : []);
+      const next = r && Array.isArray(r.followups) ? r.followups : [];
+      setFollowups(next);
+      if (next.length) setShownFollowups((prev) => mergeShown(prev, next));
     } catch (e) {
       if (token === followupTokenRef.current) setFollowups([]);
     }
-  }, [backendUrl, lang]);
+  }, [backendUrl, lang, modelOverride]);
 
   // Offer follow-ups for a RESTORED conversation (page reload / resumed thread)
   // once the backend is reachable, so a pre-existing dialogue immediately shows
@@ -903,7 +1020,7 @@ function SciAppRoot() {
 
   function selectScientist(id) {
     if (id === selectedId) return;
-    
+
     // Save current active session
     setSessions((prev) => ({
       ...prev,
@@ -913,6 +1030,7 @@ function SciAppRoot() {
         activeModel,
         sessionId: sessionId.current,
         followups,
+        shownFollowups,
         input,
       }
     }));
@@ -925,11 +1043,18 @@ function SciAppRoot() {
     setActiveModel(nextSession.activeModel || '');
     sessionId.current = nextSession.sessionId || '';
     setFollowups(nextSession.followups || []);
+    setShownFollowups(nextSession.shownFollowups || []);
     setInput(nextSession.input || '');
 
-    clearFollowups();
+    // Invalidate any in-flight follow-up fetch for the scientist we're leaving
+    // (so its response can't land on top of the one we're switching to) WITHOUT
+    // wiping the follow-ups we just restored above -- a bare clearFollowups()
+    // here would blow away the just-restored chips on every switch.
+    followupTokenRef.current += 1;
     needHistoryRef.current = true;
-    restoredFollowupRef.current = false;
+    // Cached follow-ups for the resumed scientist should show immediately; only
+    // re-arm the "offer once" flow when there's nothing cached to show yet.
+    restoredFollowupRef.current = !!(nextSession.followups && nextSession.followups.length);
   }
 
   async function resetConversation() {
@@ -945,6 +1070,7 @@ function SciAppRoot() {
     setMessages([]);
     setUsage(0);
     clearFollowups();
+    setShownFollowups([]);
     needHistoryRef.current = true;
     restoredFollowupRef.current = false;
 
@@ -957,6 +1083,7 @@ function SciAppRoot() {
         activeModel: activeModel,
         sessionId: '',
         followups: [],
+        shownFollowups: [],
         input,
       }
     }));
@@ -974,7 +1101,7 @@ function SciAppRoot() {
     try {
       const res = await fetch(backendUrl + '/api/session/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sessionId.current, lang }),
+        body: JSON.stringify({ sessionId: sessionId.current, lang, model: modelOverride || undefined }),
       });
       // A 404 means the backend no longer holds this session (it restarted, or
       // the session was evicted). The visible history is still here, so just
@@ -1033,6 +1160,7 @@ function SciAppRoot() {
       needDiscussHistoryRef.current = true; // replay rounds to rebuild context
       restoredDiscussFollowupRef.current = false; // re-offer follow-ups for it
       setDiscussFollowups([]);
+      setDiscussShownFollowups([]);
       setOpenFav(null);
       setView('discuss');
       return;
@@ -1046,9 +1174,10 @@ function SciAppRoot() {
         activeModel,
         sessionId: sessionId.current,
         followups,
+        shownFollowups,
       }
     }));
-    
+
     setSelectedId(fav.scientistId);
     setMessages(fav.messages.slice());
     setUsage(0);
@@ -1056,6 +1185,7 @@ function SciAppRoot() {
     needHistoryRef.current = true; // replay history to rebuild context
     restoredFollowupRef.current = false; // re-offer follow-ups for it
     clearFollowups();
+    setShownFollowups([]);
     setOpenFav(null);
     setView('chat');
   }
@@ -1138,6 +1268,7 @@ function SciAppRoot() {
           lang,
           message: msg,
           history: replayHistory && replayHistory.length ? replayHistory : undefined,
+          model: modelOverride || undefined,
         }),
         signal: ac.signal,
       });
@@ -1176,7 +1307,7 @@ function SciAppRoot() {
       restoredFollowupRef.current = true; // live flow owns follow-ups from here
       fetchFollowups();
     }
-  }, [input, streaming, selected, backendUrl, lang, tr, clearFollowups, fetchFollowups]);
+  }, [input, streaming, selected, backendUrl, lang, tr, clearFollowups, fetchFollowups, modelOverride]);
 
   function handleEvent(ev, appendDelta) {
     if (ev.type === 'meta') {
@@ -1269,12 +1400,16 @@ function SciAppRoot() {
           sessionId: discussSessionId.current || undefined,
           lang,
           rounds: extractRounds(discussMessagesRef.current),
+          model: modelOverride || undefined,
+          existingFollowups: discussShownFollowupsRef.current,
         }),
       });
       if (!res.ok) { if (token === discussFollowupTokenRef.current) setDiscussFollowups([]); return; }
       const r = await res.json().catch(() => null);
       if (token !== discussFollowupTokenRef.current) return;
-      setDiscussFollowups(r && Array.isArray(r.followups) ? r.followups : []);
+      const next = r && Array.isArray(r.followups) ? r.followups : [];
+      setDiscussFollowups(next);
+      if (next.length) setDiscussShownFollowups((prev) => mergeShown(prev, next));
     } catch (e) {
       if (token === discussFollowupTokenRef.current) setDiscussFollowups([]);
     }
@@ -1312,6 +1447,7 @@ function SciAppRoot() {
           lang,
           message: msg,
           rounds: replayRounds && replayRounds.length ? replayRounds : undefined,
+          model: modelOverride || undefined,
         }),
         signal: ac.signal,
       });
@@ -1367,6 +1503,7 @@ function SciAppRoot() {
     setDiscussMessages([]);
     setDiscussUsage(0);
     clearDiscussFollowups();
+    setDiscussShownFollowups([]);
     needDiscussHistoryRef.current = true;
     restoredDiscussFollowupRef.current = false;
   }
@@ -1381,7 +1518,7 @@ function SciAppRoot() {
     try {
       const res = await fetch(backendUrl + '/api/discuss/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: discussSessionId.current, lang }),
+        body: JSON.stringify({ sessionId: discussSessionId.current, lang, model: modelOverride || undefined }),
       });
       if (res.status === 404) {
         discussSessionId.current = '';
@@ -1519,6 +1656,10 @@ function SciAppRoot() {
           onScroll={handleScroll}
           onUndo={undoDiscussMessage}
           headRef={setChatHeadNode}
+          autoScrollLockRef={autoScrollLockRef}
+          installedModels={installedModels}
+          modelOverride={modelOverride}
+          setModelOverride={setModelOverride}
         />
       ) : (
       <div className="sci-body">
@@ -1613,7 +1754,7 @@ function SciAppRoot() {
             <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}>
               <span className={'sci-dot ' + statusClass} />
             </span>
-            {activeModel && <span className="sci-modelchip">{activeModel}</span>}
+            <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} />
             <div className="sci-meter" title={tr.ctx}>
               <span>{tr.ctx}</span>
               <span className="bar"><span className={'fill' + (usage >= 0.7 ? ' warn' : '')} style={{ width: Math.round(usage * 100) + '%' }} /></span>
@@ -1955,9 +2096,17 @@ function DiscussView({
   onScroll,
   onUndo,
   headRef,
+  autoScrollLockRef,
+  installedModels, modelOverride, setModelOverride,
 }) {
   const scrollRef = useRef(null);
-  useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, streaming]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (autoScrollLockRef) autoScrollLockRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => { if (autoScrollLockRef) autoScrollLockRef.current = false; });
+  }, [messages, streaming]);
   const hasPanel = panel.length > 0;
   // Fresh random debate topics each time the (populated) panel's empty state shows.
   const discussSuggestions = useMemo(() => sampleN(tr.discussSuggestions, 4), [lang, hasPanel]);
@@ -2021,7 +2170,7 @@ function DiscussView({
           </div>
           <div className="spacer" />
           <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}><span className={'sci-dot ' + statusClass} /></span>
-          {activeModel && <span className="sci-modelchip">{activeModel}</span>}
+          <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} />
           <div className="sci-meter" title={tr.ctx}>
             <span>{tr.ctx}</span>
             <span className="bar"><span className={'fill' + (usage >= 0.45 ? ' warn' : '')} style={{ width: Math.round(usage * 100) + '%' }} /></span>

@@ -81,3 +81,18 @@ export function effectiveModel(lang) {
   const summaryModel = m.summaryModel ? effectiveName(m.summaryModel) : picked.name;
   return { ...cfg, name: picked.name, summaryModel };
 }
+
+// Like effectiveModel(), but lets the client pin a specific installed tag (the
+// model-picker dropdown) instead of the per-language auto-pick. Falls back to
+// the normal effective model when nothing is requested, Ollama is unreachable,
+// or the requested tag isn't actually installed -- so a stale/unpulled choice
+// never breaks the chat, it just silently reverts to auto.
+export function resolveRequestedModel(lang, requested) {
+  const base = effectiveModel(lang);
+  if (!requested) return base;
+  const { available, installed } = installedModels();
+  if (available && installed.includes(requested)) {
+    return { ...base, name: requested };
+  }
+  return base;
+}

@@ -152,6 +152,20 @@ html, body {
   border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px;
   background: var(--panel-2);
 }
+/* The model chip becomes a real <select> once /api/health lists installed
+   models (see ModelChip() in scientists.jsx) -- clicking it opens a native
+   dropdown of every installed Ollama tag, plus "Auto" to hand the pick back
+   to the backend's per-language default. */
+.sci-model-select {
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sci-model-select:hover { color: var(--ink); border-color: #36405c; }
+.sci-model-select:focus { outline: none; border-color: var(--accent); }
+.sci-model-select option { background: var(--panel-2); color: var(--ink); }
 
 /* context usage meter */
 .sci-meter { display: flex; align-items: center; gap: 8px; font-size: 0.72rem; color: var(--ink-faint); }
@@ -374,6 +388,10 @@ html, body {
     height: 100%;
   }
 
+  /* .sci-header, .sci-tabs and .sci-chat-head share --header-translate so the
+     whole top stack tucks away and returns together as ONE synced unit while
+     scrolling, instead of only the chat-head row moving underneath a static
+     header/tabs bar. */
   .sci-header {
     position: absolute;
     top: 0;
@@ -382,6 +400,7 @@ html, body {
     height: 49px;
     z-index: 30;
     background: var(--bg) !important;
+    transform: translateY(var(--header-translate, 0px));
     will-change: transform;
     transition: transform 0.08s ease-out;
   }
@@ -394,6 +413,7 @@ html, body {
     height: 47px;
     z-index: 29;
     background: var(--bg) !important;
+    transform: translateY(var(--header-translate, 0px));
     will-change: transform;
     transition: transform 0.08s ease-out;
   }
@@ -724,6 +744,47 @@ html, body {
   border-color: var(--ok);
   background: rgba(111, 207, 151, 0.15);
 }
+
+/* Undo confirm popup: an explicit Confirm/Cancel choice instead of a bare
+   "click again" affordance, which is invisible on touch (no hover tooltip). */
+.sci-undo-wrap { position: relative; display: inline-flex; }
+/* Keep the actions row visible while its confirm popup is open, even without
+   hover (e.g. after a tap on mobile). */
+.sci-msg-actions:has(.sci-undo-confirm) { opacity: 1; }
+.sci-undo-confirm {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 0.8rem;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.sci-msg.user .sci-undo-confirm { left: auto; right: 0; }
+.sci-undo-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.sci-undo-confirm-btn {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--ink-dim);
+  padding: 4px 10px;
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sci-undo-confirm-btn:hover { color: var(--ink); border-color: #36405c; }
+.sci-undo-confirm-btn.ok { color: var(--err); border-color: var(--err); background: rgba(239, 111, 111, 0.12); }
+.sci-undo-confirm-btn.ok:hover { background: rgba(239, 111, 111, 0.22); }
+
 .sci-conclusion:hover .sci-msg-actions {
   opacity: 1;
 }
