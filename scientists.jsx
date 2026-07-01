@@ -452,6 +452,42 @@ function CopyButton({ text, title }) {
   );
 }
 
+function UndoButton({ onUndo, title, disabled, lang }) {
+  const [confirming, setConfirming] = useState(false);
+  const timerRef = useRef(null);
+
+  const onClick = (e) => {
+    e.stopPropagation();
+    if (confirming) {
+      onUndo();
+      setConfirming(false);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    } else {
+      setConfirming(true);
+      timerRef.current = setTimeout(() => {
+        setConfirming(false);
+      }, 3000);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  return (
+    <button
+      className={'sci-action-btn undo' + (confirming ? ' confirming' : '')}
+      onClick={onClick}
+      title={confirming ? (lang === 'zh' ? '再次點擊以確認收回' : 'Click again to confirm undo') : title}
+      disabled={disabled}
+    >
+      {confirming ? <IconCheck /> : <IconUndo />}
+    </button>
+  );
+}
+
 // ---- local persistence ----
 // The live conversation and the saved-thread collection both survive a page
 // reload (and let you continue talking later) by living in localStorage.
@@ -613,9 +649,9 @@ function SciAppRoot() {
     
     const dy = scrollTop - lastScrollTop.current;
     
-    // Calculate new translation, clamping it between -153 and 0
+    // Calculate new translation, clamping it between -57 and 0
     let next = translateYRef.current - dy;
-    next = Math.max(-153, Math.min(0, next));
+    next = Math.max(-57, Math.min(0, next));
     
     translateYRef.current = next;
     if (appRef.current) {
@@ -983,6 +1019,21 @@ function SciAppRoot() {
     clearFollowups();
     needHistoryRef.current = true;
     restoredFollowupRef.current = false;
+  }
+
+  function undoDiscussMessage(index) {
+    if (discussStreaming) return;
+    const targetMsg = discussMessages[index];
+    if (!targetMsg || targetMsg.role !== 'user') return;
+
+    setDiscussInput(targetMsg.text);
+
+    const nextMessages = discussMessages.slice(0, index);
+    setDiscussMessages(nextMessages);
+
+    clearDiscussFollowups();
+    needDiscussHistoryRef.current = true;
+    restoredDiscussFollowupRef.current = false;
   }
 
   const sendMessage = useCallback(async (text) => {
@@ -1400,6 +1451,7 @@ function SciAppRoot() {
           sortOrder={sortOrder}
           setSortOrder={setSortOrder}
           onScroll={handleScroll}
+          onUndo={undoDiscussMessage}
         />
       ) : (
       <div className="sci-body">
@@ -1548,14 +1600,12 @@ function SciAppRoot() {
                     <div className="sci-bubble-wrap">
                       <div className="sci-bubble">{renderText(m.text)}</div>
                       <div className="sci-msg-actions">
-                        <button
-                          className="sci-action-btn undo"
-                          onClick={() => undoMessage(i)}
+                        <UndoButton
+                          onUndo={() => undoMessage(i)}
                           title={lang === 'zh' ? '收回此訊息' : 'Undo this message'}
                           disabled={streaming}
-                        >
-                          <IconUndo />
-                        </button>
+                          lang={lang}
+                        />
                         <CopyButton text={m.text} title={lang === 'zh' ? '複製訊息' : 'Copy message'} />
                       </div>
                     </div>
@@ -1753,7 +1803,7 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete, onBio }) {
 // Science Dialogue view and by saved-thread playback). Speaker turns carry the
 // speaking scientist's avatar + name; the closing synthesis renders as a
 // distinct "conclusion" card.
-function DiscussMessages({ messages, tr, lang, streaming, onBio }) {
+function DiscussMessages({ messages, tr, lang, streaming, onBio, onUndo }) {
   let lastSci = -1;
   for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].role === 'sci') { lastSci = i; break; } }
   return messages.map((m, i) => {
@@ -1773,12 +1823,26 @@ function DiscussMessages({ messages, tr, lang, streaming, onBio }) {
     if (m.role === 'user') {
       return (
         <div key={i} className="sci-msg user">
-          <div className="sci-bubble">{renderText(m.text)}</div>
+          <div className="sci-bubble-wrap">
+            <div className="sci-bubble">{renderText(m.text)}</div>
+            <div className="sci-msg-actions">
+              {onUndo && (
+                <UndoButton
+                  onUndo={() => onUndo(i)}
+                  title={lang === 'zh' ? '收回此訊息' : 'Undo this message'}
+                  disabled={streaming}
+                  lang={lang}
+                />
+              )}
+              <CopyButton text={m.text} title={lang === 'zh' ? '複製訊息' : 'Copy message'} />
+            </div>
+          </div>
         </div>
       );
     }
     // m.role === 'sci'
     const typing = i === lastSci && streaming;
+    const showCopy = !typing;
     if (m.conclusion) {
       return (
         <div key={i} className="sci-conclusion">
@@ -1787,6 +1851,11 @@ function DiscussMessages({ messages, tr, lang, streaming, onBio }) {
             <span className="cc-title">{tr.conclusion} · {m.name}</span>
           </div>
           <div className="cc-body">{renderText(m.text)}{typing && <span className="sci-typing" />}</div>
+          {showCopy && (
+            <div className="sci-msg-actions">
+              <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+            </div>
+          )}
         </div>
       );
     }
@@ -1796,6 +1865,11 @@ function DiscussMessages({ messages, tr, lang, streaming, onBio }) {
         <div className="sci-bubble-wrap">
           <div className="sci-speaker">{m.name}</div>
           <div className="sci-bubble">{renderText(m.text)}{typing && <span className="sci-typing" />}</div>
+          {showCopy && (
+            <div className="sci-msg-actions">
+              <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1812,6 +1886,7 @@ function DiscussView({
   onRetry, onSettings, onBio,
   sortBy, setSortBy, sortOrder, setSortOrder,
   onScroll,
+  onUndo,
 }) {
   const scrollRef = useRef(null);
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, streaming]);
@@ -1926,7 +2001,7 @@ function DiscussView({
             </div>
           )}
 
-          <DiscussMessages messages={messages} tr={tr} lang={lang} streaming={streaming} onBio={onBio} />
+          <DiscussMessages messages={messages} tr={tr} lang={lang} streaming={streaming} onBio={onBio} onUndo={onUndo} />
 
           {/* On-topic follow-up topics drawn from the discussion so far. */}
           {!streaming && followups && followups.length > 0 && (
