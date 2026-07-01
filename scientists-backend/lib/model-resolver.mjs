@@ -82,17 +82,36 @@ export function effectiveModel(lang) {
   return { ...cfg, name: picked.name, summaryModel };
 }
 
-// Like effectiveModel(), but lets the client pin a specific installed tag (the
-// model-picker dropdown) instead of the per-language auto-pick. Falls back to
-// the normal effective model when nothing is requested, Ollama is unreachable,
-// or the requested tag isn't actually installed -- so a stale/unpulled choice
-// never breaks the chat, it just silently reverts to auto.
+// The model-picker pin, shared by every device talking to this backend (not
+// per-browser). This backend fronts a single local Ollama instance -- reached
+// from the same person's phone (Tailscale) and desktop alike -- and Ollama can
+// only keep one model loaded at a time. Without a shared pin, two devices with
+// different local preferences (or simply different `lang`) would each nudge
+// Ollama toward a different model on every turn, forcing a slow reload back
+// and forth. Set by any request that explicitly names a model; read by every
+// request (including ones that don't) so they all converge on the same choice.
+let globalOverride = '';
+
+export function getGlobalOverride() {
+  return globalOverride;
+}
+
+// Like effectiveModel(), but resolves the shared pin instead of the per-
+// language auto-pick when one is active. `requested`:
+//   - a string (the model-picker dropdown): sets the shared pin to that tag
+//     (or clears it back to auto with '' / an uninstalled tag) for every
+//     device, then resolves with it.
+//   - undefined (no opinion from this caller): leaves the shared pin alone
+//     and just resolves with whatever it currently is.
+// A stale/unpulled pin never breaks the chat -- it silently reverts to auto.
 export function resolveRequestedModel(lang, requested) {
   const base = effectiveModel(lang);
-  if (!requested) return base;
   const { available, installed } = installedModels();
-  if (available && installed.includes(requested)) {
-    return { ...base, name: requested };
+  if (requested !== undefined) {
+    globalOverride = requested && available && installed.includes(requested) ? requested : '';
+  }
+  if (globalOverride && available && installed.includes(globalOverride)) {
+    return { ...base, name: globalOverride };
   }
   return base;
 }

@@ -40,6 +40,17 @@ startup log and `/api/health` (`modelStatus`) show whether each language is
 running the preferred model or a fallback. Once you `ollama pull` the preferred
 model it is used automatically -- no config change needed.
 
+**Shared model pin (multi-device).** The model-picker dropdown in the UI sets a
+pin that is shared by *every* device talking to this backend, not just the one
+that changed it (`/api/health` reports it as `modelOverride`). Ollama can only
+keep one model loaded at a time, so a per-browser pin would otherwise make two
+devices (e.g. phone + desktop over Tailscale) fight over which model is loaded,
+forcing a slow reload on nearly every turn. The client checks `/api/health`
+before assuming a model so it converges on whatever the backend already has
+pinned. `/api/health` also reports `busy: true` while a generation (from any
+device) is already in flight, since Ollama serializes requests and a new one
+will simply queue behind it rather than answer immediately.
+
 ## Setup
 
 ### 1. Install Ollama and pull the models

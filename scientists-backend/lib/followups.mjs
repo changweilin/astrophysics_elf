@@ -69,9 +69,9 @@ function instruction(lang, avoid = []) {
 // append the language-appropriate question mark when one is missing, so every
 // chip the user sees is unmistakably a question.
 function ensureQuestion(text, lang) {
-  if (/[??]\s*$/.test(text)) return text.replace(/\s+$/, '');
+  if (/[?？]\s*$/.test(text)) return text.replace(/\s+$/, '');
   const stripped = text.replace(/[\s。.!！,，;；:：]+$/u, '');
-  return stripped + (lang === 'zh' ? '?' : '?');
+  return stripped + (lang === 'zh' ? '？' : '?');
 }
 
 // Flatten recent turns (and any carried summary) into a compact transcript that
@@ -110,6 +110,18 @@ function parseLines(text) {
 // rounds), so it reaches for genuinely new angles instead of repeating itself.
 const MAX_ATTEMPTS = 3;
 
+// Some reasoning models (e.g. raw DeepSeek-R1 builds) don't honor Ollama's
+// `think: false` request flag at all -- their template always emits a
+// <think> block first regardless. On a small token budget that block alone
+// can eat the whole generation, leaving zero content and thus zero follow-up
+// chips for that model specifically. Widening the budget on each retry (cheap
+// for every other model, since num_predict is just a cap -- a model that
+// finishes early via its own stop token never spends it) gives such a model
+// room to finish thinking and still reach the actual questions.
+function attemptTokenBudget(attempt) {
+  return config.followups.maxTokens * (attempt + 1);
+}
+
 // Generate follow-up questions. Returns [] on any failure (the UI just shows no
 // chips), so this never breaks the chat flow. `existing` is the memory of
 // questions already shown to the user earlier in this same conversation (across
@@ -140,7 +152,7 @@ export async function generateFollowups({ model, lang, history = [], summary = '
         ],
         // Nudge temperature up on retries so a short/duplicate-heavy first
         // batch doesn't just come back the same way again.
-        optionOverrides: { temperature: 0.7 + attempt * 0.1, num_predict: config.followups.maxTokens },
+        optionOverrides: { temperature: 0.7 + attempt * 0.1, num_predict: attemptTokenBudget(attempt) },
         signal,
       });
       const lines = parseLines(content);

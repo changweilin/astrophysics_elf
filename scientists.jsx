@@ -544,26 +544,38 @@ function UndoButton({ onUndo, title, disabled, lang }) {
 // The model-picker "dropdown": once /api/health has reported the installed
 // Ollama tags, the model chip becomes a real <select> (matching the existing
 // .sci-lang-select pattern) so clicking it lists every installed model plus an
-// "Auto" entry that hands the pick back to the backend's per-language default.
-// Falls back to the old plain chip when the list hasn't loaded yet.
-function ModelChip({ activeModel, installedModels, modelOverride, setModelOverride, lang }) {
+// "Auto" entry that hands the pick back to the backend's shared pin / per-
+// language default. Falls back to the old plain chip when the list hasn't
+// loaded yet. `busy` shows a small dot when the backend can't answer right
+// away (it's already generating for this device or another one).
+function ModelChip({ activeModel, installedModels, modelOverride, setModelOverride, lang, busy }) {
+  const busyTitle = lang === 'zh' ? '後端忙碌中(可能有其他裝置正在使用)' : 'Backend busy (another device may be using it)';
+  const busyDot = busy ? <span className={'sci-dot warn'} title={busyTitle} aria-label={busyTitle} /> : null;
   if (!installedModels || !installedModels.length) {
-    return activeModel ? <span className="sci-modelchip">{activeModel}</span> : null;
+    return activeModel || busy ? (
+      <span className="sci-modelchip-wrap">
+        {activeModel && <span className="sci-modelchip">{activeModel}</span>}
+        {busyDot}
+      </span>
+    ) : null;
   }
   const title = lang === 'zh' ? '切換模型' : 'Switch model';
   return (
-    <select
-      className="sci-modelchip sci-model-select"
-      value={modelOverride || ''}
-      onChange={(e) => setModelOverride(e.target.value)}
-      title={title}
-      aria-label={title}
-    >
-      <option value="">{(lang === 'zh' ? '自動:' : 'Auto:') + ' ' + (activeModel || '...')}</option>
-      {installedModels.map((m) => (
-        <option key={m} value={m}>{m}</option>
-      ))}
-    </select>
+    <span className="sci-modelchip-wrap">
+      <select
+        className="sci-modelchip sci-model-select"
+        value={modelOverride || ''}
+        onChange={(e) => setModelOverride(e.target.value)}
+        title={title}
+        aria-label={title}
+      >
+        <option value="">{(lang === 'zh' ? '自動:' : 'Auto:') + ' ' + (activeModel || '...')}</option>
+        {installedModels.map((m) => (
+          <option key={m} value={m}>{m}</option>
+        ))}
+      </select>
+      {busyDot}
+    </span>
   );
 }
 
@@ -626,10 +638,16 @@ function SciAppRoot() {
   const [scientists, setScientists] = useState([]);
 
   // Every Ollama tag actually installed (from /api/health), for the model-picker
-  // dropdown. '' override means "let the backend auto-pick per language".
+  // dropdown. The pin itself is shared backend-side (see model-resolver.mjs's
+  // globalOverride) so every device converges on the same model instead of
+  // fighting over which one Ollama has loaded; this is only this device's
+  // memory of an explicit choice it made. Three states matter, so `null`
+  // (never touched -- omit `model` from requests, just follow the shared pin)
+  // must stay distinct from `''` (explicitly picked "Auto" -- tell the backend
+  // to clear the shared pin) even though both read back falsy from storage.
   const [installedModels, setInstalledModels] = useState([]);
   const [modelOverride, setModelOverride] = useState(() => {
-    try { return localStorage.getItem('kn_sci_model_override') || ''; } catch (e) { return ''; }
+    try { return localStorage.getItem('kn_sci_model_override'); } catch (e) { return null; }
   });
   useEffect(() => {
     try {
@@ -637,6 +655,14 @@ function SciAppRoot() {
       else localStorage.removeItem('kn_sci_model_override');
     } catch (e) {}
   }, [modelOverride]);
+  // The `model` field to send on every request: omitted (undefined) when this
+  // device has no opinion, so the shared backend pin (or per-language auto
+  // pick) is left alone; sent explicitly (including '' for "Auto") only when
+  // the user actually touched the picker on this device.
+  const modelParam = modelOverride == null ? undefined : modelOverride;
+  // True while the backend is already generating for some device (this one or
+  // another) -- Ollama serializes requests, so a new one just queues behind it.
+  const [backendBusy, setBackendBusy] = useState(false);
 
   const [sortBy, setSortBy] = useState(() => {
     try { return localStorage.getItem('kn_sci_sort_by') || 'year'; } catch (e) { return 'year'; }
@@ -924,15 +950,30 @@ function SciAppRoot() {
   // reflect language -> default active model chip
   useEffect(() => { setActiveModel(models[lang] || ''); setDiscussModel((m) => m || models[lang] || ''); }, [lang, models]);
 
-  // health + scientist list (re-run when backend URL changes)
-  const loadBackend = useCallback(async () => {
-    setHealth('checking');
+  // Lightweight health-only refresh: confirms what model the backend is
+  // currently running (and whether it's busy) without touching the scientist
+  // roster or the active session, so it's cheap enough to poll on an interval
+  // and on tab refocus. This is the "confirm current model first" check --
+  // it's what lets this device pick up a model another device already pinned
+  // instead of guessing its own and forcing Ollama to reload.
+  const refreshHealth = useCallback(async () => {
     try {
       const h = await fetch(backendUrl + '/api/health').then((r) => r.json());
       setHealth(h && h.ok ? 'online' : 'offline');
       if (h && h.models) setModels(h.models);
       setInstalledModels(h && Array.isArray(h.installed) ? h.installed : []);
-    } catch (e) { setHealth('offline'); }
+      setBackendBusy(!!(h && h.busy));
+      return h;
+    } catch (e) {
+      setHealth('offline');
+      return null;
+    }
+  }, [backendUrl]);
+
+  // health + scientist list (re-run when backend URL changes)
+  const loadBackend = useCallback(async () => {
+    setHealth('checking');
+    await refreshHealth();
     try {
       const d = await fetch(backendUrl + '/api/scientists').then((r) => r.json());
       if (d && Array.isArray(d.scientists)) {
@@ -957,9 +998,19 @@ function SciAppRoot() {
         }
       }
     } catch (e) { /* leave roster empty; health dot shows offline */ }
-  }, [backendUrl, selectedId, persisted]);
+  }, [backendUrl, selectedId, persisted, refreshHealth]);
 
   useEffect(() => { loadBackend(); }, [loadBackend]);
+
+  // Re-confirm the backend's current model + busy state on an interval and
+  // whenever the tab regains focus, so a dialog left open doesn't keep
+  // showing a stale model/idle state once another device has changed things.
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === 'visible') refreshHealth(); };
+    const id = setInterval(tick, 8000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
+  }, [refreshHealth]);
 
   // autoscroll on new content
   useEffect(() => {
@@ -989,7 +1040,7 @@ function SciAppRoot() {
           sessionId: sessionId.current || undefined,
           lang,
           history: messagesRef.current,
-          model: modelOverride || undefined,
+          model: modelParam,
           // Everything ever shown in this thread, so the "don't repeat" memory
           // survives even if the backend's own copy was lost (restart / a
           // rebuilt session) -- see mergeClientFollowups() in server.mjs.
@@ -1101,7 +1152,7 @@ function SciAppRoot() {
     try {
       const res = await fetch(backendUrl + '/api/session/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sessionId.current, lang, model: modelOverride || undefined }),
+        body: JSON.stringify({ sessionId: sessionId.current, lang, model: modelParam }),
       });
       // A 404 means the backend no longer holds this session (it restarted, or
       // the session was evicted). The visible history is still here, so just
@@ -1268,7 +1319,7 @@ function SciAppRoot() {
           lang,
           message: msg,
           history: replayHistory && replayHistory.length ? replayHistory : undefined,
-          model: modelOverride || undefined,
+          model: modelParam,
         }),
         signal: ac.signal,
       });
@@ -1400,7 +1451,7 @@ function SciAppRoot() {
           sessionId: discussSessionId.current || undefined,
           lang,
           rounds: extractRounds(discussMessagesRef.current),
-          model: modelOverride || undefined,
+          model: modelParam,
           existingFollowups: discussShownFollowupsRef.current,
         }),
       });
@@ -1447,7 +1498,7 @@ function SciAppRoot() {
           lang,
           message: msg,
           rounds: replayRounds && replayRounds.length ? replayRounds : undefined,
-          model: modelOverride || undefined,
+          model: modelParam,
         }),
         signal: ac.signal,
       });
@@ -1518,7 +1569,7 @@ function SciAppRoot() {
     try {
       const res = await fetch(backendUrl + '/api/discuss/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: discussSessionId.current, lang, model: modelOverride || undefined }),
+        body: JSON.stringify({ sessionId: discussSessionId.current, lang, model: modelParam }),
       });
       if (res.status === 404) {
         discussSessionId.current = '';
@@ -1660,6 +1711,7 @@ function SciAppRoot() {
           installedModels={installedModels}
           modelOverride={modelOverride}
           setModelOverride={setModelOverride}
+          busy={backendBusy}
         />
       ) : (
       <div className="sci-body">
@@ -1754,7 +1806,7 @@ function SciAppRoot() {
             <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}>
               <span className={'sci-dot ' + statusClass} />
             </span>
-            <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} />
+            <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={backendBusy} />
             <div className="sci-meter" title={tr.ctx}>
               <span>{tr.ctx}</span>
               <span className="bar"><span className={'fill' + (usage >= 0.7 ? ' warn' : '')} style={{ width: Math.round(usage * 100) + '%' }} /></span>
@@ -2097,7 +2149,7 @@ function DiscussView({
   onUndo,
   headRef,
   autoScrollLockRef,
-  installedModels, modelOverride, setModelOverride,
+  installedModels, modelOverride, setModelOverride, busy,
 }) {
   const scrollRef = useRef(null);
   useEffect(() => {
@@ -2170,7 +2222,7 @@ function DiscussView({
           </div>
           <div className="spacer" />
           <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}><span className={'sci-dot ' + statusClass} /></span>
-          <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} />
+          <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={busy} />
           <div className="sci-meter" title={tr.ctx}>
             <span>{tr.ctx}</span>
             <span className="bar"><span className={'fill' + (usage >= 0.45 ? ' warn' : '')} style={{ width: Math.round(usage * 100) + '%' }} /></span>

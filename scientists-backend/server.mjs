@@ -15,8 +15,10 @@ import { config, normalizeLang } from './config.mjs';
 import {
   listScientists, getScientist, buildSystemPrompt, rankScientists, nameOf, AUTO_ID,
 } from './personas/scientists.mjs';
-import { chatStream, ping } from './lib/ollama.mjs';
-import { refreshInstalled, installedModels, pickModel, resolveRequestedModel } from './lib/model-resolver.mjs';
+import { chatStream, ping, isBusy } from './lib/ollama.mjs';
+import {
+  refreshInstalled, installedModels, pickModel, resolveRequestedModel, getGlobalOverride,
+} from './lib/model-resolver.mjs';
 import {
   shouldSummarize, summarizeConversation, usageFraction, estimateTokens,
 } from './lib/context.mjs';
@@ -176,11 +178,25 @@ async function handleHealth(req, res) {
     ok: true,
     service: 'kn-scientists-backend',
     sessions: sessionCount(),
-    // Effective models actually in use (after fallback reconciliation).
-    models: { zh: zh.name, en: en.name },
-    // Preferred (strongest) targets + whether each is the one running.
+    // Effective models actually in use (after fallback reconciliation AND the
+    // shared model-picker pin, if one is set -- see model-resolver.mjs). This
+    // is what a dialog should check first before assuming a model, so it
+    // converges on what the backend is already running instead of nudging
+    // Ollama toward a different one on its own.
+    models: {
+      zh: resolveRequestedModel('zh', undefined).name,
+      en: resolveRequestedModel('en', undefined).name,
+    },
+    // Preferred (strongest) targets + whether each is the one running (ignores
+    // the shared pin -- this is about the per-language default, not the pin).
     modelStatus: { zh, en },
+    // The shared model-picker pin ('' = no pin, following per-language auto).
+    modelOverride: getGlobalOverride(),
     installed: installedModels().installed,
+    // True while a generation is already in flight (this device's or another
+    // device's) -- Ollama serializes requests, so a new one will queue behind
+    // it rather than answer immediately.
+    busy: isBusy(),
     wikiRag: config.wiki.enabled,
     ollama,
   });
@@ -221,8 +237,9 @@ async function handleChat(req, res) {
   // Resolve the per-language config, reconciling both the chat and summary model
   // names to the installed tags so chat AND summarization work whether or not the
   // preferred model is pulled. An explicit body.model (the model-picker dropdown)
-  // overrides the per-language auto-pick when it names an installed tag.
-  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
+  // sets the shared pin (see model-resolver.mjs) for every device when it names
+  // an installed tag; omitting it just reads whatever the shared pin currently is.
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
   // The session id stays stable across turns. In auto mode it tracks 'auto', so
   // each question can be answered by a different expert without resetting memory.
   const session = getOrCreateSession(sessionId, scientistId, lang);
@@ -346,7 +363,7 @@ async function handleSummarize(req, res) {
     return sendJson(res, 200, { ok: true, changed: false, summary: session.summary || '', summaryCount: session.summaryCount });
   }
 
-  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
   const scientist = getScientist(session.scientistId);
 
   try {
@@ -390,7 +407,7 @@ async function handleFollowups(req, res) {
   existing = mergeClientFollowups(existing, body.existingFollowups);
   if (!history.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
 
-  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
   const followups = await generateFollowups({ model, lang, history, summary, existing });
   rememberFollowups(session, followups);
   sendJson(res, 200, { ok: true, followups });
@@ -441,7 +458,7 @@ async function handleDiscuss(req, res) {
   if (!ids.length) return sendJson(res, 400, { error: 'no valid scientists selected' });
   if (!message) return sendJson(res, 400, { error: 'empty message' });
 
-  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
   const disc = getOrCreateDiscussion(sessionId, ids, lang);
 
   // Rehydrate panel memory from replayed (question -> conclusion) rounds when the
@@ -529,7 +546,7 @@ async function handleDiscussSummarize(req, res) {
     return sendJson(res, 200, { ok: true, changed: false, summary: disc.summary || '', summaryCount: disc.summaryCount });
   }
 
-  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
 
   // Flatten the retained (question -> conclusion) pairs into a transcript the
   // shared summarizer understands, then fold it into the carried-over memory.
@@ -572,7 +589,7 @@ async function handleDiscussFollowups(req, res) {
   existing = mergeClientFollowups(existing, body.existingFollowups);
   if (!rounds.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
 
-  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : '');
+  const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
   const followups = await generateFollowups({ model, lang, history: flattenRounds(rounds), summary, existing });
   rememberFollowups(disc, followups);
   sendJson(res, 200, { ok: true, followups });

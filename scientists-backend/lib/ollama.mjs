@@ -22,6 +22,31 @@ function buildOptions(model, overrides = {}) {
   };
 }
 
+// Some locally-run "reasoning" models (Qwen3 in thinking mode, DeepSeek-R1,
+// etc.) inline their chain-of-thought as a <think>...</think> block ahead of
+// the actual answer instead of using Ollama's separate `message.thinking`
+// field. The isolated blocking calls (follow-ups, summaries, routing,
+// moderation) only want the final answer -- left unstripped, the reasoning
+// prose breaks line-based parsing downstream (e.g. every "follow-up question"
+// line parses as reasoning text instead), which is why suggestions like the
+// follow-up chips silently come back empty for some models but not others.
+function stripThinking(text) {
+  let out = String(text || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // A generation cut off mid-thought (e.g. by num_predict) leaves an unclosed
+  // tag; drop everything from there on rather than surfacing a stray fragment.
+  out = out.replace(/<think>[\s\S]*$/i, '');
+  return out.trim();
+}
+
+// Count of Ollama calls currently in flight (streaming or blocking), so the
+// health endpoint can report the backend as busy while it can't take on a new
+// generation right away -- e.g. Ollama serializing a second device's request
+// behind one already running, or swapping the loaded model.
+let inFlight = 0;
+export function isBusy() {
+  return inFlight > 0;
+}
+
 // Streaming chat. Invokes onToken(textChunk) for every delta and resolves with
 // final stats from Ollama (prompt_eval_count = real prompt tokens, eval_count =
 // generated tokens, done_reason = 'stop' when the model finished its thought or
@@ -31,66 +56,91 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
   const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
   const composite = signal ? anySignal([signal, timeout]) : timeout;
 
-  const res = await fetch(CHAT_URL(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: model.name,
-      messages,
-      stream: true,
-      options: buildOptions(model, optionOverrides),
-    }),
-    signal: composite,
-  });
+  inFlight++;
+  try {
+    const res = await fetch(CHAT_URL(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: model.name,
+        messages,
+        stream: true,
+        options: buildOptions(model, optionOverrides),
+      }),
+      signal: composite,
+    });
 
-  if (!res.ok || !res.body) {
-    const detail = await safeText(res);
-    throw new Error(`Ollama chat failed (${res.status}): ${detail}`);
+    if (!res.ok || !res.body) {
+      const detail = await safeText(res);
+      throw new Error(`Ollama chat failed (${res.status}): ${detail}`);
+    }
+
+    let full = '';
+    let stats = { promptTokens: 0, completionTokens: 0, doneReason: 'stop' };
+
+    await readNdjson(res.body, (obj) => {
+      if (obj.message && typeof obj.message.content === 'string' && obj.message.content) {
+        full += obj.message.content;
+        onToken(obj.message.content);
+      }
+      if (obj.done) {
+        stats = {
+          promptTokens: obj.prompt_eval_count || 0,
+          completionTokens: obj.eval_count || 0,
+          doneReason: obj.done_reason || 'stop',
+        };
+      }
+    });
+
+    return { content: full, ...stats };
+  } finally {
+    inFlight--;
   }
-
-  let full = '';
-  let stats = { promptTokens: 0, completionTokens: 0, doneReason: 'stop' };
-
-  await readNdjson(res.body, (obj) => {
-    if (obj.message && typeof obj.message.content === 'string' && obj.message.content) {
-      full += obj.message.content;
-      onToken(obj.message.content);
-    }
-    if (obj.done) {
-      stats = {
-        promptTokens: obj.prompt_eval_count || 0,
-        completionTokens: obj.eval_count || 0,
-        doneReason: obj.done_reason || 'stop',
-      };
-    }
-  });
-
-  return { content: full, ...stats };
 }
 
-// Blocking chat used for summarization + discussion moderator/conclusion (no
-// streaming needed). Honors an optional AbortSignal alongside the timeout.
+// Blocking chat used for summarization, routing, follow-up suggestions, and
+// discussion moderator/conclusion (no streaming needed). Honors an optional
+// AbortSignal alongside the timeout.
 export async function chat({ model, messages, optionOverrides, signal }) {
   const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
   const composite = signal ? anySignal([signal, timeout]) : timeout;
-  const res = await fetch(CHAT_URL(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: model.name,
-      messages,
-      stream: false,
-      options: buildOptions(model, optionOverrides),
-    }),
-    signal: composite,
-  });
-  if (!res.ok) throw new Error(`Ollama chat failed (${res.status}): ${await safeText(res)}`);
-  const data = await res.json();
-  return {
-    content: (data.message && data.message.content) || '',
-    promptTokens: data.prompt_eval_count || 0,
-    completionTokens: data.eval_count || 0,
-  };
+  inFlight++;
+  try {
+    const res = await fetch(CHAT_URL(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: model.name,
+        messages,
+        stream: false,
+        // These are short, structured, single-shot asks (pick a name, list a
+        // few questions, summarize a transcript) that never need a visible
+        // chain-of-thought. Left on, a "thinking" model (e.g. the Qwen3-based
+        // Qwythos persona model in our own fallback list) spends the whole
+        // num_predict budget -- often just a few dozen to a couple hundred
+        // tokens for a call like the router or follow-ups -- inside its
+        // <think> block, and the real answer never gets generated, so that
+        // model silently produces nothing (e.g. zero follow-up chips). Ollama
+        // ignores this field for models that don't support thinking control,
+        // so it's safe to send unconditionally. Note some reasoning builds
+        // (raw DeepSeek-R1 in particular) don't implement this toggle at all
+        // and always think regardless -- attemptTokenBudget() in
+        // followups.mjs is the mitigation for that harder case.
+        think: false,
+        options: buildOptions(model, optionOverrides),
+      }),
+      signal: composite,
+    });
+    if (!res.ok) throw new Error(`Ollama chat failed (${res.status}): ${await safeText(res)}`);
+    const data = await res.json();
+    return {
+      content: stripThinking((data.message && data.message.content) || ''),
+      promptTokens: data.prompt_eval_count || 0,
+      completionTokens: data.eval_count || 0,
+    };
+  } finally {
+    inFlight--;
+  }
 }
 
 // Liveness/diagnostic probe for the health endpoint.
