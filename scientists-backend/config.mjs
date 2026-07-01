@@ -75,9 +75,14 @@ export const config = {
     // `ollama pull` a preferred model it is used automatically -- no config edit.
     // Order = strongest-first; reasoning models that emit <think> tags are left
     // out on purpose.
+    //
+    // 'Qwythos-9B-Claude-Mythos-5-1M' (hf.co/empero-ai) is a 9B roleplay/character
+    // merge (Qwen base + Claude- and MythoMax-style tuning) -- a good fit for the
+    // persona chat here. Listed by base name only, so whichever quant is pulled
+    // (Q8_0/Q5_K_M/q4_k_m, etc.) matches automatically.
     modelFallbacks: {
-      zh: envList('SCI_FALLBACKS_ZH', ['qwen3:8b', 'qwen2.5:7b', 'qwen2.5', 'breeze', 'gemma2', 'llama3']),
-      en: envList('SCI_FALLBACKS_EN', ['qwen3:14b', 'qwen3:8b', 'phi4-mini', 'llama3.1', 'llama3', 'qwen2.5:7b']),
+      zh: envList('SCI_FALLBACKS_ZH', ['hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF', 'qwen3:8b', 'qwen2.5:7b', 'qwen2.5', 'breeze', 'gemma2', 'llama3']),
+      en: envList('SCI_FALLBACKS_EN', ['hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF', 'qwen3:14b', 'qwen3:8b', 'phi4-mini', 'llama3.1', 'llama3', 'qwen2.5:7b']),
     },
   },
 

@@ -23,7 +23,7 @@ import {
 import {
   getOrCreateSession, getSession, appendMessage, restartWithSummary, deleteSession, sessionCount,
   getOrCreateDiscussion, getDiscussion, appendDiscussionRound, restartDiscussionWithSummary,
-  deleteDiscussion,
+  deleteDiscussion, rememberFollowups,
 } from './lib/sessions.mjs';
 import { runDiscussion } from './lib/discussion.mjs';
 import { assignScientist } from './lib/router.mjs';
@@ -170,6 +170,17 @@ function handleScientists(req, res) {
   sendJson(res, 200, { scientists: listScientists() });
 }
 
+// Explicit language lock appended right before generation -- the last line of
+// the prompt carries the most weight for small local models, and a long,
+// English-flavoured persona/style block earlier in the system prompt can
+// otherwise pull them off-language partway through a reply (mirrors the same
+// fix already used for the roundtable in lib/discussion.mjs).
+function languageLock(lang) {
+  return lang === 'zh'
+    ? '(請務必全程以繁體中文回答,不要中途切換成英文。)'
+    : '(Reply in English throughout.)';
+}
+
 async function handleChat(req, res) {
   let body;
   try { body = await readJson(req); } catch { return sendJson(res, 400, { error: 'bad JSON body' }); }
@@ -263,7 +274,7 @@ async function handleChat(req, res) {
     const messages = [
       { role: 'system', content: systemPrompt },
       ...session.messages,
-      { role: 'user', content: message },
+      { role: 'user', content: `${message}\n\n${languageLock(lang)}` },
     ];
 
     let reply = '';
@@ -347,16 +358,19 @@ async function handleFollowups(req, res) {
   const session = getSession(body.sessionId ? String(body.sessionId) : '');
   let history = [];
   let summary = '';
+  let existing = [];
   if (session) {
     history = session.messages;
     summary = session.summary;
+    existing = session.shownFollowups || [];
   } else {
     history = sanitizeHistory(body.history);
   }
   if (!history.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
 
   const model = effectiveModel(lang);
-  const followups = await generateFollowups({ model, lang, history, summary });
+  const followups = await generateFollowups({ model, lang, history, summary, existing });
+  rememberFollowups(session, followups);
   sendJson(res, 200, { ok: true, followups });
 }
 
@@ -525,16 +539,19 @@ async function handleDiscussFollowups(req, res) {
   const disc = getDiscussion(body.sessionId ? String(body.sessionId) : '');
   let rounds = [];
   let summary = '';
+  let existing = [];
   if (disc) {
     rounds = disc.rounds;
     summary = disc.summary;
+    existing = disc.shownFollowups || [];
   } else {
     rounds = sanitizeRounds(body.rounds);
   }
   if (!rounds.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
 
   const model = effectiveModel(lang);
-  const followups = await generateFollowups({ model, lang, history: flattenRounds(rounds), summary });
+  const followups = await generateFollowups({ model, lang, history: flattenRounds(rounds), summary, existing });
+  rememberFollowups(disc, followups);
   sendJson(res, 200, { ok: true, followups });
 }
 

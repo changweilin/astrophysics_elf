@@ -234,12 +234,43 @@ function fieldsFor(sci, lang) {
 function blurbFor(sci, lang) {
   return (sci.blurb && (sci.blurb[lang] || sci.blurb.en)) || '';
 }
-// Minimal inline markdown: `code` spans only (keep it safe + simple).
+// Scientists write formulas as LaTeX ($...$ inline, $$...$$ block -- see the
+// system prompt in scientists-backend/personas/scientists.mjs). Render them
+// with KaTeX (loaded globally via scientists.html) so they show as real math
+// instead of raw markup; if KaTeX failed to load or the expression is invalid,
+// fall back to the literal source so the text is never silently dropped.
+function looksLikeMath(expr) {
+  // Cheap guard against plain "$5 and $10" currency text: only treat a $...$
+  // span as math if it actually contains a formula-ish character. Real LaTeX
+  // (even something as simple as E=mc^2) always has one of these.
+  return /[\\^_=<>]/.test(expr);
+}
+
+function renderMathHtml(expr, displayMode) {
+  if (!window.katex) return null;
+  try {
+    return window.katex.renderToString(expr, { throwOnError: false, displayMode, output: 'htmlAndMathml' });
+  } catch (e) {
+    return null;
+  }
+}
+
+// Minimal inline markdown: `code` spans, plus $...$ / $$...$$ LaTeX math.
 function renderText(text) {
-  const parts = String(text).split(/(`[^`]+`)/g);
+  const parts = String(text).split(/(`[^`]+`|\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g);
   return parts.map((p, i) => {
     if (p.startsWith('`') && p.endsWith('`') && p.length > 1) {
       return React.createElement('code', { key: i }, p.slice(1, -1));
+    }
+    if (p.startsWith('$$') && p.endsWith('$$') && p.length > 4) {
+      const html = renderMathHtml(p.slice(2, -2), true);
+      if (html) return React.createElement('span', { key: i, className: 'sci-math sci-math-block', dangerouslySetInnerHTML: { __html: html } });
+      return p;
+    }
+    if (p.startsWith('$') && p.endsWith('$') && p.length > 2 && looksLikeMath(p.slice(1, -1))) {
+      const html = renderMathHtml(p.slice(1, -1), false);
+      if (html) return React.createElement('span', { key: i, className: 'sci-math', dangerouslySetInnerHTML: { __html: html } });
+      return p;
     }
     return p;
   });
@@ -594,7 +625,7 @@ function SciAppRoot() {
 
   const getPersistedSession = useCallback((sciId) => {
     if (!sciId) {
-      return { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [] };
+      return { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [], input: '' };
     }
     if (persisted.sessions && persisted.sessions[sciId]) {
       return persisted.sessions[sciId];
@@ -606,6 +637,7 @@ function SciAppRoot() {
         activeModel: persisted.activeModel || '',
         sessionId: persisted.sessionId || '',
         followups: persisted.followups || [],
+        input: persisted.input || '',
       };
     }
     return {
@@ -614,6 +646,7 @@ function SciAppRoot() {
       activeModel: '',
       sessionId: '',
       followups: [],
+      input: '',
     };
   }, [persisted]);
 
@@ -623,7 +656,7 @@ function SciAppRoot() {
   const initialSession = useMemo(() => getPersistedSession(persisted.selectedId || ''), [persisted.selectedId, getPersistedSession]);
 
   const [messages, setMessages] = useState(initialSession.messages);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(initialSession.input || '');
   const [streaming, setStreaming] = useState(false);
   const [usage, setUsage] = useState(initialSession.usage);
   const [activeModel, setActiveModel] = useState(initialSession.activeModel);
@@ -633,11 +666,37 @@ function SciAppRoot() {
   const appRef = useRef(null);
   const translateYRef = useRef(0);
 
+  // The chat-head row wraps on narrow screens (long model names / long persona
+  // names push the model chip and meter onto their own lines), so its real
+  // height varies. Track it live so the scroll padding and the hide-on-scroll
+  // clamp below always match what's actually on screen instead of an assumed
+  // one-line height -- otherwise wrapped rows sit on top of (and behind) the
+  // message list instead of collapsing along with it.
+  const chatHeadHeightRef = useRef(57);
+  const chatHeadObserverRef = useRef(null);
+  const setChatHeadNode = useCallback((node) => {
+    if (chatHeadObserverRef.current) {
+      chatHeadObserverRef.current.disconnect();
+      chatHeadObserverRef.current = null;
+    }
+    if (!node) return;
+    const applyHeight = () => {
+      chatHeadHeightRef.current = node.offsetHeight || 57;
+      if (appRef.current) {
+        appRef.current.style.setProperty('--chathead-h', `${chatHeadHeightRef.current}px`);
+      }
+    };
+    applyHeight();
+    const ro = new ResizeObserver(applyHeight);
+    ro.observe(node);
+    chatHeadObserverRef.current = ro;
+  }, []);
+
   const lastScrollTop = useRef(0);
   const handleScroll = useCallback((e) => {
     if (window.innerWidth > 760) return;
     const scrollTop = e.currentTarget.scrollTop;
-    
+
     if (scrollTop <= 5) {
       translateYRef.current = 0;
       if (appRef.current) {
@@ -646,18 +705,20 @@ function SciAppRoot() {
       lastScrollTop.current = scrollTop;
       return;
     }
-    
+
     const dy = scrollTop - lastScrollTop.current;
-    
-    // Calculate new translation, clamping it between -57 and 0
+
+    // Calculate new translation, clamping between -(actual chat-head height) and 0
+    // so a wrapped (taller) header can tuck fully away instead of leaving its
+    // overflow rows stuck on screen.
     let next = translateYRef.current - dy;
-    next = Math.max(-57, Math.min(0, next));
-    
+    next = Math.max(-chatHeadHeightRef.current, Math.min(0, next));
+
     translateYRef.current = next;
     if (appRef.current) {
       appRef.current.style.setProperty('--header-translate', `${next}px`);
     }
-    
+
     lastScrollTop.current = scrollTop;
   }, []);
 
@@ -685,7 +746,7 @@ function SciAppRoot() {
   // ---- Science Dialogue (multi-scientist roundtable) state ----
   const [panel, setPanel] = useState(Array.isArray(persistedD.panel) ? persistedD.panel : []);
   const [discussMessages, setDiscussMessages] = useState(Array.isArray(persistedD.messages) ? persistedD.messages : []);
-  const [discussInput, setDiscussInput] = useState('');
+  const [discussInput, setDiscussInput] = useState(persistedD.input || '');
   const [discussStreaming, setDiscussStreaming] = useState(false);
   const [discussUsage, setDiscussUsage] = useState(persistedD.usage || 0);
   const [discussModel, setDiscussModel] = useState(persistedD.activeModel || '');
@@ -735,7 +796,7 @@ function SciAppRoot() {
   // Persist the live conversation so a reload keeps it (and the session id, so
   // the backend can continue the same dialogue while its session is alive).
   useEffect(() => {
-    const activeSession = { messages, usage, activeModel, sessionId: sessionId.current, followups };
+    const activeSession = { messages, usage, activeModel, sessionId: sessionId.current, followups, input };
     saveJSON(PERSIST_KEY, {
       selectedId,
       sessions: {
@@ -747,13 +808,14 @@ function SciAppRoot() {
       usage,
       activeModel,
       sessionId: sessionId.current,
+      input,
     });
-  }, [selectedId, messages, usage, activeModel, sessions, followups, streaming]);
+  }, [selectedId, messages, usage, activeModel, sessions, followups, streaming, input]);
 
   // Persist the live discussion (panel + transcript + session id) across reloads.
   useEffect(() => {
-    saveJSON(PERSIST_DISCUSS_KEY, { panel, messages: discussMessages, usage: discussUsage, activeModel: discussModel, sessionId: discussSessionId.current });
-  }, [panel, discussMessages, discussUsage, discussModel, discussStreaming]);
+    saveJSON(PERSIST_DISCUSS_KEY, { panel, messages: discussMessages, usage: discussUsage, activeModel: discussModel, sessionId: discussSessionId.current, input: discussInput });
+  }, [panel, discussMessages, discussUsage, discussModel, discussStreaming, discussInput]);
 
   // Persist the saved-thread collection whenever it changes.
   useEffect(() => { saveJSON(FAV_KEY, favorites); }, [favorites]);
@@ -781,13 +843,14 @@ function SciAppRoot() {
           : (d.scientists[0] && d.scientists[0].id) || '';
         
         if (next !== prev) {
-          const nextSession = (persisted.sessions && persisted.sessions[next]) || { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [] };
+          const nextSession = (persisted.sessions && persisted.sessions[next]) || { messages: [], usage: 0, activeModel: '', sessionId: '', followups: [], input: '' };
           setSelectedId(next);
           setMessages(nextSession.messages || []);
           setUsage(nextSession.usage || 0);
           setActiveModel(nextSession.activeModel || '');
           sessionId.current = nextSession.sessionId || '';
           setFollowups(nextSession.followups || []);
+          setInput(nextSession.input || '');
         }
       }
     } catch (e) { /* leave roster empty; health dot shows offline */ }
@@ -850,6 +913,7 @@ function SciAppRoot() {
         activeModel,
         sessionId: sessionId.current,
         followups,
+        input,
       }
     }));
 
@@ -861,6 +925,7 @@ function SciAppRoot() {
     setActiveModel(nextSession.activeModel || '');
     sessionId.current = nextSession.sessionId || '';
     setFollowups(nextSession.followups || []);
+    setInput(nextSession.input || '');
 
     clearFollowups();
     needHistoryRef.current = true;
@@ -892,6 +957,7 @@ function SciAppRoot() {
         activeModel: activeModel,
         sessionId: '',
         followups: [],
+        input,
       }
     }));
   }
@@ -1452,6 +1518,7 @@ function SciAppRoot() {
           setSortOrder={setSortOrder}
           onScroll={handleScroll}
           onUndo={undoDiscussMessage}
+          headRef={setChatHeadNode}
         />
       ) : (
       <div className="sci-body">
@@ -1514,7 +1581,7 @@ function SciAppRoot() {
         </nav>
 
         <section className="sci-chat">
-          <div className="sci-chat-head">
+          <div className="sci-chat-head" ref={setChatHeadNode}>
             {/* mobile picker */}
             <button
               className="sci-iconbtn sci-managebtn"
@@ -1887,6 +1954,7 @@ function DiscussView({
   sortBy, setSortBy, sortOrder, setSortOrder,
   onScroll,
   onUndo,
+  headRef,
 }) {
   const scrollRef = useRef(null);
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, streaming]);
@@ -1938,7 +2006,7 @@ function DiscussView({
       </nav>
 
       <section className="sci-chat sci-discuss">
-        <div className="sci-chat-head">
+        <div className="sci-chat-head" ref={headRef}>
           <button className="sci-iconbtn sci-managebtn" onClick={() => setShowPicker(true)} title={tr.managePanel} aria-label={tr.managePanel}>
             <IconUsers />
           </button>

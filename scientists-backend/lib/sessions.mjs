@@ -18,6 +18,7 @@ function makeSession(scientistId, lang) {
     messages: [],       // [{ role: 'user' | 'assistant', content }]
     lastPromptTokens: 0,
     summaryCount: 0,
+    shownFollowups: [], // follow-up questions already suggested this conversation (see lib/followups.mjs)
     createdAt: now,
     updatedAt: now,
   };
@@ -53,6 +54,7 @@ export function getOrCreateSession(id, scientistId, lang) {
     s.summary = '';
     s.lastPromptTokens = 0;
     s.summaryCount = 0;
+    s.shownFollowups = [];
   }
   s.lang = lang;
   return s;
@@ -74,6 +76,19 @@ export function restartWithSummary(session, summary) {
 
 export function deleteSession(id) {
   return sessions.delete(id);
+}
+
+// Record follow-up questions just shown to the user so a later round (single
+// chat or discussion) knows to avoid repeating or near-duplicating them. Shared
+// by both session shapes below -- both simply carry a `shownFollowups` array.
+export function rememberFollowups(store, questions) {
+  if (!store || !Array.isArray(questions) || !questions.length) return;
+  if (!Array.isArray(store.shownFollowups)) store.shownFollowups = [];
+  for (const q of questions) {
+    if (!store.shownFollowups.includes(q)) store.shownFollowups.push(q);
+  }
+  // Cap so a very long conversation doesn't grow this list without bound.
+  if (store.shownFollowups.length > 40) store.shownFollowups = store.shownFollowups.slice(-40);
 }
 
 export function sessionCount() {
@@ -109,6 +124,7 @@ function makeDiscussion(scientistIds, lang) {
     summary: '',          // carried-over memory from past summarizations
     rounds: [],           // [{ question, conclusion }] -- one entry per user turn
     summaryCount: 0,
+    shownFollowups: [],   // follow-up questions already suggested this discussion (see lib/followups.mjs)
     createdAt: now,
     updatedAt: now,
   };
@@ -141,6 +157,7 @@ export function getOrCreateDiscussion(id, scientistIds, lang) {
     d.rounds = [];
     d.summary = '';
     d.summaryCount = 0;
+    d.shownFollowups = [];
   }
   d.lang = lang;
   return d;

@@ -18,8 +18,19 @@ const WANT = 4; // aim for 3-4; we trim to this many
 // distinct angles (~0-0.1) are kept.
 const DIVERSITY_MAX = 0.35;
 
-function instruction(lang) {
+// `avoid` is the running memory of questions already shown to the user in
+// earlier rounds of this same conversation (plus any kept from this round's
+// own earlier attempts) -- fed back in so a retry or a later round doesn't
+// resurface the same suggestion.
+function instruction(lang, avoid = []) {
   if (lang === 'zh') {
+    const avoidBlock = avoid.length
+      ? [
+          '',
+          '以下問題先前已經出現過,不要重複、也不要只是換句話說:',
+          ...avoid.map((q) => `- ${q}`),
+        ].join('\n')
+      : '';
     return [
       '依據以下使用者與科學家的對話,設計 3 到 4 個使用者「接下來可能會問」的後續問題。',
       '目標:每個問題都延續剛才談到的內容,但各自探索「不同方向」',
@@ -30,8 +41,16 @@ function instruction(lang) {
       '- 每個問題單獨一行;不要編號、項目符號、引號或多餘文字。',
       '- 以使用者第一人稱發問的口吻,且每題都必須是真正的問句(以問號「?」結尾)。',
       '- 每題盡量簡短(20 字以內),使用繁體中文。',
-    ].join('\n');
+      avoidBlock,
+    ].filter(Boolean).join('\n');
   }
+  const avoidBlock = avoid.length
+    ? [
+        '',
+        'These questions already appeared earlier -- do not repeat or merely reword them:',
+        ...avoid.map((q) => `- ${q}`),
+      ].join('\n')
+    : '';
   return [
     'Based on the conversation below between a user and a scientist, write 3 to 4 follow-up questions the user might ask next.',
     'Goal: each question continues from what was just discussed, but explores a DIFFERENT direction',
@@ -42,7 +61,8 @@ function instruction(lang) {
     '- One question per line; no numbering, bullets, quotes, or extra text.',
     "- Phrase each in the user's first-person voice, and make each a real question ending with a question mark.",
     '- Keep each short (under ~15 words); reply in English.',
-  ].join('\n');
+    avoidBlock,
+  ].filter(Boolean).join('\n');
 }
 
 // Make sure a kept suggestion reads as a question: trim trailing punctuation and
@@ -75,44 +95,72 @@ function parseLines(text) {
   return String(text || '')
     .split(/\r?\n/)
     .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)、])\s*/, '').trim()) // strip bullets/numbering
+    // The model sometimes echoes the "使用者: " / "User: " role tag it just saw in
+    // buildTranscript()'s transcript formatting -- strip that back off.
+    .map((l) => l.replace(/^(?:使用者|user|科學家|scientist)\s*[:：]\s*/i, '').trim())
     .map((l) => l.replace(/^["'「“]+|["'」”]+$/g, '').trim()) // strip wrapping quotes
     .filter((l) => l.length > 1 && l.length < 120)
     .filter((l) => !/[:：]\s*$/.test(l)); // drop "Here are some questions:" style preambles
 }
 
+// How many extra generation passes to try (beyond the first) when the model's
+// first batch comes back short of WANT -- either because it returned fewer
+// than 3-4 lines, or diversity/memory filtering dropped most of them. Each
+// retry tells the model what has already been kept (this round + prior
+// rounds), so it reaches for genuinely new angles instead of repeating itself.
+const MAX_ATTEMPTS = 3;
+
 // Generate follow-up questions. Returns [] on any failure (the UI just shows no
-// chips), so this never breaks the chat flow.
-export async function generateFollowups({ model, lang, history = [], summary = '', signal }) {
+// chips), so this never breaks the chat flow. `existing` is the memory of
+// questions already shown to the user earlier in this same conversation (across
+// rounds); the result never duplicates or near-duplicates one of those either.
+export async function generateFollowups({ model, lang, history = [], summary = '', existing = [], signal }) {
   if (!history.length && !summary) return [];
-  try {
-    const { content } = await chat({
-      model,
-      messages: [
-        { role: 'system', content: instruction(lang) },
-        { role: 'user', content: buildTranscript(lang, history, summary) },
-      ],
-      optionOverrides: { temperature: 0.7, num_predict: config.followups.maxTokens },
-      signal,
-    });
-    const lines = parseLines(content);
-    // Keep questions that point in different directions: normalize each to a real
-    // question, then skip any that exactly- or near-duplicate one already kept.
-    const out = [];
-    const keptSets = [];
-    const seen = new Set();
-    for (const raw of lines) {
-      const q = ensureQuestion(raw, lang);
-      const key = q.toLowerCase();
-      if (seen.has(key)) continue; // exact duplicate
-      const s = shingles(q);
-      if (keptSets.some((ks) => jaccard(s, ks) >= DIVERSITY_MAX)) continue; // same question, reworded
-      seen.add(key);
-      keptSets.push(s);
-      out.push(q);
-      if (out.length >= WANT) break;
-    }
-    return out;
-  } catch {
-    return [];
+
+  // Seed the diversity filter with prior-round memory so this round's picks
+  // are new angles, not questions the user has already been offered before.
+  const out = [];
+  const keptSets = [];
+  const seen = new Set();
+  for (const q of existing) {
+    const key = String(q).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keptSets.push(shingles(q));
   }
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS && out.length < WANT; attempt++) {
+    const avoid = existing.slice(-12).concat(out);
+    try {
+      const { content } = await chat({
+        model,
+        messages: [
+          { role: 'system', content: instruction(lang, avoid) },
+          { role: 'user', content: buildTranscript(lang, history, summary) },
+        ],
+        // Nudge temperature up on retries so a short/duplicate-heavy first
+        // batch doesn't just come back the same way again.
+        optionOverrides: { temperature: 0.7 + attempt * 0.1, num_predict: config.followups.maxTokens },
+        signal,
+      });
+      const lines = parseLines(content);
+      // Keep questions that point in different directions: normalize each to a
+      // real question, then skip any that exactly- or near-duplicate one
+      // already kept (this attempt, an earlier attempt, or an earlier round).
+      for (const raw of lines) {
+        const q = ensureQuestion(raw, lang);
+        const key = q.toLowerCase();
+        if (seen.has(key)) continue; // exact duplicate
+        const s = shingles(q);
+        if (keptSets.some((ks) => jaccard(s, ks) >= DIVERSITY_MAX)) continue; // same question, reworded
+        seen.add(key);
+        keptSets.push(s);
+        out.push(q);
+        if (out.length >= WANT) break;
+      }
+    } catch {
+      break; // model/network failure -- return whatever we already have
+    }
+  }
+  return out;
 }

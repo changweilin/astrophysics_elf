@@ -150,6 +150,7 @@ html, body {
 .sci-modelchip {
   font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim);
   border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px;
+  background: var(--panel-2);
 }
 
 /* context usage meter */
@@ -170,6 +171,15 @@ html, body {
 .sci-msg.user .sci-bubble { background: var(--user-bubble); border-color: #2a3a5c; border-bottom-right-radius: 4px; }
 .sci-msg.sci .sci-bubble { background: var(--sci-bubble); border-bottom-left-radius: 4px; }
 .sci-bubble code { font-family: var(--mono); font-size: 0.86em; background: rgba(125, 179, 255, 0.1); padding: 1px 5px; border-radius: 5px; }
+
+/* LaTeX math rendered via KaTeX (see renderText() in scientists.jsx) */
+.sci-bubble .sci-math { white-space: normal; }
+.sci-bubble .sci-math .katex { font-size: 1.05em; color: inherit; }
+.sci-bubble .sci-math-block {
+  display: block; white-space: normal; overflow-x: auto; max-width: 100%;
+  margin: 8px 0; padding: 2px 0;
+}
+.sci-bubble .sci-math-block .katex-display { margin: 0; }
 
 .sci-typing { display: inline-block; width: 7px; height: 14px; background: var(--accent); border-radius: 2px; animation: sci-blink 1s steps(2) infinite; vertical-align: text-bottom; }
 @keyframes sci-blink { 50% { opacity: 0.2; } }
@@ -413,7 +423,7 @@ html, body {
     top: 96px; /* 49 + 47 */
     left: 0;
     right: 0;
-    height: 57px;
+    min-height: 57px;
     z-index: 28;
     background: var(--bg) !important;
     transform: translateY(var(--header-translate, 0px));
@@ -424,7 +434,10 @@ html, body {
 
   .sci-scroll {
     grid-row: 1;
-    padding-top: calc(153px + var(--header-translate, 0px));
+    /* --chathead-h is measured live (JS) since the head row wraps onto extra
+       lines when the model chip / persona name is long -- a fixed height here
+       would let the overflow rows sit on top of the message list. */
+    padding-top: calc(96px + var(--chathead-h, 57px) + var(--header-translate, 0px));
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
