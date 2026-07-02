@@ -1,0 +1,25 @@
+{
+  "name": "kn-wiki-kb",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Wikipedia knowledge base for the Kerr-Newman Lab: polite crawler over astronomy/astrophysics/cosmology topics + scientists + history of science in 8 languages (zh-TW/en priority), Wikidata knowledge graph, hybrid BM25+vector RAG with time decay, CRUD admin, and a periodic update checker. Zero npm dependencies (node:sqlite + local Ollama embeddings).",
+  "license": "GPL-3.0-or-later",
+  "author": "Chang Wei Lin",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "crawl": "node crawl.mjs all",
+    "discover": "node crawl.mjs discover",
+    "fetch": "node crawl.mjs fetch",
+    "langlinks": "node crawl.mjs langlinks",
+    "graph": "node crawl.mjs graph",
+    "embed": "node crawl.mjs embed",
+    "status": "node crawl.mjs status",
+    "update": "node check-updates.mjs --discover",
+    "serve": "node server.mjs",
+    "stats": "node kb-admin.mjs stats",
+    "check": "node --check config.mjs && node --check lib/db.mjs && node --check lib/wiki-api.mjs && node --check lib/seeds.mjs && node --check lib/chunk.mjs && node --check lib/embed.mjs && node --check lib/graph.mjs && node --check lib/retrieve.mjs && node --check lib/ingest.mjs && node --check lib/discover.mjs && node --check crawl.mjs && node --check check-updates.mjs && node --check kb-admin.mjs && node --check server.mjs"
+  }
+}

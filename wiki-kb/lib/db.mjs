@@ -1,0 +1,297 @@
+// SQLite storage for the wiki knowledge base (node:sqlite, zero dependencies).
+//
+// One database file holds pages, chunks (+ FTS5 index + embedding BLOBs), the
+// Wikidata-backed knowledge graph (entities/edges), the crawl queue, and the
+// sync log. All timestamps are ISO-8601 UTC strings; deletes are soft by
+// default (status='deleted') so CRUD history stays auditable.
+
+import { DatabaseSync } from 'node:sqlite';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { config } from '../config.mjs';
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS meta(
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+CREATE TABLE IF NOT EXISTS pages(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  lang TEXT NOT NULL,
+  pageid INTEGER,
+  title TEXT NOT NULL,
+  qid TEXT,
+  kind TEXT NOT NULL DEFAULT 'topic',
+  url TEXT,
+  summary TEXT,
+  content TEXT,
+  rev_id INTEGER,
+  rev_time TEXT,
+  crawled_at TEXT,
+  updated_at TEXT,
+  source TEXT NOT NULL DEFAULT 'wikipedia',
+  license TEXT NOT NULL DEFAULT 'CC BY-SA 4.0',
+  status TEXT NOT NULL DEFAULT 'active',
+  UNIQUE(lang, title)
+);
+CREATE INDEX IF NOT EXISTS idx_pages_qid ON pages(qid);
+CREATE INDEX IF NOT EXISTS idx_pages_lang_status ON pages(lang, status);
+CREATE TABLE IF NOT EXISTS page_categories(
+  page_id INTEGER NOT NULL,
+  category TEXT NOT NULL,
+  PRIMARY KEY(page_id, category)
+);
+CREATE TABLE IF NOT EXISTS chunks(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id INTEGER NOT NULL,
+  seq INTEGER NOT NULL,
+  section TEXT,
+  text TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  embedding BLOB,
+  embed_model TEXT,
+  embed_dim INTEGER,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_page ON chunks(page_id);
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(tok);
+CREATE TABLE IF NOT EXISTS entities(
+  qid TEXT PRIMARY KEY,
+  kind TEXT NOT NULL DEFAULT 'stub',
+  label_en TEXT,
+  label_zh TEXT,
+  description TEXT,
+  birth TEXT,
+  death TEXT,
+  claims TEXT,
+  updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS edges(
+  src TEXT NOT NULL,
+  rel TEXT NOT NULL,
+  rel_label TEXT,
+  dst TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'wikidata',
+  updated_at TEXT,
+  PRIMARY KEY(src, rel, dst)
+);
+CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst);
+CREATE TABLE IF NOT EXISTS crawl_queue(
+  lang TEXT NOT NULL,
+  title TEXT NOT NULL,
+  depth INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  added_at TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  detail TEXT,
+  PRIMARY KEY(lang, title)
+);
+CREATE INDEX IF NOT EXISTS idx_queue_status ON crawl_queue(status, lang);
+CREATE TABLE IF NOT EXISTS sync_log(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  lang TEXT,
+  title TEXT,
+  detail TEXT
+);
+`;
+
+export function openDb(dbPath = config.dbPath) {
+  if (dbPath !== ':memory:') mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  db.exec('PRAGMA journal_mode=WAL;');
+  db.exec(SCHEMA);
+  return db;
+}
+
+export const now = () => new Date().toISOString();
+export const sha256 = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+// --- CJK-aware tokenization for the FTS index -------------------------------
+// FTS5's unicode61 keeps a CJK run as a single token, which makes Chinese/
+// Japanese/Korean text unsearchable. We index a pre-tokenized form instead:
+// latin/digit words are kept whole (lowercased) and every CJK run is expanded
+// into overlapping character bigrams. Queries go through the same transform.
+const TOKEN_RE =
+  /([A-Za-z0-9][A-Za-z0-9+.\-]*)|([぀-ヿㇰ-ㇿ㐀-䶿一-鿿豈-﫿가-힯]+)/g;
+
+export function cjkTokenize(text) {
+  const out = [];
+  let m;
+  TOKEN_RE.lastIndex = 0;
+  while ((m = TOKEN_RE.exec(text)) !== null) {
+    if (m[1]) {
+      out.push(m[1].toLowerCase());
+    } else {
+      const run = m[2];
+      if (run.length === 1) out.push(run);
+      else for (let i = 0; i < run.length - 1; i++) out.push(run.slice(i, i + 2));
+    }
+  }
+  return out;
+}
+
+export function ftsText(text) {
+  return cjkTokenize(text).join(' ');
+}
+
+// OR-of-tokens keeps recall high; BM25 ranking sorts the rest out.
+export function ftsQuery(text, maxTokens = 32) {
+  const toks = [...new Set(cjkTokenize(text))].slice(0, maxTokens);
+  return toks.map((t) => `"${t.replaceAll('"', '')}"`).join(' OR ');
+}
+
+// --- pages -------------------------------------------------------------------
+
+export function getPageByTitle(db, lang, title) {
+  return db.prepare('SELECT * FROM pages WHERE lang=? AND title=?').get(lang, title);
+}
+export function getPageById(db, id) {
+  return db.prepare('SELECT * FROM pages WHERE id=?').get(id);
+}
+
+export function upsertPage(db, p) {
+  const ts = now();
+  const existing = db
+    .prepare('SELECT id FROM pages WHERE lang=? AND title=?')
+    .get(p.lang, p.title);
+  if (existing) {
+    db.prepare(
+      `UPDATE pages SET pageid=?, qid=COALESCE(?,qid), kind=COALESCE(?,kind),
+         url=COALESCE(?,url), summary=COALESCE(?,summary), content=COALESCE(?,content),
+         rev_id=?, rev_time=?, updated_at=?, status='active'
+       WHERE id=?`
+    ).run(
+      p.pageid ?? null, p.qid ?? null, p.kind ?? null, p.url ?? null,
+      p.summary ?? null, p.content ?? null, p.revId ?? null, p.revTime ?? null,
+      ts, existing.id
+    );
+    return existing.id;
+  }
+  const r = db.prepare(
+    `INSERT INTO pages(lang,pageid,title,qid,kind,url,summary,content,rev_id,rev_time,crawled_at,updated_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    p.lang, p.pageid ?? null, p.title, p.qid ?? null, p.kind ?? 'topic',
+    p.url ?? null, p.summary ?? null, p.content ?? null, p.revId ?? null,
+    p.revTime ?? null, ts, ts
+  );
+  return Number(r.lastInsertRowid);
+}
+
+export function setPageCategories(db, pageId, categories) {
+  db.prepare('DELETE FROM page_categories WHERE page_id=?').run(pageId);
+  const ins = db.prepare(
+    'INSERT OR IGNORE INTO page_categories(page_id,category) VALUES(?,?)'
+  );
+  for (const c of categories || []) ins.run(pageId, c);
+}
+
+export function getPageCategories(db, pageId) {
+  return db
+    .prepare('SELECT category FROM page_categories WHERE page_id=? ORDER BY category')
+    .all(pageId)
+    .map((r) => r.category);
+}
+
+// Replace a page's chunks; embeddings survive for chunks whose text is
+// unchanged (matched by content hash), so an article edit only re-embeds the
+// paragraphs that actually changed.
+export function replaceChunks(db, pageId, pieces) {
+  const old = db
+    .prepare('SELECT id, text_hash, embedding, embed_model, embed_dim FROM chunks WHERE page_id=?')
+    .all(pageId);
+  const byHash = new Map(old.map((c) => [c.text_hash, c]));
+  const delFts = db.prepare('DELETE FROM chunks_fts WHERE rowid=?');
+  for (const c of old) delFts.run(c.id);
+  db.prepare('DELETE FROM chunks WHERE page_id=?').run(pageId);
+
+  const ins = db.prepare(
+    `INSERT INTO chunks(page_id,seq,section,text,text_hash,embedding,embed_model,embed_dim,updated_at)
+     VALUES(?,?,?,?,?,?,?,?,?)`
+  );
+  const insFts = db.prepare('INSERT INTO chunks_fts(rowid, tok) VALUES(?,?)');
+  const ts = now();
+  let kept = 0;
+  pieces.forEach((p, i) => {
+    const hash = sha256(p.text);
+    const prev = byHash.get(hash);
+    if (prev && prev.embedding) kept++;
+    const r = ins.run(
+      pageId, i, p.section ?? null, p.text, hash,
+      prev?.embedding ?? null, prev?.embed_model ?? null, prev?.embed_dim ?? null, ts
+    );
+    insFts.run(
+      Number(r.lastInsertRowid),
+      ftsText(`${p.section ? p.section + ' ' : ''}${p.text}`)
+    );
+  });
+  return { total: pieces.length, keptEmbeddings: kept };
+}
+
+// Soft delete keeps the page row (status='deleted') but always removes chunks
+// so the page can no longer be retrieved; --hard purges everything.
+export function deletePage(db, pageId, { hard = false } = {}) {
+  const chunkIds = db.prepare('SELECT id FROM chunks WHERE page_id=?').all(pageId);
+  const delFts = db.prepare('DELETE FROM chunks_fts WHERE rowid=?');
+  for (const c of chunkIds) delFts.run(c.id);
+  db.prepare('DELETE FROM chunks WHERE page_id=?').run(pageId);
+  if (hard) {
+    db.prepare('DELETE FROM page_categories WHERE page_id=?').run(pageId);
+    db.prepare('DELETE FROM pages WHERE id=?').run(pageId);
+  } else {
+    db.prepare("UPDATE pages SET status='deleted', updated_at=? WHERE id=?").run(now(), pageId);
+  }
+}
+
+// --- crawl queue --------------------------------------------------------------
+
+export function enqueue(db, lang, title, depth = 0, reason = '') {
+  const r = db.prepare(
+    `INSERT INTO crawl_queue(lang,title,depth,reason,added_at)
+     VALUES(?,?,?,?,?) ON CONFLICT(lang,title) DO NOTHING`
+  ).run(lang, title, depth, reason, now());
+  return r.changes > 0;
+}
+
+export function pendingQueue(db, lang, limit = 50) {
+  return db
+    .prepare("SELECT title, depth, reason FROM crawl_queue WHERE lang=? AND status='pending' LIMIT ?")
+    .all(lang, limit);
+}
+
+export function markQueue(db, lang, title, status, detail = null) {
+  db.prepare('UPDATE crawl_queue SET status=?, detail=? WHERE lang=? AND title=?')
+    .run(status, detail, lang, title);
+}
+
+// --- sync log / stats -----------------------------------------------------------
+
+export function logSync(db, kind, lang = null, title = null, detail = null) {
+  db.prepare('INSERT INTO sync_log(ts,kind,lang,title,detail) VALUES(?,?,?,?,?)')
+    .run(now(), kind, lang, title, detail);
+}
+
+export function stats(db) {
+  const one = (sql) => db.prepare(sql).get();
+  return {
+    pagesActive: one("SELECT COUNT(*) n FROM pages WHERE status='active'").n,
+    pagesDeleted: one("SELECT COUNT(*) n FROM pages WHERE status='deleted'").n,
+    byLang: db
+      .prepare("SELECT lang, COUNT(*) n FROM pages WHERE status='active' GROUP BY lang ORDER BY n DESC")
+      .all(),
+    byKind: db
+      .prepare("SELECT kind, COUNT(*) n FROM pages WHERE status='active' GROUP BY kind ORDER BY n DESC")
+      .all(),
+    chunks: one('SELECT COUNT(*) n FROM chunks').n,
+    embedded: one('SELECT COUNT(*) n FROM chunks WHERE embedding IS NOT NULL').n,
+    entities: one("SELECT COUNT(*) n FROM entities WHERE kind!='stub'").n,
+    stubEntities: one("SELECT COUNT(*) n FROM entities WHERE kind='stub'").n,
+    edges: one('SELECT COUNT(*) n FROM edges').n,
+    queuePending: one("SELECT COUNT(*) n FROM crawl_queue WHERE status='pending'").n,
+    queueErrors: one("SELECT COUNT(*) n FROM crawl_queue WHERE status='error'").n,
+    lastSync: db.prepare('SELECT ts, kind, lang, title, detail FROM sync_log ORDER BY id DESC LIMIT 1').get() ?? null,
+  };
+}

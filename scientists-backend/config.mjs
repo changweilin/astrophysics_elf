@@ -153,6 +153,10 @@ export const config = {
   // --- Knowledge augmentation (Wikipedia RAG; see knowledge/wiki.mjs) ---
   wiki: {
     enabled: envBool('SCI_WIKI_RAG', false),
+    // Local wiki-kb service (../wiki-kb, default http://127.0.0.1:5189). When
+    // set, retrieval asks the offline knowledge base first and only falls back
+    // to live Wikipedia if the KB is down or has nothing. Empty = live only.
+    kbUrl: envStr('SCI_WIKI_KB_URL', ''),
     // 'zh' uses zh.wikipedia.org (served as Traditional via the variant header).
     lang: envStr('SCI_WIKI_LANG', 'zh'),
     // Traditional-Chinese variant for zh.wikipedia content negotiation.

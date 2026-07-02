@@ -21,6 +21,8 @@ const UA = 'KN-Scientists-Lab/1.0 (local educational app; contact: local user)';
 // '' if disabled / nothing useful / any error). Never throws -- RAG is additive.
 export async function retrieveContext(query, lang) {
   if (!config.wiki.enabled || !query || !query.trim()) return '';
+  const fromKb = await retrieveFromKb(query, lang);
+  if (fromKb) return fromKb;
   try {
     const site = wikiSite(lang);
     const title = await searchTitle(site, query, lang);
@@ -29,6 +31,29 @@ export async function retrieveContext(query, lang) {
     if (!extract) return '';
     const clipped = extract.slice(0, config.wiki.maxChars);
     return `[Wikipedia: ${title}]\n${clipped}`;
+  } catch {
+    return '';
+  }
+}
+
+// Offline knowledge base (../../wiki-kb): hybrid BM25+vector retrieval with
+// time decay over a crawled astronomy/astrophysics corpus. Optional -- only
+// used when SCI_WIKI_KB_URL is set, and any error falls back to the live
+// Wikipedia path below, so this can never break the chat.
+async function retrieveFromKb(query, lang) {
+  if (!config.wiki.kbUrl) return '';
+  try {
+    const url = new URL('/api/context', config.wiki.kbUrl);
+    url.searchParams.set('q', query);
+    url.searchParams.set('lang', lang === 'en' ? 'en' : config.wiki.lang);
+    url.searchParams.set('maxChars', String(config.wiki.maxChars));
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(config.wiki.timeoutMs),
+    });
+    if (!res.ok) return '';
+    const data = await res.json();
+    return data && data.ok && data.context ? data.context : '';
   } catch {
     return '';
   }

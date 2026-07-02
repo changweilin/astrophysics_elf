@@ -1,0 +1,3 @@
+# SQLite corpus (rebuildable from Wikipedia via crawl.mjs)
+data/
+*.jsonl

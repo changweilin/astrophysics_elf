@@ -123,6 +123,13 @@ of the best-matching Wikipedia article (zh.wikipedia in the `zh-tw` variant for
 Chinese, en.wikipedia for English) and injects it as reference context. Fails
 open -- if Wikipedia is unreachable the chat proceeds normally.
 
+**A+. Offline knowledge base.** Also set `SCI_WIKI_KB_URL=http://127.0.0.1:5189`
+and run `node wiki-kb/server.mjs` (see `../wiki-kb/README.md`). Retrieval then
+asks the local crawled corpus first (hybrid BM25+vector search with time decay
+over astronomy/astrophysics/cosmology articles, scientists, and history of
+science in 8 languages) and only falls back to live Wikipedia when the KB is
+down or has no match.
+
 **B. Offline fine-tuning.** Build a chat-format dataset from Wikipedia and
 LoRA-fine-tune a local model:
 
