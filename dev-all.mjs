@@ -1,12 +1,19 @@
-// Start the static page server and the Scientists backend together, so a single
-// `npm run dev:all` runs the whole stack instead of two terminals.
+// Start the static page server and the Scientists backend together, so a
+// single `npm run dev:all` runs the whole stack instead of two terminals.
 //
 //   [web] static page  -> http://127.0.0.1:5184  (serve.mjs)
-//   [api] LLM backend  -> http://127.0.0.1:5188  (scientists-backend/server.mjs)
+//   [api] LLM backend  -> http://127.0.0.1:5188  (scientists-backend/server.mjs,
+//                          which also serves the merged wiki-kb knowledge-base
+//                          API -- see wiki-kb/lib/routes.mjs)
 //
 // Zero dependencies. Output from each server is line-prefixed; Ctrl+C (or either
 // child exiting) shuts both down. Env vars pass through, so the usual SCI_* /
 // PORT overrides still work, e.g.  SCI_MODEL_ZH=qwen3:8b npm run dev:all
+//
+// The wiki-kb corpus can still be served standalone on :5189
+// (`npm run kb:serve`, from wiki-kb/) for admin/crawl work via kb-admin.html
+// without needing Ollama or this stack running; that's a separate, optional
+// process this script does not manage.
 
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';

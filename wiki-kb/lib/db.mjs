@@ -161,22 +161,22 @@ export function upsertPage(db, p) {
     db.prepare(
       `UPDATE pages SET pageid=?, qid=COALESCE(?,qid), kind=COALESCE(?,kind),
          url=COALESCE(?,url), summary=COALESCE(?,summary), content=COALESCE(?,content),
-         rev_id=?, rev_time=?, updated_at=?, status='active'
+         rev_id=?, rev_time=?, source=COALESCE(?,source), updated_at=?, status='active'
        WHERE id=?`
     ).run(
       p.pageid ?? null, p.qid ?? null, p.kind ?? null, p.url ?? null,
       p.summary ?? null, p.content ?? null, p.revId ?? null, p.revTime ?? null,
-      ts, existing.id
+      p.source ?? null, ts, existing.id
     );
     return existing.id;
   }
   const r = db.prepare(
-    `INSERT INTO pages(lang,pageid,title,qid,kind,url,summary,content,rev_id,rev_time,crawled_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO pages(lang,pageid,title,qid,kind,url,summary,content,rev_id,rev_time,crawled_at,updated_at,source)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     p.lang, p.pageid ?? null, p.title, p.qid ?? null, p.kind ?? 'topic',
     p.url ?? null, p.summary ?? null, p.content ?? null, p.revId ?? null,
-    p.revTime ?? null, ts, ts
+    p.revTime ?? null, ts, ts, p.source ?? 'wikipedia'
   );
   return Number(r.lastInsertRowid);
 }
@@ -187,6 +187,84 @@ export function setPageCategories(db, pageId, categories) {
     'INSERT OR IGNORE INTO page_categories(page_id,category) VALUES(?,?)'
   );
   for (const c of categories || []) ins.run(pageId, c);
+}
+
+// Browse/filter pages for the admin UI. Returns { total, rows } (rows carry
+// contentChars instead of the full text so listings stay light).
+export function listPages(db, { lang, kind, status = 'active', q, limit = 50, offset = 0 } = {}) {
+  const filters = [];
+  const args = [];
+  if (status && status !== 'all') { filters.push('status=?'); args.push(status); }
+  if (lang) { filters.push('lang=?'); args.push(lang); }
+  if (kind) { filters.push('kind=?'); args.push(kind); }
+  if (q) { filters.push('title LIKE ?'); args.push(`%${q}%`); }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const total = db.prepare(`SELECT COUNT(*) n FROM pages ${where}`).get(...args).n;
+  const rows = db
+    .prepare(
+      `SELECT id, lang, title, qid, kind, url, source, status, rev_time, updated_at,
+              LENGTH(COALESCE(content,'')) AS contentChars,
+              (SELECT COUNT(*) FROM chunks c WHERE c.page_id = pages.id) AS chunks
+       FROM pages ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+    )
+    .all(...args, Math.max(1, Math.min(500, limit)), Math.max(0, offset));
+  return { total, rows };
+}
+
+// Browse/search knowledge-graph entities, busiest (highest degree) first.
+export function listEntities(db, { q, kind, limit = 50 } = {}) {
+  const filters = [];
+  const args = [];
+  if (kind) { filters.push('e.kind=?'); args.push(kind); }
+  else { filters.push("e.kind != 'stub'"); }
+  if (q) {
+    filters.push('(e.label_en LIKE ? OR e.label_zh LIKE ? OR e.qid = ?)');
+    args.push(`%${q}%`, `%${q}%`, q);
+  }
+  const where = `WHERE ${filters.join(' AND ')}`;
+  return db
+    .prepare(
+      `SELECT e.qid, e.kind, e.label_en, e.label_zh, e.description, e.birth, e.death,
+              (SELECT COUNT(*) FROM edges x WHERE x.src = e.qid OR x.dst = e.qid) AS degree
+       FROM entities e ${where} ORDER BY degree DESC, e.qid LIMIT ?`
+    )
+    .all(...args, Math.max(1, Math.min(300, limit)));
+}
+
+// Manual (admin/user) entity upsert. Without a qid a collision-free local id is
+// minted with a 'KN' prefix so it can never shadow a Wikidata Q-number.
+export function upsertManualEntity(db, { qid, kind = 'topic', label_en, label_zh, description } = {}) {
+  const id = qid && String(qid).trim()
+    ? String(qid).trim()
+    : `KN${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+  db.prepare(
+    `INSERT INTO entities(qid,kind,label_en,label_zh,description,updated_at)
+     VALUES(?,?,?,?,?,?)
+     ON CONFLICT(qid) DO UPDATE SET
+       kind=excluded.kind,
+       label_en=COALESCE(excluded.label_en,label_en),
+       label_zh=COALESCE(excluded.label_zh,label_zh),
+       description=COALESCE(excluded.description,description),
+       updated_at=excluded.updated_at`
+  ).run(id, kind, label_en ?? null, label_zh ?? null, description ?? null, now());
+  return db.prepare('SELECT * FROM entities WHERE qid=?').get(id);
+}
+
+export function addEdge(db, src, rel, relLabel, dst, source = 'manual') {
+  db.prepare(
+    `INSERT INTO edges(src,rel,rel_label,dst,source,updated_at) VALUES(?,?,?,?,?,?)
+     ON CONFLICT(src,rel,dst) DO UPDATE SET rel_label=excluded.rel_label, updated_at=excluded.updated_at`
+  ).run(src, rel, relLabel ?? rel, dst, source, now());
+}
+
+export function removeEdge(db, src, rel, dst) {
+  return db.prepare('DELETE FROM edges WHERE src=? AND rel=? AND dst=?').run(src, rel, dst).changes;
+}
+
+export function recentLog(db, limit = 100) {
+  return db
+    .prepare('SELECT ts, kind, lang, title, detail FROM sync_log ORDER BY id DESC LIMIT ?')
+    .all(Math.max(1, Math.min(500, limit)));
 }
 
 export function getPageCategories(db, pageId) {

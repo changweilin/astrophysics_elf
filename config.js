@@ -92,11 +92,95 @@
     } catch (e) { return null; }
   }
 
+  // ── Demo launch (?demo=<id> from the library page) ─────────────────
+  // The library's per-chapter "mini-game" buttons open index.html?demo=<id>;
+  // the id resolves through window.KN_DEMOS (demo-presets.js) into a lab
+  // configuration applied ON TOP of any stored config. Read once per page
+  // load and stripped from the URL, so a reload keeps the user's tweaks and
+  // both the desktop and mobile sims (each calls applyConfig) see it.
+  function urlDemoId() {
+    if (window.__knDemoId !== undefined) return window.__knDemoId;
+    let id = null;
+    try {
+      const u = new URL(window.location.href);
+      id = u.searchParams.get('demo');
+      if (id) {
+        u.searchParams.delete('demo');
+        window.history.replaceState(null, '', u);
+      }
+    } catch (e) { /* older browsers: leave the param in place */ }
+    window.__knDemoId = id;
+    return id;
+  }
+
+  function applyDemo(sim) {
+    const id = urlDemoId();
+    const demo = id && window.KN_DEMOS && window.KN_DEMOS[id];
+    if (!demo || !sim.params) return false;
+    const c = demo.config || {};
+    const phys = window.KNphysics;
+    // Same funnel as a §06 preset click (panel-left.jsx): geometry stays in
+    // units of M, Msun is the physical label, stellar surfaces are re-derived.
+    sim.params.M = 1;
+    if (isNum(c.Msun)) sim.params.Msun = c.Msun;
+    sim.params.Q = isNum(c.Q) ? c.Q : 0;
+    sim.params.a = isNum(c.a) ? c.a : 0;
+    sim.params.type = TYPES[c.type] ? c.type : 'bh';
+    sim.params.age = 0;
+    sim.params.Z = 0.5;
+    const ds = phys.deriveStellar(sim.params.type, sim.params.Msun, { age: 0, Z: 0.5 });
+    if (ds) {
+      sim.params.R_star = ds.R_star;
+      sim.params.T_eff = ds.T_eff;
+      sim.params._stellarTouched = false;
+    } else {
+      sim.params._stellarTouched = (c.R_star != null || c.T_eff != null);
+      if (isNum(c.R_star)) sim.params.R_star = c.R_star;
+      if (isNum(c.T_eff)) sim.params.T_eff = c.T_eff;
+    }
+    if (isNum(c.B)) sim.params.B = c.B;
+    if (typeof c.disc === 'boolean' && typeof KN.setDiscEnabled === 'function') {
+      KN.setDiscEnabled(sim, 'central', c.disc);
+    }
+    if (c.flags && sim.flags) {
+      for (const k of Object.keys(sim.flags)) {
+        if (typeof c.flags[k] === 'boolean') sim.flags[k] = c.flags[k];
+      }
+    }
+    if (isNum(c.timescale)) sim.timescale = c.timescale;
+    sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(sim.params.type)];
+    // Optional companion (binary demos): placed on a stable circular orbit.
+    if (c.binary && sim.binary && typeof KN.placeCompanion === 'function') {
+      const b = c.binary;
+      if (TYPES[b.type]) sim.binary.type = b.type;
+      if (isNum(b.M2sun)) {
+        sim.binary.M2sun = b.M2sun;
+        sim.binary.M2 = Math.max(0.01, b.M2sun / Math.max(0.01, sim.params.Msun || 1));
+      }
+      if (isNum(b.inspiralRate)) sim.binary.inspiralRate = b.inspiralRate;
+      const px = sim.primary ? sim.primary.x : 0;
+      const py = sim.primary ? sim.primary.y : 0;
+      KN.placeCompanion(sim, px + (isNum(b.d) ? b.d : 40), py);
+    }
+    if (typeof KN.logEv === 'function') {
+      const name = demo.label ? (demo.label.en || '') : id;
+      KN.logEv(sim, 'good', 'library demo loaded · ' + name);
+    }
+    return true;
+  }
+
   // Merge a stored config onto a freshly created sim. Every field is validated
   // so a corrupt/old payload can never throw or poison the running simulation.
   function applyConfig(sim, cfg) {
     if (cfg === undefined) cfg = readConfig();
-    if (!cfg) return false;
+    if (!cfg) {
+      // No stored state (first visit) — a demo link must still apply.
+      if (applyDemo(sim)) {
+        sim._cfgJson = JSON.stringify(configSnapshot(sim));
+        return true;
+      }
+      return false;
+    }
     const p = cfg.params;
     if (p && sim.params) {
       // Geometric mass is always 1 (geometry in units of M). The physical solar
@@ -232,6 +316,8 @@
     // persisted as individual bodies). Regenerates N stars from the restored mass, so a
     // reload returns to the same structure rather than an empty core (N = 0).
     if (typeof KN.reseedStructureClouds === 'function') KN.reseedStructureClouds(sim);
+    // A demo link overrides the restored state (the user explicitly asked for it).
+    applyDemo(sim);
     // Record the resulting state as "already saved" so the first autosave no-ops.
     sim._cfgJson = JSON.stringify(configSnapshot(sim));
     return true;

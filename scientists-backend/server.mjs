@@ -1,4 +1,6 @@
-// Scientists backend -- REST + SSE API for the roleplay chat.
+// Scientists backend -- REST + SSE API for the roleplay chat, merged with the
+// wiki-kb knowledge-base API (search/graph/contribute/etc.) so the live app
+// has a single backend to talk to.
 //
 //   node server.mjs                 -> listens on 127.0.0.1:5188
 //   SCI_PORT=7100 node server.mjs   -> custom port
@@ -7,8 +9,12 @@
 //   tailscale serve --bg --https=5188 http://127.0.0.1:5188
 // (see README for the full mobile + tailnet setup).
 //
-// Clean isolation: the browser only ever sees the JSON/SSE contract below; it
-// shares no code with the static demo. The demo's serve.mjs is untouched.
+// Clean isolation from the static demo: the browser only ever sees the
+// JSON/SSE contract below; the demo's serve.mjs is untouched. The wiki-kb
+// route dispatch (../wiki-kb/lib/routes.mjs) IS shared code by design -- it's
+// the same knowledge-base API also exposed standalone by wiki-kb/server.mjs
+// for admin/crawl work (kb-admin.html) -- so a KB route works identically
+// whichever process answers it.
 
 import { createServer } from 'node:http';
 import { config, normalizeLang } from './config.mjs';
@@ -31,6 +37,11 @@ import { runDiscussion } from './lib/discussion.mjs';
 import { assignScientist } from './lib/router.mjs';
 import { generateFollowups } from './lib/followups.mjs';
 import { retrieveContext } from './knowledge/wiki.mjs';
+import { openDb } from '../wiki-kb/lib/db.mjs';
+import { createKbRouter, kbHealthPayload } from '../wiki-kb/lib/routes.mjs';
+
+const kbDb = openDb();
+const handleKbRoute = createKbRouter(kbDb);
 
 // ---- small HTTP helpers ----
 
@@ -199,6 +210,7 @@ async function handleHealth(req, res) {
     busy: isBusy(),
     wikiRag: config.wiki.enabled,
     ollama,
+    kb: await kbHealthPayload(kbDb),
   });
 }
 
@@ -635,6 +647,10 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && path === '/api/discuss/followups') {
       return await handleDiscussFollowups(req, res);
     }
+    // Wiki-kb routes (search/graph/contribute/etc.), merged in-process --
+    // see ../wiki-kb/lib/routes.mjs. /api/health is handled above (this
+    // server's own handler already folds in kbHealthPayload).
+    if (await handleKbRoute(req, res, url)) return;
     sendJson(res, 404, { error: 'not found' });
   } catch (err) {
     if (!res.headersSent) sendJson(res, 500, { error: String(err && err.message || err) });
@@ -661,6 +677,8 @@ server.listen(config.port, config.host, async () => {
     }
   }
   console.log(`  WikiRAG: ${config.wiki.enabled ? 'on' : 'off'}`);
+  const kb = await kbHealthPayload(kbDb);
+  console.log(`  KB:      ${kb.pages} pages, ${kb.chunks} chunks (${kb.embedded} embedded), ${kb.edges} edges`);
   console.log('  Tailnet: tailscale serve --bg --https=' + config.port +
     ' http://127.0.0.1:' + config.port);
 });

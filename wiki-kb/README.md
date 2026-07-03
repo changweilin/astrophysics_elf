@@ -12,10 +12,17 @@
 - **禮貌爬取**:序列請求 + 250ms 間隔、描述性 User-Agent、`maxlag=5`、退避重試。
 
 ```
-crawl.mjs / check-updates.mjs ──> data/kb.sqlite <── server.mjs (:5189)
-      │  MediaWiki + Wikidata API                        │ /api/context
-      └─ Ollama /api/embed (bge-m3)                       └─> scientists-backend (SCI_WIKI_KB_URL)
+crawl.mjs / check-updates.mjs ──> data/kb.sqlite <── server.mjs (:5189, standalone/admin)
+      │  MediaWiki + Wikidata API                        ↑
+      └─ Ollama /api/embed (bge-m3)                       │ lib/routes.mjs (shared dispatch)
+                                                           │
+                                    scientists-backend/server.mjs (:5188, merged -- the live app)
 ```
+
+`lib/routes.mjs` holds the actual route dispatch; `server.mjs` here just wraps
+it for standalone use (crawl/admin work via `kb-admin.html`, no Ollama chat
+model needed). The live app talks to the merged copy in
+`scientists-backend/server.mjs` instead -- see below.
 
 ## 快速開始
 
@@ -106,14 +113,24 @@ node kb-admin.mjs vacuum
 
 ### 接上 Scientists 聊天後端
 
+KB 已經**合併進 `scientists-backend/server.mjs`**(:5188)同一個行程 ——
+`lib/routes.mjs` 的路由分派同時被這裡的 `server.mjs`(獨立執行,給
+`kb-admin.html` 與爬蟲/管理用)與 `scientists-backend/server.mjs`(合併執行,
+給正式站用)引用。開啟 RAG 只需要:
+
 ```powershell
 $env:SCI_WIKI_RAG = "1"
-$env:SCI_WIKI_KB_URL = "http://127.0.0.1:5189"
-npm run dev:all      # 另開一個終端跑 node wiki-kb/server.mjs
+npm run dev:all
 ```
 
-`scientists-backend/knowledge/wiki.mjs` 會**先問本地 KB**(`/api/context`),
-任何錯誤或空結果都退回原本的線上維基路徑 —— fail-open,聊天永不因 KB 掛掉而中斷。
+不用再另開終端跑 `wiki-kb/server.mjs`,也不用設定 `SCI_WIKI_KB_URL` —— 兩邊
+現在共用同一個行程與同一顆 `data/kb.sqlite`(WAL 模式,兩個連線並存沒問題)。
+`scientists-backend/knowledge/wiki.mjs` 會**先問本地 KB**(直接呼叫
+`lib/retrieve.mjs`,不再走 HTTP),任何錯誤或空結果都退回原本的線上維基路徑
+—— fail-open,聊天永不因 KB 掛掉而中斷。
+
+若只是要做爬蟲/管理工作(`kb-admin.html`、`npm run kb:crawl` 等),不需要
+Ollama 聊天模型跑起來,仍然可以獨立執行 `npm run kb:serve`(:5189)。
 
 ## 範圍與擴充
 

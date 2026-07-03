@@ -14,8 +14,13 @@
 // future "LLM-wiki" service can be dropped in without touching the chat path.
 
 import { config } from '../config.mjs';
+import { openDb } from '../../wiki-kb/lib/db.mjs';
+import { search, buildContext } from '../../wiki-kb/lib/retrieve.mjs';
 
 const UA = 'KN-Scientists-Lab/1.0 (local educational app; contact: local user)';
+// Own connection to the shared kb.sqlite (WAL mode; safe alongside the
+// server's own handle and any standalone wiki-kb/server.mjs instance).
+const kbDb = openDb();
 
 // Public interface: given a user question, return a short reference string (or
 // '' if disabled / nothing useful / any error). Never throws -- RAG is additive.
@@ -37,23 +42,17 @@ export async function retrieveContext(query, lang) {
 }
 
 // Offline knowledge base (../../wiki-kb): hybrid BM25+vector retrieval with
-// time decay over a crawled astronomy/astrophysics corpus. Optional -- only
-// used when SCI_WIKI_KB_URL is set, and any error falls back to the live
-// Wikipedia path below, so this can never break the chat.
+// time decay over a crawled astronomy/astrophysics corpus. The KB now lives
+// in this same process (see server.mjs), so retrieval is a direct in-process
+// call, not an HTTP round-trip. Any error falls back to the live Wikipedia
+// path below, so this can never break the chat.
 async function retrieveFromKb(query, lang) {
-  if (!config.wiki.kbUrl) return '';
   try {
-    const url = new URL('/api/context', config.wiki.kbUrl);
-    url.searchParams.set('q', query);
-    url.searchParams.set('lang', lang === 'en' ? 'en' : config.wiki.lang);
-    url.searchParams.set('maxChars', String(config.wiki.maxChars));
-    const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(config.wiki.timeoutMs),
-    });
-    if (!res.ok) return '';
-    const data = await res.json();
-    return data && data.ok && data.context ? data.context : '';
+    const kbLang = lang === 'en' ? 'en' : config.wiki.lang;
+    const langs = kbLang === 'en' ? ['en'] : [kbLang, 'en'];
+    const results = await search(kbDb, { q: query, langs });
+    const ctx = buildContext(results, config.wiki.maxChars);
+    return ctx.context || '';
   } catch {
     return '';
   }

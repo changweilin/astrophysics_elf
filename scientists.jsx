@@ -89,6 +89,17 @@ const T = {
     favDelete: '刪除',
     favBack: '返回收藏',
     favTurns: '則訊息',
+    favEdit: '編輯',
+    favEditTitle: '標題',
+    favEditSave: '儲存變更',
+    favEditCancel: '取消編輯',
+    favEditDelMsg: '刪除這則訊息',
+    favEdited: '已更新收藏內容',
+    favKb: '加入知識圖譜',
+    favKbBusy: '正在加入知識圖譜...',
+    favKbDone: '已加入知識圖譜——RAG 檢索與圖譜檢視現在都找得到這段對話',
+    favKbErr: '加入知識圖譜失敗:',
+    favKbHint: '(需要 wiki-kb 服務運行中;可用 ?kb= 參數或圖書館頁設定位址)',
     tabDiscuss: '科學對話',
     discussRoster: '點選加入討論成員',
     managePanel: '管理討論成員',
@@ -192,6 +203,17 @@ const T = {
     favDelete: 'Delete',
     favBack: 'Back to saved',
     favTurns: 'messages',
+    favEdit: 'Edit',
+    favEditTitle: 'Title',
+    favEditSave: 'Save changes',
+    favEditCancel: 'Cancel editing',
+    favEditDelMsg: 'Delete this message',
+    favEdited: 'Saved thread updated',
+    favKb: 'Add to knowledge graph',
+    favKbBusy: 'Adding to the knowledge graph...',
+    favKbDone: 'Added -- this thread is now retrievable via RAG and visible in the knowledge graph',
+    favKbErr: 'Could not add to the knowledge graph: ',
+    favKbHint: '(requires the wiki-kb service; set its URL via ?kb= or on the library page)',
     tabDiscuss: 'Dialogue',
     discussRoster: 'Tap to add panel members',
     managePanel: 'Manage panel',
@@ -453,6 +475,35 @@ const IconCopy = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+
+// Resume a saved thread: play triangle.
+const IconPlay = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M7 5.5v13l11-6.5-11-6.5z" />
+  </svg>
+);
+// Edit a saved thread: pencil.
+const IconEdit = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 20l1.1-4.4L15.8 5 19 8.2 8.3 18.9 4 20z" />
+    <path d="M13.6 6.6l3.8 3.8" />
+  </svg>
+);
+// Cancel editing: close / X.
+const IconClose = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+// Add a saved thread to the knowledge graph: three connected nodes.
+const IconGraph = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="6" cy="7" r="2.2" />
+    <circle cx="18" cy="7" r="2.2" />
+    <circle cx="12" cy="18" r="2.2" />
+    <path d="M8.2 8.3 10.4 16M15.8 8.3 13.6 16M8.2 7h7.6" />
   </svg>
 );
 
@@ -1199,6 +1250,12 @@ function SciAppRoot() {
     setOpenFav((cur) => (cur && cur.id === id ? null : cur));
   }
 
+  // Apply an edit made in the FavReader (title / trimmed or reworded messages).
+  function updateFavorite(id, patch) {
+    setFavorites((f) => f.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+    setOpenFav((cur) => (cur && cur.id === id ? { ...cur, ...patch } : cur));
+  }
+
   // Load a saved thread back into the live chat to keep talking. The backend
   // starts a fresh session (its in-memory context for the old one is gone), so
   // the visible history returns while the dialogue continues from here.
@@ -1659,7 +1716,7 @@ function SciAppRoot() {
       {view === 'favorites' ? (
         <div className="sci-favorites">
           {openFav ? (
-            <FavReader fav={openFav} tr={tr} lang={lang} onBack={() => setOpenFav(null)} onResume={() => resumeFavorite(openFav)} onDelete={() => deleteFavorite(openFav.id)} onBio={setBioId} />
+            <FavReader fav={openFav} tr={tr} lang={lang} onBack={() => setOpenFav(null)} onResume={() => resumeFavorite(openFav)} onDelete={() => deleteFavorite(openFav.id)} onBio={setBioId} onEdit={updateFavorite} />
           ) : favorites.length === 0 ? (
             <div className="sci-empty"><h2>{tr.favEmptyTitle}</h2><p>{tr.favEmptyBody}</p></div>
           ) : (
@@ -2000,16 +2057,70 @@ function FavCard({ fav, tr, lang, onOpen, onResume, onDelete }) {
       </div>
       <div className="fav-title">{fav.title || ''}</div>
       <div className="fav-actions" onClick={(e) => e.stopPropagation()}>
-        <button className="sci-iconbtn" onClick={onResume} title={tr.favResume}>{tr.favResume}</button>
+        <button className="sci-iconbtn" onClick={onResume} title={tr.favResume} aria-label={tr.favResume}><IconPlay /></button>
         <button className="sci-iconbtn fav-del" onClick={onDelete} title={tr.favDelete} aria-label={tr.favDelete}><IconTrash /></button>
       </div>
     </div>
   );
 }
 
-// Full transcript of one saved thread, with resume / delete.
-function FavReader({ fav, tr, lang, onBack, onResume, onDelete, onBio }) {
+// Serialize a saved thread into a plain-text article for the wiki-kb RAG
+// corpus: speaker-labelled turns, notices dropped.
+function favToKbContent(fav) {
+  const lines = [];
+  for (const m of fav.messages || []) {
+    if (m.role === 'user') lines.push(`Q: ${m.text}`);
+    else if (m.role === 'sci') lines.push(`${m.name || fav.name}: ${m.text}`);
+  }
+  return lines.join('\n\n');
+}
+
+// Full transcript of one saved thread, with resume / delete / edit and
+// "add to knowledge graph" (wiki-kb /api/contribute via window.KNKB).
+function FavReader({ fav, tr, lang, onBack, onResume, onDelete, onBio, onEdit }) {
   const isDiscuss = fav.mode === 'discuss';
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState('');
+  const [draftMsgs, setDraftMsgs] = useState([]);
+  // 'idle' | 'busy' | 'done' | Error message string
+  const [kbState, setKbState] = useState(fav.kbSavedAt ? 'done' : 'idle');
+  useEffect(() => { setKbState(fav.kbSavedAt ? 'done' : 'idle'); setEditing(false); }, [fav.id]);
+
+  function startEdit() {
+    setDraftTitle(fav.title || '');
+    setDraftMsgs((fav.messages || []).map((m) => ({ ...m })));
+    setEditing(true);
+  }
+  function saveEdit() {
+    onEdit(fav.id, { title: draftTitle.trim(), messages: draftMsgs });
+    setEditing(false);
+  }
+
+  function addToKb() {
+    if (kbState === 'busy') return;
+    setKbState('busy');
+    const title = (fav.title || '').slice(0, 180) || (lang === 'zh' ? '科學家對話' : 'Scientist dialogue');
+    fetch(window.KNKB.getBaseUrl() + '/api/contribute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lang: fav.lang || lang,
+        title: (lang === 'zh' ? '對話:' : 'Dialogue: ') + title,
+        summary: title,
+        content: favToKbContent(fav),
+        kind: 'note',
+        createEntity: true,
+        source: 'scientists',
+      }),
+    }).then((res) => res.json().then((r) => {
+      if (!res.ok || !r || r.ok === false) throw new Error((r && r.error) || ('HTTP ' + res.status));
+      setKbState('done');
+      onEdit(fav.id, { kbSavedAt: Date.now(), kbQid: r.qid || null });
+    })).catch((e) => {
+      setKbState(tr.favKbErr + ((e && e.message) || e) + ' ' + tr.favKbHint);
+    });
+  }
+
   return (
     <div className="sci-fav-reader">
       <div className="fav-reader-head">
@@ -2019,9 +2130,64 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete, onBio }) {
           <div className="meta">{favDateLabel(fav.savedAt, lang)}</div>
         </div>
         <div className="spacer" />
-        <button className="sci-iconbtn" onClick={onResume} title={tr.favResume}>{tr.favResume}</button>
-        <button className="sci-iconbtn fav-del" onClick={onDelete} title={tr.favDelete} aria-label={tr.favDelete}><IconTrash /></button>
+        {editing ? (
+          <React.Fragment>
+            <button className="sci-iconbtn" onClick={saveEdit} title={tr.favEditSave} aria-label={tr.favEditSave}><IconCheck /></button>
+            <button className="sci-iconbtn" onClick={() => setEditing(false)} title={tr.favEditCancel} aria-label={tr.favEditCancel}><IconClose /></button>
+          </React.Fragment>
+        ) : (
+          <React.Fragment>
+            <button className="sci-iconbtn" onClick={startEdit} title={tr.favEdit} aria-label={tr.favEdit}><IconEdit /></button>
+            <button
+              className="sci-iconbtn"
+              onClick={addToKb}
+              disabled={kbState === 'busy' || kbState === 'done'}
+              title={kbState === 'busy' ? tr.favKbBusy : tr.favKb}
+              aria-label={kbState === 'busy' ? tr.favKbBusy : tr.favKb}
+            >
+              {kbState === 'done' ? <IconCheck /> : <IconGraph />}
+            </button>
+            <button className="sci-iconbtn" onClick={onResume} title={tr.favResume} aria-label={tr.favResume}><IconPlay /></button>
+            <button className="sci-iconbtn fav-del" onClick={onDelete} title={tr.favDelete} aria-label={tr.favDelete}><IconTrash /></button>
+          </React.Fragment>
+        )}
       </div>
+      {kbState === 'done' && <div className="sci-notice saved">{tr.favKbDone}</div>}
+      {typeof kbState === 'string' && kbState !== 'idle' && kbState !== 'busy' && kbState !== 'done' && (
+        <div className="sci-notice err">{kbState}</div>
+      )}
+      {editing ? (
+        <div className="sci-scroll fav-reader-scroll fav-edit">
+          <label className="fav-edit-label">{tr.favEditTitle}</label>
+          <input
+            className="fav-edit-title"
+            type="text"
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+          />
+          {draftMsgs.map((m, i) => {
+            if (m.role !== 'user' && m.role !== 'sci') return null;
+            return (
+              <div key={i} className={'fav-edit-msg ' + m.role}>
+                <div className="fav-edit-who">
+                  <span>{m.role === 'user' ? 'Q' : (m.name || fav.name)}</span>
+                  <button
+                    className="sci-iconbtn fav-del"
+                    title={tr.favEditDelMsg}
+                    aria-label={tr.favEditDelMsg}
+                    onClick={() => setDraftMsgs((ms) => ms.filter((_, k) => k !== i))}
+                  ><IconTrash /></button>
+                </div>
+                <textarea
+                  value={m.text}
+                  rows={Math.min(10, Math.max(2, Math.ceil((m.text || '').length / 60)))}
+                  onChange={(e) => setDraftMsgs((ms) => ms.map((x, k) => (k === i ? { ...x, text: e.target.value } : x)))}
+                />
+              </div>
+            );
+          })}
+        </div>
+      ) : (
       <div className="sci-scroll fav-reader-scroll">
         {isDiscuss ? (
           <DiscussMessages messages={fav.messages || []} tr={tr} lang={lang} streaming={false} onBio={onBio} />
@@ -2055,6 +2221,7 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete, onBio }) {
           })
         )}
       </div>
+      )}
     </div>
   );
 }

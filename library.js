@@ -17,6 +17,8 @@
  */
 (function () {
   var KEY = 'kn-lang';
+  var VIEW_KEY = 'kn-lib-view';        // 'course' | 'graph'
+  var SCROLL_KEY = 'kn-lib-scroll-v1'; // remembered reading position (course view)
 
   // The eight locales the lab supports, with native names for the selector.
   // Same set + order as window.KNi18n.LANGS so the choice carries across pages.
@@ -55,6 +57,43 @@
     try { localStorage.setItem(KEY, next); } catch (e) {}
     render();
   }
+
+  // ---- view mode: linear course vs read-only knowledge graph -------------
+  var view = (function () {
+    try { var v = localStorage.getItem(VIEW_KEY); if (v === 'graph') return 'graph'; } catch (e) {}
+    return 'course';
+  })();
+  var kgInstance = null; // live KNKG mount (destroyed when leaving graph view)
+
+  function setView(next) {
+    if (next !== 'course' && next !== 'graph') return;
+    if (next === view) return;
+    if (view === 'course') saveScroll(); // keep the reading position we leave
+    view = next;
+    try { localStorage.setItem(VIEW_KEY, next); } catch (e) {}
+    render();
+    if (next === 'course') restoreScroll(); // return to the remembered spot
+    else window.scrollTo(0, 0);             // graph fills the viewport from the top
+  }
+
+  // ---- scroll memory (course view) ----------------------------------------
+  var scrollTimer = null;
+  function saveScroll() {
+    if (view !== 'course') return;
+    try { localStorage.setItem(SCROLL_KEY, String(Math.round(window.scrollY || 0))); } catch (e) {}
+  }
+  window.addEventListener('scroll', function () {
+    if (scrollTimer) return;
+    scrollTimer = setTimeout(function () { scrollTimer = null; saveScroll(); }, 250);
+  }, { passive: true });
+  window.addEventListener('pagehide', saveScroll);
+
+  function restoreScroll() {
+    var y = 0;
+    try { y = parseInt(localStorage.getItem(SCROLL_KEY) || '0', 10) || 0; } catch (e) {}
+    if (y > 0) window.scrollTo(0, y);
+  }
+  var didRestoreScroll = false;
 
   // Pick the localised string from a translation pair (en is the fallback for
   // any locale a string has not been translated into yet).
@@ -111,12 +150,61 @@
     return document.createComment('unknown block');
   }
 
+  // ---- chapter demo mini-games -------------------------------------------
+  // Launch buttons into the lab with a topic-matched configuration
+  // (index.html?demo=<id>; see demo-presets.js + config.js applyDemo).
+  function renderGames(ids) {
+    var box = el('div', 'lp-games');
+    box.appendChild(el('span', 'gt', t({ en: 'DEMO MINI-GAMES', zh: '示範小遊戲' })));
+    var row = el('div', 'game-row');
+    ids.forEach(function (id) {
+      var d = window.KN_DEMOS[id];
+      if (!d) return;
+      var a = el('a', 'lp-game');
+      a.href = 'index.html?demo=' + encodeURIComponent(id);
+      a.appendChild(el('span', 'play', '▶'));
+      var txt = el('span', 'gtxt');
+      txt.appendChild(el('span', 'gname', t(d.label)));
+      if (d.hint) txt.appendChild(el('span', 'ghint', t(d.hint)));
+      a.appendChild(txt);
+      row.appendChild(a);
+    });
+    box.appendChild(row);
+    return box;
+  }
+
+  function updateViewToggle() {
+    var bc = document.getElementById('lp-view-course');
+    var bg = document.getElementById('lp-view-graph');
+    if (!bc || !bg) return;
+    bc.textContent = t({ en: 'Course', zh: '課程' });
+    bg.textContent = t({ en: 'Knowledge graph', zh: '知識圖譜' });
+    bc.classList.toggle('active', view === 'course');
+    bg.classList.toggle('active', view === 'graph');
+    bc.setAttribute('aria-selected', view === 'course' ? 'true' : 'false');
+    bg.setAttribute('aria-selected', view === 'graph' ? 'true' : 'false');
+  }
+
+  function renderFooter() {
+    var shell = document.querySelector('.lp-shell');
+    var old = shell.querySelector('.lp-foot');
+    if (old) old.remove();
+    var foot = el('footer', 'lp-foot');
+    foot.appendChild(el('span', null, t({ en: 'Kerr-Newman Black Hole Laboratory', zh: 'Kerr-Newman 黑洞實驗室' })));
+    foot.appendChild(el('span', null, t({
+      en: 'Diagrams are schematic, not to scale. Math uses geometrized units G = c = 1.',
+      zh: '示意圖未按比例繪製。數學採幾何化單位 G = c = 1。'
+    })));
+    shell.appendChild(foot);
+  }
+
   // ---- page assembly ---------------------------------------------------
   function render() {
     var data = window.KN_LIBRARY;
     var main = document.getElementById('lp-main');
     var toc = document.getElementById('lp-toc-list');
     if (!data || !main) return;
+    if (kgInstance) { kgInstance.destroy(); kgInstance = null; }
     main.innerHTML = '';
     toc.innerHTML = '';
 
@@ -130,6 +218,26 @@
     // language selector state
     var sel = document.getElementById('lp-lang');
     if (sel && sel.value !== lang) sel.value = lang;
+
+    updateViewToggle();
+    var tocNav = document.querySelector('.lp-toc');
+
+    // ---- knowledge-graph mode (read-only; see kg-view.js) ----
+    if (view === 'graph') {
+      if (tocNav) tocNav.style.display = 'none';
+      document.body.classList.add('lp-graphmode');
+      var wrap = el('div', 'lp-kg');
+      main.appendChild(wrap);
+      if (window.KNKG && window.KNKB) {
+        kgInstance = window.KNKG.mount(wrap, { lang: lang });
+      } else {
+        wrap.appendChild(el('p', null, 'knowledge-graph module failed to load'));
+      }
+      renderFooter();
+      return;
+    }
+    document.body.classList.remove('lp-graphmode');
+    if (tocNav) tocNav.style.display = '';
 
     // hero / prologue
     var p = data.prologue || {};
@@ -149,6 +257,9 @@
       sec.appendChild(el('h2', null, t(ch.title)));
       if (ch.sub) sec.appendChild(el('p', 'ch-sub', t(ch.sub)));
       (ch.blocks || []).forEach(function (b) { sec.appendChild(renderBlock(b)); });
+      // Topic-matched lab demos for this chapter (demo-presets.js).
+      var games = window.KN_CHAPTER_GAMES && window.KN_CHAPTER_GAMES[ch.id];
+      if (games && games.length) sec.appendChild(renderGames(games));
       main.appendChild(sec);
 
       // TOC entry
@@ -161,16 +272,15 @@
       toc.appendChild(li);
     });
 
-    // footer
-    var foot = el('footer', 'lp-foot');
-    foot.appendChild(el('span', null, t({ en: 'Kerr-Newman Black Hole Laboratory', zh: 'Kerr-Newman 黑洞實驗室' })));
-    foot.appendChild(el('span', null, t({
-      en: 'Diagrams are schematic, not to scale. Math uses geometrized units G = c = 1.',
-      zh: '示意圖未按比例繪製。數學採幾何化單位 G = c = 1。'
-    })));
-    document.querySelector('.lp-shell').appendChild(foot);
-
+    renderFooter();
     initScrollSpy();
+
+    // Return the reader to where they left off (first course render only, and
+    // only when not deep-linking to a #chapter anchor).
+    if (!didRestoreScroll) {
+      didRestoreScroll = true;
+      if (!window.location.hash) restoreScroll();
+    }
   }
 
   // ---- TOC scroll-spy --------------------------------------------------
@@ -205,6 +315,10 @@
       sel.value = lang;
       sel.addEventListener('change', function () { setLang(sel.value); });
     }
+    var bc = document.getElementById('lp-view-course');
+    var bg = document.getElementById('lp-view-graph');
+    if (bc) bc.addEventListener('click', function () { setView('course'); });
+    if (bg) bg.addEventListener('click', function () { setView('graph'); });
     render();
   }
   if (document.readyState === 'loading') {

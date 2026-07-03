@@ -92,6 +92,13 @@ export const config = {
     maxContextChars: envNum('WKB_CONTEXT_MAX_CHARS', 2200),
   },
 
+  translate: {
+    // Chat model for on-demand page translation (kg view "translate via LLM").
+    // Empty = auto-pick the first installed non-embedding Ollama model.
+    model: envStr('WKB_TRANSLATE_MODEL', ''),
+    timeoutMs: envNum('WKB_TRANSLATE_TIMEOUT_MS', 300000),
+  },
+
   server: {
     host: envStr('WKB_HOST', '127.0.0.1'),
     port: envNum('WKB_PORT', 5189),

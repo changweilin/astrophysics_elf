@@ -55,6 +55,38 @@ export async function ingestTitle(db, lang, title, { force = false } = {}) {
   return { status, pageId, title: b.title, chunks: chunks.total };
 }
 
+// Ingest a manually contributed page: user notes from the scientists page,
+// LLM-translated articles, and admin edits. Same chunk + FTS + (lazy) embed
+// pipeline as Wikipedia pages, but source != 'wikipedia' keeps it out of the
+// revision sweep so it can never be "deleted upstream".
+export function ingestManual(db, {
+  lang, title, summary, content, kind = 'note', qid = null, source = 'user',
+} = {}) {
+  const text = String(content ?? '').trim();
+  const cleanTitle = String(title ?? '').trim();
+  if (!lang || !cleanTitle || !text) throw new Error('lang, title and content required');
+
+  const existing = getPageByTitle(db, lang, cleanTitle);
+  const pageId = upsertPage(db, {
+    lang,
+    title: cleanTitle,
+    qid: qid || null,
+    kind,
+    summary: (summary && String(summary).trim()) || leadOf(text),
+    content: text,
+    source,
+  });
+
+  let pieces = chunkText(text);
+  if (!pieces.length && text) {
+    pieces = [{ section: null, text: text.slice(0, config.chunk.targetChars) }];
+  }
+  const chunks = replaceChunks(db, pageId, pieces);
+  const status = existing ? 'updated' : 'added';
+  logSync(db, `manual-${status}`, lang, cleanTitle, `source=${source} chunks=${chunks.total}`);
+  return { status, pageId, title: cleanTitle, chunks: chunks.total };
+}
+
 // Drain the crawl queue: batch metadata lookups skip unchanged pages cheaply
 // (1 request per 50 titles); only new/changed pages pay the full bundle fetch.
 // `limit` caps the number of full fetches, so runs are resumable.

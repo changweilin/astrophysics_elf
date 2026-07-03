@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<title>KB Admin · 知識庫管理</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- Hidden console: intentionally not linked from any page navigation.
+     Reach it by typing /kb-admin.html directly. Manages the wiki-kb service
+     (knowledge graph + RAG corpus) over its HTTP API. -->
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="kb-admin.css" />
+</head>
+<body>
+<header class="ka-top">
+  <h1>Wiki KB <span class="tag">admin console · 知識圖譜 / RAG 管理</span></h1>
+  <div class="spacer"></div>
+  <span class="ka-health" id="ka-health"><span class="dot"></span><span class="txt">…</span></span>
+  <span class="ka-url">
+    <input type="text" id="ka-url" placeholder="http://127.0.0.1:5189" aria-label="wiki-kb URL" />
+    <button class="ka-btn" id="ka-url-save">Set</button>
+  </span>
+  <select id="ka-lang" aria-label="language">
+    <option value="zh">中文</option>
+    <option value="en">English</option>
+  </select>
+</header>
+<nav class="ka-tabs" id="ka-tabs"></nav>
+<main class="ka-main" id="ka-main"></main>
+
+<script src="kb-config.js"></script>
+<script src="kb-admin.js"></script>
+</body>
+</html>

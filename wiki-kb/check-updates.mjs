@@ -48,7 +48,7 @@ const summary = {
 async function revisionSweep() {
   for (const lang of langs) {
     const pages = db
-      .prepare("SELECT id, title, rev_id FROM pages WHERE lang=? AND status='active'")
+      .prepare("SELECT id, title, rev_id FROM pages WHERE lang=? AND status='active' AND source='wikipedia'")
       .all(lang);
     if (!pages.length) continue;
     log(`[check] ${lang}: ${pages.length} pages`);

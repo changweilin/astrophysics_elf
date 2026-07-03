@@ -66,6 +66,21 @@ a:hover { color: var(--cyan-dim); text-decoration: underline; }
 }
 .lp-top .lp-back:hover { border-color: var(--amber-dim); color: var(--amber); text-decoration: none; }
 
+/* Below ~640px there isn't room for brand + view toggle + page nav + language
+   select on one line — plain flex-shrink crushes the toggle down to an
+   unreadable sliver instead of wrapping it. Drop it to its own centered row
+   instead of letting it collapse. */
+@media (max-width: 640px) {
+  .lp-top {
+    flex-wrap: wrap; height: auto; min-height: 48px;
+    padding: 8px 14px; row-gap: 8px;
+  }
+  .lp-top .spacer { order: 1; flex: 1 1 auto; margin-left: 0; }
+  .lp-top .kn-pagenav { order: 2; }
+  .lp-top .lp-lang { order: 3; }
+  .lp-viewtoggle { order: 4; flex: 1 1 100%; display: flex; justify-content: center; }
+}
+
 /* Language selector — all eight locales; the choice persists to the same
    'kn-lang' key the lab uses, so it carries across both pages. */
 .lp-lang {
@@ -227,3 +242,140 @@ a:hover { color: var(--cyan-dim); text-decoration: underline; }
 /* Loading placeholder before library.js renders */
 .lp-loading { padding: 120px 0; text-align: center; color: var(--fg-3);
   font-family: var(--mono); letter-spacing: 0.1em; }
+
+/* ---------- View toggle (course / knowledge graph) ---------- */
+.lp-viewtoggle {
+  display: inline-flex; border: 1px solid var(--line); border-radius: 8px;
+  overflow: hidden; background: var(--bg-1);
+}
+.lp-viewtoggle button {
+  background: none; border: none; color: var(--fg-2); cursor: pointer;
+  font: 500 12.5px var(--sans); padding: 6px 13px; white-space: nowrap;
+}
+.lp-viewtoggle button + button { border-left: 1px solid var(--line); }
+.lp-viewtoggle button:hover { color: var(--fg-0); }
+.lp-viewtoggle button.active { background: var(--bg-3); color: var(--amber); }
+
+/* ---------- Per-chapter demo mini-games ---------- */
+.lp-games {
+  border: 1px solid var(--line-soft); border-radius: 10px;
+  background: oklch(0.15 0.02 255 / 0.55);
+  padding: 14px 16px; margin: 22px 0 8px;
+}
+.lp-games .gt {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--cyan-dim); display: block; margin-bottom: 10px;
+}
+.lp-games .game-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.lp-game {
+  display: inline-flex; align-items: center; gap: 10px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-1); padding: 8px 14px 8px 10px;
+  color: var(--fg-1); text-decoration: none; max-width: 100%;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.lp-game:hover { border-color: var(--cyan-dim); background: var(--bg-2); text-decoration: none; color: var(--fg-0); }
+.lp-game .play {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: oklch(0.58 0.10 210 / 0.18); color: var(--cyan);
+  font-size: 10px; padding-left: 2px;
+}
+.lp-game .gtxt { display: flex; flex-direction: column; min-width: 0; }
+.lp-game .gname { font-size: 13.5px; font-weight: 500; color: var(--fg-0); }
+.lp-game .ghint { font-size: 11.5px; color: var(--fg-3); }
+
+/* ---------- Knowledge-graph mode ---------- */
+body.lp-graphmode .lp-shell {
+  grid-template-columns: 1fr; max-width: none; padding: 0 14px;
+}
+body.lp-graphmode .lp-main { grid-column: 1; max-width: none; }
+body.lp-graphmode .lp-foot { grid-column: 1; }
+
+.lp-kg.kg-root {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+  gap: 14px;
+  height: calc(100vh - 140px);
+  min-height: 480px;
+  margin-top: 16px;
+}
+@media (max-width: 980px) {
+  .lp-kg.kg-root {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(320px, 48vh) auto;
+    height: auto;
+  }
+}
+.kg-side, .kg-detail {
+  background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: 10px;
+  padding: 12px; overflow-y: auto; min-height: 0;
+}
+.kg-stage {
+  position: relative; border: 1px solid var(--line-soft); border-radius: 10px;
+  background: radial-gradient(ellipse at center, oklch(0.14 0.02 255) 0%, var(--bg-0) 85%);
+  overflow: hidden; min-height: 320px;
+}
+.kg-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.kg-stage canvas:active { cursor: grabbing; }
+.kg-hint {
+  position: absolute; left: 10px; bottom: 8px; pointer-events: none;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--fg-3);
+}
+.kg-search input {
+  width: 100%; background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 7px; color: var(--fg-0); padding: 7px 10px; font: 13px var(--sans);
+}
+.kg-search input:focus { outline: none; border-color: var(--cyan); }
+.kg-side-title {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--fg-3); margin: 12px 0 6px;
+}
+.kg-entlist { display: flex; flex-direction: column; gap: 1px; }
+.kg-entrow {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--fg-1);
+}
+.kg-entrow:hover { background: var(--bg-2); color: var(--fg-0); }
+.kg-entrow .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+.kg-entrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kg-entrow .deg { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); }
+.kg-msg { color: var(--fg-3); font-size: 13px; padding: 8px 4px; }
+.kg-url-row { display: flex; gap: 6px; margin-top: 8px; }
+.kg-url-row input {
+  flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 6px; color: var(--fg-1); padding: 5px 8px; font: 12px var(--mono);
+}
+.kg-btn {
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 7px;
+  color: var(--fg-1); padding: 6px 12px; font: 500 12.5px var(--sans); cursor: pointer;
+  margin: 4px 0;
+}
+.kg-btn:hover { border-color: var(--cyan-dim); color: var(--cyan); }
+.kg-btn.primary { border-color: var(--cyan-dim); color: var(--cyan); }
+.kg-btn:disabled { opacity: 0.45; cursor: default; }
+
+.kg-d-head { display: flex; align-items: center; gap: 8px; }
+.kg-d-head .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.kg-d-head h3 { margin: 0; font-size: 16px; }
+.kg-d-meta { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); margin: 4px 0 8px; }
+.kg-d-desc { color: var(--fg-2); font-size: 13px; margin: 0 0 10px; }
+.kg-d-sect {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--cyan-dim); margin: 14px 0 6px;
+}
+.kg-d-rels { display: flex; flex-direction: column; gap: 3px; }
+.kg-d-rel { display: flex; gap: 8px; font-size: 12.5px; align-items: baseline; }
+.kg-d-rel .rel { font-family: var(--mono); font-size: 10px; color: var(--violet); white-space: nowrap; }
+.kg-d-rel a { cursor: pointer; }
+.kg-d-title { margin: 4px 0 6px; font-size: 14.5px; color: var(--fg-0); }
+.kg-d-body { font-size: 13px; color: var(--fg-1); white-space: pre-wrap; }
+.kg-d-body.dim { color: var(--fg-3); }
+.kg-d-body.ok { color: oklch(0.75 0.10 150); }
+.kg-d-body.err { color: var(--warn); }
+.kg-d-body.kg-preview {
+  border-left: 2px solid var(--line); padding-left: 10px;
+  max-height: 320px; overflow-y: auto;
+}
+.kg-d-link { display: inline-block; margin-top: 6px; font-size: 12.5px; }
+.kg-translate { margin-top: 8px; }
