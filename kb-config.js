@@ -56,16 +56,39 @@
     defaultBaseUrl: deriveDefault,
     // Small fetch helper: returns parsed JSON, throws Error with a readable
     // message on HTTP/network/API failure.
+    //
+    // A stored/custom base (localStorage or ?kb=) that goes stale -- e.g. it
+    // pointed at the standalone wiki-kb admin port before the routes were
+    // merged into the main backend, and nothing answers there anymore -- would
+    // otherwise brick the KB view forever with no obvious cause, since the
+    // fetch() itself throws before any HTTP status exists to react to. Any KB
+    // route answers identically on either process (see server.mjs), so on a
+    // true network failure (not an HTTP error status) we retry once against
+    // the derived default and, if that works, adopt it as the new sticky base.
     api: function (path, opts) {
       var base = window.KNKB.getBaseUrl();
-      return fetch(base + path, opts).then(function (res) {
-        return res.json().catch(function () { return null; }).then(function (body) {
-          if (!res.ok || !body || body.ok === false) {
-            var msg = (body && body.error) ? body.error : ('HTTP ' + res.status);
-            throw new Error(msg);
-          }
-          return body;
+      var fallback = deriveDefault();
+      function call(url) {
+        return fetch(url + path, opts).then(function (res) {
+          return res.json().catch(function () { return null; }).then(function (body) {
+            if (!res.ok || !body || body.ok === false) {
+              var msg = (body && body.error) ? body.error : ('HTTP ' + res.status);
+              throw new Error(msg);
+            }
+            return body;
+          });
         });
+      }
+      var attempt = call(base);
+      if (base === fallback) return attempt;
+      return attempt.catch(function (err) {
+        if (err instanceof TypeError) {
+          return call(fallback).then(function (body) {
+            window.KNKB.setBaseUrl(fallback);
+            return body;
+          });
+        }
+        throw err;
       });
     },
   };
