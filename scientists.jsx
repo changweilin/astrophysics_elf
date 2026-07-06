@@ -44,6 +44,7 @@ const T = {
     emptyBody: '用你習慣的語言發問即可;切換語言會自動換用該語言最強的本地模型。',
     summarizing: '脈絡已達上限,正在摘要先前對話...',
     summarizingNow: '正在摘要這段對話...',
+    summarizedMarker: '已摘要以上內容',
     summarized: '已摘要先前對話並重啟脈絡(第 {n} 次)',
     summaryErr: '摘要失敗,已保留最近幾輪對話繼續',
     summaryStale: '後端的對話脈絡已重置(可能後端重新啟動過),這段對話會在你下次提問時重新開始。',
@@ -78,7 +79,7 @@ const T = {
     backendOutdated: '後端找不到這個功能(版本可能過舊)。請到 scientists-backend 目錄重新啟動 node server.mjs 後再試。',
     backendTrying: '嘗試連線後端:',
     retry: '重試連線',
-    tabChat: '對話',
+    tabChat: '名人對話',
     tabFav: '收藏',
     clear: '清理',
     summarize: '摘要',
@@ -165,6 +166,7 @@ const T = {
     emptyBody: 'Ask in whatever language you like; switching language auto-swaps to the strongest local model for it.',
     summarizing: 'Context near the limit -- summarizing the earlier conversation...',
     summarizingNow: 'Summarizing this conversation...',
+    summarizedMarker: 'Summarized the conversation above',
     summarized: 'Summarized earlier conversation and restarted context (#{n})',
     summaryErr: 'Summarization failed; kept the last few turns and continued',
     summaryStale: 'The backend context was reset (the backend may have restarted); this thread will resume on your next message.',
@@ -291,25 +293,153 @@ function renderMathHtml(expr, displayMode) {
   }
 }
 
-// Minimal inline markdown: `code` spans, plus $...$ / $$...$$ LaTeX math.
-function renderText(text) {
-  const parts = String(text).split(/(`[^`]+`|\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g);
-  return parts.map((p, i) => {
+// Inline markdown: `code` spans, **bold**/__bold__, *italic*/_italic_,
+// [text](url) links, plus $...$ / $$...$$ LaTeX math. Shared by plain replies
+// and by the block-level renderer below for text inside headings/list
+// items/table cells/blockquotes.
+function renderInline(text, keyBase) {
+  const parts = String(text).split(/(`[^`]+`|\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|\[[^\]]+?\]\([^)\s]+?\))/g);
+  return parts.filter((p) => p !== '').map((p, i) => {
+    const key = keyBase + '-' + i;
     if (p.startsWith('`') && p.endsWith('`') && p.length > 1) {
-      return React.createElement('code', { key: i }, p.slice(1, -1));
+      return React.createElement('code', { key }, p.slice(1, -1));
     }
     if (p.startsWith('$$') && p.endsWith('$$') && p.length > 4) {
       const html = renderMathHtml(p.slice(2, -2), true);
-      if (html) return React.createElement('span', { key: i, className: 'sci-math sci-math-block', dangerouslySetInnerHTML: { __html: html } });
+      if (html) return React.createElement('span', { key, className: 'sci-math sci-math-block', dangerouslySetInnerHTML: { __html: html } });
       return p;
     }
     if (p.startsWith('$') && p.endsWith('$') && p.length > 2 && looksLikeMath(p.slice(1, -1))) {
       const html = renderMathHtml(p.slice(1, -1), false);
-      if (html) return React.createElement('span', { key: i, className: 'sci-math', dangerouslySetInnerHTML: { __html: html } });
+      if (html) return React.createElement('span', { key, className: 'sci-math', dangerouslySetInnerHTML: { __html: html } });
       return p;
+    }
+    if (p.startsWith('**') && p.endsWith('**') && p.length > 4) {
+      return React.createElement('strong', { key }, p.slice(2, -2));
+    }
+    if (p.startsWith('__') && p.endsWith('__') && p.length > 4) {
+      return React.createElement('strong', { key }, p.slice(2, -2));
+    }
+    if (p.startsWith('*') && p.endsWith('*') && p.length > 2) {
+      return React.createElement('em', { key }, p.slice(1, -1));
+    }
+    if (p.startsWith('_') && p.endsWith('_') && p.length > 2) {
+      return React.createElement('em', { key }, p.slice(1, -1));
+    }
+    const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(p);
+    if (link) {
+      return React.createElement('a', { key, href: link[2], target: '_blank', rel: 'noopener noreferrer' }, link[1]);
     }
     return p;
   });
+}
+
+// Cheap "does this look like markdown" gate: block-level renderMarkdown()
+// below rewrites the whole reply into <p>/<ul>/<h1-6>/... elements, which is
+// only worth the layout change (and only safe to do without checking every
+// plain-prose reply for accidental false positives) when the text actually
+// contains markdown syntax -- otherwise text renders through renderInline()
+// exactly as before.
+const MD_BLOCK_LINE_RE = /^\s*(#{1,6}\s+\S|[-*+]\s+\S|\d+[.)]\s+\S|>\s?\S|```|~~~|(?:\*\*\*+|---+|___+)\s*$)/;
+const MD_TABLE_SEP_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/;
+const MD_INLINE_RE = /\*\*[^*\n]+?\*\*|__[^_\n]+?__|\[[^\]]+?\]\([^)\s]+?\)/;
+function hasMarkdown(text) {
+  const s = String(text);
+  if (MD_INLINE_RE.test(s)) return true;
+  return s.split('\n').some((line) => MD_BLOCK_LINE_RE.test(line) || MD_TABLE_SEP_RE.test(line));
+}
+
+// Block-level markdown: headings, lists, code fences, blockquotes, simple
+// tables, horizontal rules, and paragraphs -- each line-scanned rather than
+// run through a general parser, since replies are short LLM answers, not
+// arbitrary documents. Never uses dangerouslySetInnerHTML for reply content
+// (only KaTeX's own trusted output does, via renderInline), so there is no
+// raw-HTML injection surface for LLM-authored text.
+function renderMarkdown(text, keyBase) {
+  const lines = String(text).split('\n');
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = /^\s*(```|~~~)/.exec(line);
+    if (fence) {
+      const marker = fence[1];
+      const body = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(marker)) { body.push(lines[i]); i++; }
+      if (i < lines.length) i++;
+      blocks.push({ type: 'code', text: body.join('\n') });
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    const heading = /^\s*(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      blocks.push({ type: 'h', level: heading[1].length, text: heading[2].trim() });
+      i++;
+      continue;
+    }
+    if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(line)) {
+      blocks.push({ type: 'hr' });
+      i++;
+      continue;
+    }
+    if (/^\s*>\s?/.test(line)) {
+      const body = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) { body.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+      blocks.push({ type: 'quote', text: body.join('\n') });
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*+]\s+/, '')); i++; }
+      blocks.push({ type: 'ul', items });
+      continue;
+    }
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+[.)]\s+/, '')); i++; }
+      blocks.push({ type: 'ol', items });
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && MD_TABLE_SEP_RE.test(lines[i + 1])) {
+      const splitRow = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+      const header = splitRow(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { rows.push(splitRow(lines[i])); i++; }
+      blocks.push({ type: 'table', header, rows });
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !MD_BLOCK_LINE_RE.test(lines[i])) { para.push(lines[i]); i++; }
+    blocks.push({ type: 'p', text: para.join('\n') });
+  }
+
+  return blocks.map((b, bi) => {
+    const key = keyBase + '-' + bi;
+    if (b.type === 'code') return React.createElement('pre', { key, className: 'sci-md-pre' }, React.createElement('code', null, b.text));
+    if (b.type === 'h') return React.createElement('h' + Math.min(b.level + 2, 6), { key, className: 'sci-md-h' }, renderInline(b.text, key));
+    if (b.type === 'hr') return React.createElement('hr', { key, className: 'sci-md-hr' });
+    if (b.type === 'quote') return React.createElement('blockquote', { key, className: 'sci-md-quote' }, renderInline(b.text, key));
+    if (b.type === 'ul' || b.type === 'ol') {
+      return React.createElement(b.type, { key, className: 'sci-md-list' },
+        b.items.map((it, ii) => React.createElement('li', { key: key + '-' + ii }, renderInline(it, key + '-' + ii))));
+    }
+    if (b.type === 'table') {
+      return React.createElement('div', { key, className: 'sci-md-table-wrap' },
+        React.createElement('table', { className: 'sci-md-table' },
+          React.createElement('thead', null, React.createElement('tr', null,
+            b.header.map((c, ci) => React.createElement('th', { key: ci }, renderInline(c, key + '-h' + ci))))),
+          React.createElement('tbody', null, b.rows.map((row, ri) => React.createElement('tr', { key: ri },
+            row.map((c, ci) => React.createElement('td', { key: ci }, renderInline(c, key + '-r' + ri + '-' + ci))))))));
+    }
+    return React.createElement('p', { key, className: 'sci-md-p' }, renderInline(b.text, key));
+  });
+}
+
+function renderText(text) {
+  const s = String(text == null ? '' : text);
+  return hasMarkdown(s) ? renderMarkdown(s, 'md') : renderInline(s, 'i');
 }
 
 // Comic-style portrait avatar. Loads the generated PNG from the /avatars/ folder
@@ -1123,6 +1253,7 @@ function SciAppRoot() {
   const sessionId = useRef(initialSession.sessionId);
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
+  const noticeIdRef = useRef(0);
 
   // Compare mode's "direct" lineage never holds a server session (it's an
   // isolated call, see runChatCall) -- so unlike the RAG side, ITS carried
@@ -1279,7 +1410,18 @@ function SciAppRoot() {
   // CompareSwipeRow like the conversation itself, and (b) is picked up by
   // stripCompareMessages when a favorite keeps only one lineage.
   function pushNotice(kind, text, modeLabel, compareTag) {
-    setMessages((m) => [...m, { role: 'notice', kind, text, modeLabel, ...compareTag }]);
+    const id = ++noticeIdRef.current;
+    setMessages((m) => [...m, { role: 'notice', kind, text, modeLabel, id, ...compareTag }]);
+    return id;
+  }
+
+  // Updates a previously pushed notice in place (by id) instead of leaving it
+  // stuck at its original text -- used so a "summarizing..." placeholder
+  // resolves into a final state rather than staying stale once the request
+  // that spawned it has finished.
+  function updateNotice(id, text, kind) {
+    if (!id) return;
+    setMessages((m) => m.map((msg) => (msg.role === 'notice' && msg.id === id ? { ...msg, text, kind: kind || msg.kind } : msg)));
   }
 
   // Drop any follow-up chips and invalidate an in-flight suggestion request (the
@@ -1418,15 +1560,18 @@ function SciAppRoot() {
       await summarizeRagLineage();
       return;
     }
-    pushNotice('summary', tr.summarizingNow);
+    const noticeId = pushNotice('summary', tr.summarizingNow);
     await summarizeRagLineage({ silent: true, compare: true });
     await summarizeDirectLineage({ compare: true });
+    updateNotice(noticeId, tr.summarizedMarker);
   }
 
   // RAG lineage (or the plain direct/rag single-mode chat): backed by a real
   // server session, so this is the original manual-summarize call. `silent`
   // (compare mode) skips the standalone "nothing to summarize" chatter since
-  // the sibling direct-lineage call still has its own thing to report.
+  // the sibling direct-lineage call still has its own thing to report. The
+  // "summarizing..." placeholder notice is updated in place once the request
+  // resolves, rather than left showing "in progress" forever.
   async function summarizeRagLineage(opts) {
     const silent = !!(opts && opts.silent);
     const compareTag = opts && opts.compare ? { compare: true, mode: 'rag' } : undefined;
@@ -1434,7 +1579,7 @@ function SciAppRoot() {
       if (!silent) pushNotice('summary', tr.summaryNothing);
       return;
     }
-    if (!silent) pushNotice('summary', tr.summarizingNow);
+    const noticeId = silent ? null : pushNotice('summary', tr.summarizingNow);
     try {
       const res = await fetch(backendUrl + '/api/session/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1445,20 +1590,29 @@ function SciAppRoot() {
       // drop the stale id and let the next message open a fresh session.
       if (res.status === 404) {
         sessionId.current = '';
-        pushNotice('summary', tr.summaryStale);
+        if (noticeId) updateNotice(noticeId, tr.summaryStale);
+        else pushNotice('summary', tr.summaryStale);
         return;
       }
       const r = await res.json().catch(() => null);
       if (res.ok && r && r.ok && r.changed) {
+        if (noticeId) updateNotice(noticeId, tr.summarizedMarker);
         pushNotice('keypoints', r.summary || '', silent ? tr.replyModeBadgeRag : undefined, compareTag);
         setUsage(typeof r.usage === 'number' ? r.usage : 0);
       } else if (res.ok && r && r.ok) {
-        if (!silent) pushNotice('summary', tr.summaryNothing);
+        if (!silent) {
+          if (noticeId) updateNotice(noticeId, tr.summaryNothing);
+          else pushNotice('summary', tr.summaryNothing);
+        }
       } else {
-        pushNotice('err', tr.errPrefix + ((r && r.error) || 'summarize failed'));
+        const errText = tr.errPrefix + ((r && r.error) || 'summarize failed');
+        if (noticeId) updateNotice(noticeId, errText, 'err');
+        else pushNotice('err', errText);
       }
     } catch (e) {
-      pushNotice('err', tr.errPrefix + ((e && e.message) || e));
+      const errText = tr.errPrefix + ((e && e.message) || e);
+      if (noticeId) updateNotice(noticeId, errText, 'err');
+      else pushNotice('err', errText);
     }
   }
 
@@ -1917,7 +2071,14 @@ function SciAppRoot() {
   }
 
   function pushDiscussNotice(kind, text) {
-    setDiscussMessages((m) => [...m, { role: 'notice', kind, text }]);
+    const id = ++noticeIdRef.current;
+    setDiscussMessages((m) => [...m, { role: 'notice', kind, text, id }]);
+    return id;
+  }
+
+  function updateDiscussNotice(id, text, kind) {
+    if (!id) return;
+    setDiscussMessages((m) => m.map((msg) => (msg.role === 'notice' && msg.id === id ? { ...msg, text, kind: kind || msg.kind } : msg)));
   }
 
   // Append a streamed delta to the most recent speaker's bubble.
@@ -2133,7 +2294,7 @@ function SciAppRoot() {
       pushDiscussNotice('summary', tr.summaryNothing);
       return;
     }
-    pushDiscussNotice('summary', tr.summarizingNow);
+    const noticeId = pushDiscussNotice('summary', tr.summarizingNow);
     try {
       const res = await fetch(backendUrl + '/api/discuss/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2141,20 +2302,21 @@ function SciAppRoot() {
       });
       if (res.status === 404) {
         discussSessionId.current = '';
-        pushDiscussNotice('summary', tr.summaryStale);
+        updateDiscussNotice(noticeId, tr.summaryStale);
         return;
       }
       const r = await res.json().catch(() => null);
       if (res.ok && r && r.ok && r.changed) {
+        updateDiscussNotice(noticeId, tr.summarizedMarker);
         pushDiscussNotice('keypoints', r.summary || '');
         setDiscussUsage(typeof r.usage === 'number' ? r.usage : 0);
       } else if (res.ok && r && r.ok) {
-        pushDiscussNotice('summary', tr.summaryNothing);
+        updateDiscussNotice(noticeId, tr.summaryNothing);
       } else {
-        pushDiscussNotice('err', tr.errPrefix + ((r && r.error) || 'summarize failed'));
+        updateDiscussNotice(noticeId, tr.errPrefix + ((r && r.error) || 'summarize failed'), 'err');
       }
     } catch (e) {
-      pushDiscussNotice('err', tr.errPrefix + ((e && e.message) || e));
+      updateDiscussNotice(noticeId, tr.errPrefix + ((e && e.message) || e), 'err');
     }
   }
 

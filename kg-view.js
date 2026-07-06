@@ -129,8 +129,8 @@
     source: { en: 'source', zh: '來源' },
     readMore: { en: 'Full article on Wikipedia ↗', zh: '在 Wikipedia 閱讀全文 ↗' },
     hint: {
-      en: 'Mouse: drag to pan · scroll to zoom. Touch: one finger scrolls the page · two fingers pinch/pan the graph. Click/tap a node to read · double-click/double-tap a node to center on it.',
-      zh: '滑鼠:拖曳平移 · 滾輪縮放。觸控:單指滑動頁面 · 雙指平移/縮放圖譜。點選節點閱讀 · 雙擊(或連續點兩下)節點以此為中心。',
+      en: 'Mouse: drag to pan\nMouse: scroll to zoom\nTouch: one finger scrolls the page\nTouch: two fingers pinch/pan the graph\nClick/tap a node to read\nDouble-click/double-tap a node to center on it',
+      zh: '滑鼠:拖曳平移\n滑鼠:滾輪縮放\n觸控:單指滑動頁面\n觸控:雙指平移/縮放圖譜\n點選節點閱讀\n雙擊(或連續點兩下)節點以此為中心',
     },
     depthLabel: { en: 'Link depth', zh: '連結層數' },
     histPrev: { en: 'Previous center', zh: '上一個中心點' },
@@ -207,8 +207,6 @@
     var stage = el('div', 'kg-stage');
     var canvas = document.createElement('canvas');
     stage.appendChild(canvas);
-    var hint = el('div', 'kg-hint', t(STR.hint));
-    stage.appendChild(hint);
 
     // Toolbar overlay: center-point back/forward history + link-depth (1/2 hop).
     var toolbar = el('div', 'kg-toolbar');

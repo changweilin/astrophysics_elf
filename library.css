@@ -321,10 +321,6 @@ body.lp-graphmode .lp-foot { grid-column: 1; }
    pan/zoom of the graph), so the two never fight over the same gesture. */
 .kg-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: pan-y; }
 .kg-stage canvas:active { cursor: grabbing; }
-.kg-hint {
-  position: absolute; left: 10px; bottom: 8px; pointer-events: none;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--fg-3);
-}
 .kg-toolbar {
   position: absolute; left: 10px; top: 10px; z-index: 2;
   display: flex; align-items: center; gap: 8px;
@@ -415,7 +411,7 @@ body.lp-graphmode .lp-foot { grid-column: 1; }
   border-left: 2px solid var(--line); padding-left: 10px;
   max-height: 320px; overflow-y: auto;
 }
-.kg-d-link { display: inline-block; margin-top: 6px; font-size: 12.5px; }
+.kg-d-link { display: block; margin-top: 6px; font-size: 12.5px; }
 .kg-translate { margin-top: 8px; }
 .kg-translate .kg-btn { margin-right: 6px; }
 
@@ -449,6 +445,7 @@ body.lp-graphmode .lp-foot { grid-column: 1; }
    content-status ring in one place. Anchored under the toolbar's info button. */
 .kg-legend {
   position: absolute; left: 10px; top: 44px; z-index: 3; width: 240px;
+  max-height: calc(100% - 54px); overflow-y: auto;
   background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: 8px;
   padding: 10px 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.35);
   font-size: 12px; color: var(--fg-1);
@@ -459,7 +456,7 @@ body.lp-graphmode .lp-foot { grid-column: 1; }
   text-transform: uppercase; color: var(--fg-3); margin: 10px 0 6px;
 }
 .kg-legend-head:first-child { margin-top: 0; }
-.kg-legend-hint { color: var(--fg-2); font-size: 11.5px; line-height: 1.5; margin: 0 0 4px; }
+.kg-legend-hint { color: var(--fg-2); font-size: 11.5px; line-height: 1.5; margin: 0 0 4px; white-space: pre-line; }
 .kg-legend-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .kg-legend-dot {
   flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box;
