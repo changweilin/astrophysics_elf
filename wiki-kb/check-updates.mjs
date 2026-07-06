@@ -20,6 +20,7 @@ import * as wiki from './lib/wiki-api.mjs';
 import { ingestTitle, processQueue, embedPending } from './lib/ingest.mjs';
 import { discoverCategories, projectLangLinks } from './lib/discover.mjs';
 import { syncEntities } from './lib/graph.mjs';
+import { classifyEntities } from './lib/classify.mjs';
 import { config } from './config.mjs';
 
 const { values: opts } = parseArgs({
@@ -138,6 +139,8 @@ try {
   if (!dryRun) {
     const g = await syncEntities(db, { log });
     if (g.entities) log(`[check] graph: +${g.entities} entities, +${g.edges} edges`);
+    const c = classifyEntities(db, { log });
+    if (c.classified) log(`[check] classified ${c.classified} new root nodes`);
     const e = await embedPending(db, { limit: Infinity, log });
     if (e.embedded) log(`[check] embedded ${e.embedded} new/changed chunks`);
     if (!e.done) log('[check] embedding incomplete (Ollama unavailable) -- BM25-only until next run');

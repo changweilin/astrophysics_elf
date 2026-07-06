@@ -4,6 +4,7 @@
 // still works in BM25-only mode.
 
 import { config } from '../config.mjs';
+import { withBusy } from './ollama-gate.mjs';
 
 export async function embedAvailable() {
   try {
@@ -22,21 +23,23 @@ export async function embedAvailable() {
 }
 
 export async function embedTexts(texts, signal) {
-  const timeout = AbortSignal.timeout(config.embed.timeoutMs);
-  const composite = signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout]) : timeout;
-  const res = await fetch(`${config.embed.baseUrl}/api/embed`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: config.embed.model, input: texts }),
-    signal: composite,
+  return withBusy(async () => {
+    const timeout = AbortSignal.timeout(config.embed.timeoutMs);
+    const composite = signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout]) : timeout;
+    const res = await fetch(`${config.embed.baseUrl}/api/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: config.embed.model, input: texts, keep_alive: config.embed.keepAlive }),
+      signal: composite,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`embed HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    if (!Array.isArray(data?.embeddings)) throw new Error('embed: malformed response');
+    return data.embeddings.map((v) => normalize(Float32Array.from(v)));
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`embed HTTP ${res.status}: ${body.slice(0, 200)}`);
-  }
-  const data = await res.json();
-  if (!Array.isArray(data?.embeddings)) throw new Error('embed: malformed response');
-  return data.embeddings.map((v) => normalize(Float32Array.from(v)));
 }
 
 export async function embedQuery(text, signal) {

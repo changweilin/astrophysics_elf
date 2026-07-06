@@ -7,6 +7,7 @@
 //   node crawl.mjs fetch     [--langs ...] [--limit N]       queue -> pages + chunks
 //   node crawl.mjs langlinks                                 project zh/en scope -> other langs
 //   node crawl.mjs graph     [--limit N]                     Wikidata entities + edges
+//   node crawl.mjs classify  [--limit N]                     tag root nodes with a subject/content category
 //   node crawl.mjs embed     [--limit N]                     vectorize pending chunks
 //   node crawl.mjs all       [--langs zh,en] [--limit N]     the whole pipeline
 //   node crawl.mjs status                                    corpus statistics
@@ -16,6 +17,7 @@ import { openDb, stats, logSync } from './lib/db.mjs';
 import { discoverCategories, projectLangLinks } from './lib/discover.mjs';
 import { processQueue, embedPending } from './lib/ingest.mjs';
 import { syncEntities } from './lib/graph.mjs';
+import { classifyEntities } from './lib/classify.mjs';
 import { config } from './config.mjs';
 
 const { values: opts, positionals } = parseArgs({
@@ -57,6 +59,12 @@ async function runGraph() {
   console.log(`[graph] entities=${r.entities} edges=${r.edges} stubs=${r.stubs}`);
 }
 
+async function runClassify() {
+  console.log('[classify] tagging root nodes missing a category');
+  const r = classifyEntities(db, { limit: Number.isFinite(limit) ? limit : Infinity, log });
+  console.log(`[classify] classified=${r.classified}`);
+}
+
 async function runEmbed() {
   console.log(`[embed] vectorizing pending chunks with ${config.embed.model}`);
   const r = await embedPending(db, { limit, log });
@@ -78,6 +86,7 @@ try {
     case 'fetch': await runFetch(); break;
     case 'langlinks': await runLangLinks(); break;
     case 'graph': await runGraph(); break;
+    case 'classify': await runClassify(); break;
     case 'embed': await runEmbed(); break;
     case 'status': runStatus(); break;
     case 'all': {
@@ -86,6 +95,7 @@ try {
       await runLangLinks();
       await runFetch(); // drain the langlink-projected queue too
       await runGraph();
+      await runClassify();
       await runEmbed();
       logSync(db, 'crawl-all', null, null, 'pipeline complete');
       runStatus();
@@ -93,7 +103,7 @@ try {
     }
     default:
       console.error(`Unknown command: ${command}`);
-      console.error('Commands: discover | fetch | langlinks | graph | embed | all | status');
+      console.error('Commands: discover | fetch | langlinks | graph | classify | embed | all | status');
       process.exitCode = 2;
   }
 } finally {

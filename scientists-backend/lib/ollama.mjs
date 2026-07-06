@@ -9,6 +9,7 @@
 // two functions here -- nothing else in the backend knows the wire format.
 
 import { config } from '../config.mjs';
+import { isBusy as gateIsBusy, withBusy } from '../../wiki-kb/lib/ollama-gate.mjs';
 
 const CHAT_URL = () => `${config.ollama.baseUrl.replace(/\/+$/, '')}/api/chat`;
 
@@ -21,6 +22,16 @@ function buildOptions(model, overrides = {}) {
     ...overrides,
   };
 }
+
+// How long Ollama keeps this model resident (and its KV cache warm) after a
+// call finishes. Ollama/llama.cpp reuse a matching prompt prefix's KV cache
+// on their own whenever the model is still loaded -- there is no separate
+// "implicit context caching" API to opt into the way Anthropic/Gemini's
+// hosted APIs offer one. Leaving keep_alive at Ollama's default (5m) means a
+// multi-turn conversation with any gap between turns pays a full model
+// reload (and loses the cache) far more often than it needs to; pinning it
+// longer here is what actually makes prefix reuse happen turn-to-turn.
+const KEEP_ALIVE = config.ollama.keepAlive;
 
 // Some locally-run "reasoning" models (Qwen3 in thinking mode, DeepSeek-R1,
 // etc.) inline their chain-of-thought as a <think>...</think> block ahead of
@@ -38,13 +49,14 @@ function stripThinking(text) {
   return out.trim();
 }
 
-// Count of Ollama calls currently in flight (streaming or blocking), so the
-// health endpoint can report the backend as busy while it can't take on a new
-// generation right away -- e.g. Ollama serializing a second device's request
-// behind one already running, or swapping the loaded model.
-let inFlight = 0;
+// Whether an Ollama call (from this backend's chat, OR a wiki-kb write like
+// translate/generate/embed -- see ../../wiki-kb/lib/ollama-gate.mjs) is
+// currently in flight, so the health endpoint can report the backend as busy
+// while it can't take on a new generation right away -- e.g. Ollama
+// serializing a second device's request behind one already running, or
+// swapping the loaded model.
 export function isBusy() {
-  return inFlight > 0;
+  return gateIsBusy();
 }
 
 // Streaming chat. Invokes onToken(textChunk) for every delta and resolves with
@@ -56,8 +68,7 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
   const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
   const composite = signal ? anySignal([signal, timeout]) : timeout;
 
-  inFlight++;
-  try {
+  return withBusy(async () => {
     const res = await fetch(CHAT_URL(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -65,6 +76,7 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
         model: model.name,
         messages,
         stream: true,
+        keep_alive: KEEP_ALIVE,
         // Same reasoning as chat() below: a model that natively supports
         // Ollama's thinking toggle streams its chain-of-thought through the
         // SEPARATE message.thinking field while message.content -- the only
@@ -102,9 +114,7 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
     });
 
     return { content: full, ...stats };
-  } finally {
-    inFlight--;
-  }
+  });
 }
 
 // Blocking chat used for summarization, routing, follow-up suggestions, and
@@ -113,8 +123,7 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
 export async function chat({ model, messages, optionOverrides, signal }) {
   const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
   const composite = signal ? anySignal([signal, timeout]) : timeout;
-  inFlight++;
-  try {
+  return withBusy(async () => {
     const res = await fetch(CHAT_URL(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -122,6 +131,7 @@ export async function chat({ model, messages, optionOverrides, signal }) {
         model: model.name,
         messages,
         stream: false,
+        keep_alive: KEEP_ALIVE,
         // These are short, structured, single-shot asks (pick a name, list a
         // few questions, summarize a transcript) that never need a visible
         // chain-of-thought. Left on, a "thinking" model (e.g. the Qwen3-based
@@ -147,9 +157,7 @@ export async function chat({ model, messages, optionOverrides, signal }) {
       promptTokens: data.prompt_eval_count || 0,
       completionTokens: data.eval_count || 0,
     };
-  } finally {
-    inFlight--;
-  }
+  });
 }
 
 // Liveness/diagnostic probe for the health endpoint.

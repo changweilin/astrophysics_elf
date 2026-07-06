@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS entities(
   birth TEXT,
   death TEXT,
   claims TEXT,
+  category TEXT,
   updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS edges(
@@ -115,6 +116,11 @@ function migrate(db) {
   if (!cols.includes('source_lang')) {
     db.exec('ALTER TABLE pages ADD COLUMN source_lang TEXT');
   }
+  const entityCols = db.prepare('PRAGMA table_info(entities)').all().map((c) => c.name);
+  if (!entityCols.includes('category')) {
+    db.exec('ALTER TABLE entities ADD COLUMN category TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_entities_category ON entities(category)');
 }
 
 export const now = () => new Date().toISOString();
@@ -246,7 +252,7 @@ const ENTITY_SORT_COLUMNS = {
 // Browse/search knowledge-graph entities, busiest (highest degree) first by
 // default; `sort`/`dir` let the caller re-order by link count, name, or kind
 // (forward/reverse) instead.
-export function listEntities(db, { q, kind, limit = 50, sort, dir } = {}) {
+export function listEntities(db, { q, kind, category, limit = 50, sort, dir } = {}) {
   const filters = [];
   const args = [];
   if (kind) { filters.push('e.kind=?'); args.push(kind); }
@@ -255,12 +261,18 @@ export function listEntities(db, { q, kind, limit = 50, sort, dir } = {}) {
     filters.push('(e.label_en LIKE ? OR e.label_zh LIKE ? OR e.qid = ?)');
     args.push(`%${q}%`, `%${q}%`, q);
   }
+  // A leaf key ('astronomy/stars') matches itself exactly; a group key
+  // ('astronomy') matches every leaf nested under it via the '/' prefix.
+  if (category) {
+    filters.push('(e.category = ? OR e.category LIKE ?)');
+    args.push(category, `${category}/%`);
+  }
   const where = `WHERE ${filters.join(' AND ')}`;
   const sortCol = ENTITY_SORT_COLUMNS[sort] || 'degree';
   const sortDir = dir === 'asc' ? 'ASC' : 'DESC';
   return db
     .prepare(
-      `SELECT e.qid, e.kind, e.label_en, e.label_zh, e.description, e.birth, e.death,
+      `SELECT e.qid, e.kind, e.label_en, e.label_zh, e.description, e.birth, e.death, e.category,
               (SELECT COUNT(*) FROM edges x WHERE x.src = e.qid OR x.dst = e.qid) AS degree
        FROM entities e ${where} ORDER BY ${sortCol} ${sortDir}, e.qid LIMIT ?`
     )

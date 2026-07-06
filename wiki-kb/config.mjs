@@ -73,6 +73,10 @@ export const config = {
     model: envStr('WKB_EMBED_MODEL', 'bge-m3'),
     batch: envNum('WKB_EMBED_BATCH', 16),
     timeoutMs: envNum('WKB_EMBED_TIMEOUT_MS', 120000),
+    // See scientists-backend/config.mjs ollama.keepAlive for why this is
+    // raised above Ollama's 5m default -- a crawl/ingest batch's embed calls
+    // are often spaced out enough to otherwise evict the model between them.
+    keepAlive: envStr('WKB_OLLAMA_KEEP_ALIVE', '30m'),
   },
 
   retrieve: {
@@ -93,10 +97,13 @@ export const config = {
   },
 
   translate: {
-    // Chat model for on-demand page translation (kg view "translate via LLM").
-    // Empty = auto-pick the first installed non-embedding Ollama model.
+    // Chat model for on-demand page translation (kg view "translate via LLM")
+    // and stub-node generation (kg view "generate via LLM" -- see
+    // lib/translate.mjs generateEntityArticle). Empty = auto-pick the first
+    // installed non-embedding Ollama model.
     model: envStr('WKB_TRANSLATE_MODEL', ''),
     timeoutMs: envNum('WKB_TRANSLATE_TIMEOUT_MS', 300000),
+    keepAlive: envStr('WKB_OLLAMA_KEEP_ALIVE', '30m'),
   },
 
   server: {

@@ -14,7 +14,8 @@
 //   GET    /api/entity?qid=Q937                       entity + edges + corpus pages
 //   GET    /api/graph?qid=Q937&depth=1                 subgraph for visualization
 //   GET    /api/pages?lang=&kind=&status=&q=&limit=&offset=&sort=&dir=   browse pages (admin)
-//   GET    /api/entities?q=&kind=&limit=&sort=&dir=     browse/search graph entities
+//   GET    /api/entities?q=&kind=&category=&limit=&sort=&dir=  browse/search graph entities
+//   GET    /api/categories                              classification tree + counts (lib/classify.mjs)
 //   GET    /api/log?limit=                             recent sync/CRUD activity
 //   POST   /api/embed {limit?}                         embed pending chunks now
 //   POST   /api/contribute {lang,title,content,...}    add a manual page (note/translation)
@@ -22,9 +23,18 @@
 //   POST   /api/edge {src,rel,rel_label?,dst}          add a graph edge
 //   DELETE /api/edge?src=&rel=&dst=                     remove a graph edge
 //   POST   /api/translate {pageId, target}              LLM-translate a page (preview only)
+//   POST   /api/entity/generate {qid, target}            LLM-generate an unsourced stub article (preview only)
 //
 // GET /api/health is intentionally NOT handled here -- each host reports
 // health in its own response shape; use kbHealthPayload() for the shared bits.
+//
+// LLM-backed writes (translate/generate/embed) share one busy gate with
+// scientists-backend's chat calls when the two are merged in-process (see
+// ollama-gate.mjs) -- Ollama serializes requests regardless, so letting one
+// queue silently behind the other just stalls it with no feedback. These
+// routes check the gate up front and refuse fast (409) instead, so the UI
+// can show "busy, try again" rather than hang. Pure-SQLite writes (entity/
+// edge CRUD, page delete) never touch Ollama and are never gated.
 
 import {
   getPageById, getPageByTitle, getPageCategories, deletePage, logSync,
@@ -34,7 +44,9 @@ import { search, buildContext } from './retrieve.mjs';
 import { getEntity, subgraph } from './graph.mjs';
 import { ingestTitle, ingestManual, embedPending } from './ingest.mjs';
 import { embedAvailable } from './embed.mjs';
-import { translatePage } from './translate.mjs';
+import { translatePage, generateEntityArticle } from './translate.mjs';
+import { isBusy as llmBusy } from './ollama-gate.mjs';
+import { CATEGORY_TREE, categoryCounts } from './classify.mjs';
 import { config } from '../config.mjs';
 
 function json(res, status, body) {
@@ -74,6 +86,11 @@ export async function kbHealthPayload(db) {
     edges: s.edges,
     embedModel: config.embed.model,
     embedReady: await embedAvailable(),
+    // True while any LLM-backed call (this host's own translate/generate/
+    // embed, OR -- when merged in-process -- the scientists-backend chat) is
+    // in flight. The write routes below (translate/embed/entity-generate)
+    // refuse immediately while this is true instead of queuing silently.
+    writeBusy: llmBusy(),
   };
 }
 
@@ -196,6 +213,7 @@ export function createKbRouter(db) {
         entities: listEntities(db, {
           q: url.searchParams.get('q') || undefined,
           kind: url.searchParams.get('kind') || undefined,
+          category: url.searchParams.get('category') || undefined,
           limit: Number(url.searchParams.get('limit')) || 50,
           sort: url.searchParams.get('sort') || undefined,
           dir: url.searchParams.get('dir') || undefined,
@@ -203,11 +221,25 @@ export function createKbRouter(db) {
       });
       return true;
     }
+    if (req.method === 'GET' && url.pathname === '/api/categories') {
+      const counts = categoryCounts(db);
+      // Attach counts to a fresh copy of the static tree (leaf `n`, group `n`
+      // summed from its children) so the frontend can render node counts
+      // without recomputing the tree shape itself.
+      const withCounts = CATEGORY_TREE.map((node) => {
+        if (!node.children) return { ...node, n: counts.get(node.key) || 0 };
+        const children = node.children.map((c) => ({ ...c, n: counts.get(c.key) || 0 }));
+        return { ...node, children, n: children.reduce((s, c) => s + c.n, 0) };
+      });
+      json(res, 200, { ok: true, tree: withCounts });
+      return true;
+    }
     if (req.method === 'GET' && url.pathname === '/api/log') {
       json(res, 200, { ok: true, log: recentLog(db, Number(url.searchParams.get('limit')) || 100) });
       return true;
     }
     if (req.method === 'POST' && url.pathname === '/api/embed') {
+      if (llmBusy()) { json(res, 409, { ok: false, error: 'busy', busy: true }); return true; }
       const body = await readBody(req);
       const r = await embedPending(db, { limit: Number(body.limit) || Infinity });
       json(res, 200, { ok: true, ...r });
@@ -287,6 +319,7 @@ export function createKbRouter(db) {
       }
     }
     if (req.method === 'POST' && url.pathname === '/api/translate') {
+      if (llmBusy()) { json(res, 409, { ok: false, error: 'busy', busy: true }); return true; }
       const body = await readBody(req);
       const page = body.pageId
         ? getPageById(db, Number(body.pageId))
@@ -301,6 +334,25 @@ export function createKbRouter(db) {
       try {
         const r = await translatePage(page, String(body.target), { signal: ac.signal });
         logSync(db, 'translate', r.target, page.title, `model=${r.model} from=${page.lang}`);
+        if (!res.writableEnded) json(res, 200, { ok: true, ...r });
+      } catch (e) {
+        if (!res.writableEnded) json(res, ac.signal.aborted ? 499 : 500, { ok: false, error: String(e && e.message || e) });
+      }
+      return true;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/entity/generate') {
+      if (llmBusy()) { json(res, 409, { ok: false, error: 'busy', busy: true }); return true; }
+      const body = await readBody(req);
+      if (!body.qid) { json(res, 400, { ok: false, error: 'qid required' }); return true; }
+      if (!body.target) { json(res, 400, { ok: false, error: 'target language required' }); return true; }
+      const found = getEntity(db, String(body.qid));
+      if (!found) { json(res, 404, { ok: false, error: 'entity not found' }); return true; }
+      const ac = new AbortController();
+      req.on('close', () => ac.abort());
+      try {
+        const relations = [...(found.out || []), ...(found.in || [])];
+        const r = await generateEntityArticle(found.entity, String(body.target), { relations, signal: ac.signal });
+        logSync(db, 'generate', r.target, found.entity.label_en || found.entity.label_zh || found.entity.qid, `model=${r.model}`);
         if (!res.writableEnded) json(res, 200, { ok: true, ...r });
       } catch (e) {
         if (!res.writableEnded) json(res, ac.signal.aborted ? 499 : 500, { ok: false, error: String(e && e.message || e) });

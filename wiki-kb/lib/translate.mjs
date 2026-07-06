@@ -5,6 +5,7 @@
 
 import { config } from '../config.mjs';
 import { toTaiwan } from './zh-convert.mjs';
+import { withBusy } from './ollama-gate.mjs';
 
 const LANG_NAMES = {
   en: 'English',
@@ -68,46 +69,124 @@ export async function translatePage(page, target, { maxChars = 3500, signal } = 
     `CONTENT: ${srcContent}`,
   ].join('\n');
 
-  const res = await fetch(`${config.embed.baseUrl}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      prompt,
-      stream: false,
-      options: { temperature: 0.2, num_predict: 2048 },
-    }),
-    signal: anySignal([AbortSignal.timeout(config.translate.timeoutMs), ...(signal ? [signal] : [])]),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`translate HTTP ${res.status}: ${body.slice(0, 200)}`);
-  }
-  const data = await res.json();
-  const raw = String(data?.response ?? '').trim();
-  if (!raw) throw new Error('translate: empty model response');
+  return withBusy(async () => {
+    const res = await fetch(`${config.embed.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        keep_alive: config.translate.keepAlive,
+        options: { temperature: 0.2, num_predict: 2048 },
+      }),
+      signal: anySignal([AbortSignal.timeout(config.translate.timeoutMs), ...(signal ? [signal] : [])]),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`translate HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const raw = String(data?.response ?? '').trim();
+    if (!raw) throw new Error('translate: empty model response');
 
-  const parsed = parseSections(raw) || {
-    title: page.title,
-    summary: '',
-    content: raw,
-  };
-  if (!parsed.content) parsed.content = parsed.summary || raw;
-  if (!parsed.summary) parsed.summary = parsed.content.slice(0, 400);
-  // Local models drift into Simplified even when told the target is Taiwan --
-  // normalize before this ever reaches the preview/contribute flow.
-  const fix = target === 'zh' ? toTaiwan : (s) => s;
-  return {
-    model,
-    target,
-    sourcePageId: page.id,
-    sourceLang: page.lang,
-    qid: page.qid || null,
-    kind: page.kind,
-    title: fix(parsed.title || page.title),
-    summary: fix(parsed.summary),
-    content: fix(parsed.content),
-  };
+    const parsed = parseSections(raw) || {
+      title: page.title,
+      summary: '',
+      content: raw,
+    };
+    if (!parsed.content) parsed.content = parsed.summary || raw;
+    if (!parsed.summary) parsed.summary = parsed.content.slice(0, 400);
+    // Local models drift into Simplified even when told the target is Taiwan --
+    // normalize before this ever reaches the preview/contribute flow.
+    const fix = target === 'zh' ? toTaiwan : (s) => s;
+    return {
+      model,
+      target,
+      sourcePageId: page.id,
+      sourceLang: page.lang,
+      qid: page.qid || null,
+      kind: page.kind,
+      title: fix(parsed.title || page.title),
+      summary: fix(parsed.summary),
+      content: fix(parsed.content),
+    };
+  });
+}
+
+// Generate a short article for a knowledge-graph node that has NO existing
+// corpus page in ANY language -- typically a Wikidata "stub" entity that only
+// exists in the graph because some other page links to it (see
+// wiki-kb/lib/graph.mjs labelStubs). There is nothing to translate here: the
+// LLM writes from its own general knowledge, seeded only with the entity's
+// Wikidata label/kind and its known graph relations. Unlike translatePage,
+// there is no source article to check facts against, so the result is marked
+// `generated: true` and the caller (kg-view.js) MUST show it as an
+// unverified, LLM-written draft rather than reusing the "translated from"
+// framing.
+export async function generateEntityArticle(entity, target, { relations = [], signal } = {}) {
+  const targetName = LANG_NAMES[target];
+  if (!targetName) throw new Error(`unsupported target language: ${target}`);
+  const model = await resolveTranslateModel();
+
+  const label = entity.label_en || entity.label_zh || entity.qid;
+  const relLines = relations
+    .filter((r) => r.label_en || r.label_zh)
+    .slice(0, 12)
+    .map((r) => `- ${r.rel_label || r.rel}: ${r.label_en || r.label_zh}`);
+
+  const prompt = [
+    `You are a careful science writer. Write a short, factual encyclopedia-style entry in ${targetName} about the topic below, using only well-established knowledge.`,
+    'Rules:',
+    'Output ONLY the entry, in exactly this format (keep the three uppercase markers):',
+    'TITLE: <title>',
+    'SUMMARY: <one or two sentence summary>',
+    'CONTENT: <3-6 sentences of factual body text>',
+    '- Keep physics/math notation, symbols, formulas, units and proper nouns unchanged.',
+    '- If you are not confident about a specific fact (exact dates, numeric values, discoverer names), write in general/qualitative terms instead of inventing specifics.',
+    '- Do not add commentary, notes, disclaimers, or text in any other language.',
+    '',
+    `TOPIC: ${label}`,
+    entity.description ? `KNOWN DESCRIPTION: ${entity.description}` : '',
+    relLines.length ? `KNOWN GRAPH RELATIONS:\n${relLines.join('\n')}` : '',
+  ].filter(Boolean).join('\n');
+
+  return withBusy(async () => {
+    const res = await fetch(`${config.embed.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        keep_alive: config.translate.keepAlive,
+        options: { temperature: 0.3, num_predict: 900 },
+      }),
+      signal: anySignal([AbortSignal.timeout(config.translate.timeoutMs), ...(signal ? [signal] : [])]),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`generate HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const raw = String(data?.response ?? '').trim();
+    if (!raw) throw new Error('generate: empty model response');
+
+    const parsed = parseSections(raw) || { title: label, summary: '', content: raw };
+    if (!parsed.content) parsed.content = parsed.summary || raw;
+    if (!parsed.summary) parsed.summary = parsed.content.slice(0, 400);
+    const fix = target === 'zh' ? toTaiwan : (s) => s;
+    return {
+      model,
+      target,
+      qid: entity.qid,
+      kind: entity.kind && entity.kind !== 'stub' ? entity.kind : 'topic',
+      title: fix(parsed.title || label),
+      summary: fix(parsed.summary),
+      content: fix(parsed.content),
+      generated: true,
+    };
+  });
 }
 
 // Minimal AbortSignal.any polyfill (older Node lacks it) -- same pattern used

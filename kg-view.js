@@ -60,6 +60,8 @@
     sortByDegree: { en: 'links', zh: '連結數' },
     sortByAlpha: { en: 'A-Z', zh: '字母' },
     sortByKind: { en: 'kind', zh: '類型' },
+    categories: { en: 'Categories', zh: '分類' },
+    allCategories: { en: 'All', zh: '全部' },
     pages: { en: 'Article', zh: '條目內容' },
     noLangPage: {
       en: 'No article in your language yet.',
@@ -74,6 +76,25 @@
     translatedFrom: { en: 'Translated from: ', zh: '翻譯來源:' },
     cancel: { en: 'Cancel', zh: '中斷' },
     translateCancelled: { en: 'Translation cancelled.', zh: '已中斷翻譯。' },
+    // No source article exists in ANY language for this node (a Wikidata stub
+    // that only appears because another page links to it) -- there is
+    // nothing to translate, but the reader can still ask the local LLM to
+    // write a short draft from its own general knowledge instead.
+    generateWith: { en: 'No source article — write a draft with local LLM', zh: '沒有來源條目——用本機 LLM 生成草稿' },
+    generating: {
+      en: 'Writing a draft with the local model — this can take a minute…',
+      zh: '本機模型生成草稿中——可能需要一點時間…',
+    },
+    generateCancelled: { en: 'Draft generation cancelled.', zh: '已中斷生成。' },
+    generateErr: { en: 'Draft generation failed: ', zh: '生成草稿失敗:' },
+    generatedDisclaimer: {
+      en: 'AI-written draft — not sourced from an existing article. May contain mistakes; verify before relying on it.',
+      zh: 'AI 生成草稿——並非來自現有條目,可能有誤,使用前請自行查證。',
+    },
+    busyErr: {
+      en: 'The local model is busy with something else right now — try again in a moment.',
+      zh: '本機模型目前忙線中(可能正在處理其他請求)——請稍後再試。',
+    },
     addToKb: { en: 'Add to knowledge graph', zh: '加入知識圖譜' },
     adding: { en: 'Adding…', zh: '加入中…' },
     added: { en: 'Added — this article is now part of the knowledge base.', zh: '已加入——這篇內容現在是知識庫的一部分了。' },
@@ -190,6 +211,49 @@
     inQ.placeholder = t(STR.search);
     searchWrap.appendChild(inQ);
     side.appendChild(searchWrap);
+
+    // Subject/content classification tree (see wiki-kb/lib/classify.mjs):
+    // groups the root-node browse list by the same Wikidata-ontology +
+    // Wikipedia-category signals used to seed the crawl itself. Fetched once;
+    // clicking a group or leaf filters the list below via /api/entities?category=.
+    var catTitleRow = el('div', 'kg-d-sect-row');
+    catTitleRow.appendChild(el('p', 'kg-side-title', t(STR.categories)));
+    side.appendChild(catTitleRow);
+    var catTree = el('div', 'kg-cat-tree');
+    side.appendChild(catTree);
+    var curCategory = '';
+    window.KNKB.api('/api/categories').then(function (r) {
+      if (destroyed) return;
+      catTree.innerHTML = '';
+      var allBtn = el('button', 'kg-btn kg-cat-leaf active', t(STR.allCategories));
+      catTree.appendChild(allBtn);
+      var leafBtns = [allBtn];
+      function repaintCatBtns() {
+        leafBtns.forEach(function (b) { b.classList.toggle('active', b.dataset.cat === curCategory); });
+      }
+      function bindLeaf(btn, key) {
+        btn.dataset.cat = key || '';
+        btn.addEventListener('click', function () {
+          curCategory = curCategory === (key || '') ? '' : (key || '');
+          repaintCatBtns();
+          loadList(lastQ);
+        });
+        leafBtns.push(btn);
+      }
+      allBtn.dataset.cat = '';
+      allBtn.addEventListener('click', function () { curCategory = ''; repaintCatBtns(); loadList(lastQ); });
+      (r.tree || []).forEach(function (node) {
+        var groupBtn = el('button', 'kg-btn kg-cat-group', t(node.label) + ' (' + node.n + ')');
+        catTree.appendChild(groupBtn);
+        bindLeaf(groupBtn, node.key);
+        (node.children || []).forEach(function (child) {
+          var leafBtn = el('button', 'kg-btn kg-cat-leaf indent', t(child.label) + ' (' + child.n + ')');
+          catTree.appendChild(leafBtn);
+          bindLeaf(leafBtn, child.key);
+        });
+      });
+    }).catch(function () { /* classification tree is a nice-to-have; browse list still works without it */ });
+
     var listTitleRow = el('div', 'kg-d-sect-row');
     listTitleRow.appendChild(el('p', 'kg-side-title', t(STR.browse)));
     var listSortBar = el('div', 'kg-d-sort');
@@ -479,6 +543,7 @@
       showSideMsg(t(STR.loading));
       var qs = new URLSearchParams({ limit: '40' });
       if (q) qs.set('q', q);
+      if (curCategory) qs.set('category', curCategory);
       // 'label' is a UI-level sort key; the API sorts on whichever language
       // column the reader is actually looking at.
       qs.set('sort', listSort.by === 'label' ? (lang === 'zh' ? 'label_zh' : 'label_en') : listSort.by);
@@ -637,17 +702,127 @@
         }
 
         // -------- no article in the reader's language --------
-        detail.appendChild(el('p', 'kg-d-body dim', t(STR.noLangPage)));
-        if (!pages.length) return;
-        // translation source: prefer en, then zh, then whatever exists
-        var src = pages.find(function (p) { return p.lang === 'en'; })
-          || pages.find(function (p) { return p.lang === 'zh'; })
-          || pages[0];
-        var box = el('div', 'kg-translate');
-        var tb = el('button', 'kg-btn primary', t(STR.translateWith) + src.lang + ' · "' + src.title + '")');
-        box.appendChild(tb);
-        detail.appendChild(box);
-        tb.addEventListener('click', function () {
+        // Shared "preview -> add/correct/delete" rendering for both the
+        // translate flow (a source article exists in another language) and
+        // the generate flow (no source anywhere -- see below). `tr` is the
+        // LLM response; `sourceTag`/`metaNode` distinguish provenance for
+        // /api/contribute and the line shown right under the preview.
+        function renderLlmPreview(box, tr, sourceTag, metaNode) {
+          box.appendChild(el('p', 'kg-d-sect', t(STR.translated) + ' · ' + tr.model));
+          if (metaNode) box.appendChild(metaNode);
+          box.appendChild(el('h4', 'kg-d-title', tr.title));
+          var bodyP = el('p', 'kg-d-body kg-preview', tr.content.length > 900 ? tr.content.slice(0, 900) + '…' : tr.content);
+          box.appendChild(bodyP);
+          var add = el('button', 'kg-btn primary', t(STR.addToKb));
+          box.appendChild(add);
+
+          // Contributed content so far -- kept mutable so a follow-up
+          // correction (re-contribute under the same lang+title, which
+          // upserts in place) always sends the latest saved version.
+          var current = {
+            title: tr.title, summary: tr.summary, content: tr.content, kind: tr.kind || 'topic',
+            pageId: null, sourceLang: tr.sourceLang || null,
+          };
+
+          function contribute(payload, onOk, onErr) {
+            window.KNKB.api('/api/contribute', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(Object.assign(
+                { lang: lang, qid: qid, source: sourceTag, sourceLang: current.sourceLang }, payload
+              )),
+            }).then(function (cr) {
+              if (destroyed) return;
+              current.pageId = cr.pageId;
+              onOk(cr);
+            }).catch(function (er) { onErr(er); });
+          }
+
+          // After a save (initial add, or a later correction): the reader
+          // can still say "not quite right" and either re-edit or delete
+          // this contribution outright.
+          function renderPostAddControls(msgKey) {
+            box.appendChild(el('p', 'kg-d-body ok', t(STR[msgKey])));
+            var actions = el('div', 'kg-translate');
+            var correctBtn = el('button', 'kg-btn', t(STR.correctBtn));
+            var delBtn = el('button', 'kg-btn', t(STR.deleteBtn));
+            actions.appendChild(correctBtn);
+            actions.appendChild(delBtn);
+            box.appendChild(actions);
+
+            delBtn.addEventListener('click', function () {
+              if (!window.confirm(t(STR.deleteConfirm))) return;
+              delBtn.disabled = true; correctBtn.disabled = true;
+              window.KNKB.api('/api/page?id=' + current.pageId, { method: 'DELETE' }).then(function () {
+                if (destroyed) return;
+                actions.remove();
+                box.appendChild(el('p', 'kg-d-body dim', t(STR.deleted)));
+              }).catch(function (er) {
+                delBtn.disabled = false; correctBtn.disabled = false;
+                box.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));
+              });
+            });
+
+            correctBtn.addEventListener('click', function () {
+              actions.remove();
+              var editBox = el('div', 'kg-translate');
+              var titleIn = el('input', 'kg-edit-title');
+              titleIn.type = 'text'; titleIn.value = current.title;
+              var contentTa = el('textarea', 'kg-edit-content');
+              contentTa.value = current.content;
+              editBox.appendChild(el('p', 'kg-d-sect', t(STR.correctTitle)));
+              editBox.appendChild(titleIn);
+              editBox.appendChild(contentTa);
+              var saveBtn = el('button', 'kg-btn primary', t(STR.correctSave));
+              var cancelBtn = el('button', 'kg-btn', t(STR.correctCancel));
+              editBox.appendChild(saveBtn);
+              editBox.appendChild(cancelBtn);
+              box.appendChild(editBox);
+
+              cancelBtn.addEventListener('click', function () {
+                editBox.remove();
+                box.appendChild(actions);
+              });
+              saveBtn.addEventListener('click', function () {
+                saveBtn.disabled = true; cancelBtn.disabled = true;
+                contribute({
+                  title: titleIn.value.trim() || current.title,
+                  summary: current.summary,
+                  content: contentTa.value,
+                  kind: current.kind,
+                }, function () {
+                  if (destroyed) return;
+                  current.title = titleIn.value.trim() || current.title;
+                  current.content = contentTa.value;
+                  editBox.remove();
+                  renderPostAddControls('corrected');
+                }, function (er) {
+                  saveBtn.disabled = false; cancelBtn.disabled = false;
+                  editBox.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));
+                });
+              });
+            });
+          }
+
+          add.addEventListener('click', function () {
+            add.disabled = true;
+            add.textContent = t(STR.adding);
+            contribute({ title: current.title, summary: current.summary, content: current.content, kind: current.kind }, function () {
+              add.remove();
+              renderPostAddControls('added');
+            }, function (er) {
+              add.disabled = false;
+              add.textContent = t(STR.addToKb);
+              box.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));
+            });
+          });
+        }
+
+        // Shared progress-bar/cancel/busy-refuse plumbing around one LLM
+        // call (translate OR generate). `run` performs the actual
+        // window.KNKB.api(...) call and receives the AbortSignal to attach.
+        function runLlmDraft(opts) {
+          var tb = opts.tb, box = opts.box;
           tb.disabled = true;
           // No real total to measure progress against (an LLM's output length
           // isn't known ahead of time), so this is a time-based indeterminate
@@ -658,7 +833,7 @@
           var ac = new AbortController();
           var startTs = Date.now();
           var prog = el('div', 'kg-progress busy');
-          var progLabel = el('div', 'kg-progress-label', t(STR.translating));
+          var progLabel = el('div', 'kg-progress-label', t(opts.progressStr));
           var progBar = el('div', 'kg-progress-bar');
           var progFill = el('div', 'kg-progress-fill');
           progBar.appendChild(progFill);
@@ -668,139 +843,78 @@
           prog.appendChild(cancelBtn);
           box.appendChild(prog);
           var elapsedTimer = setInterval(function () {
-            progLabel.textContent = t(STR.translating) + ' (' + Math.round((Date.now() - startTs) / 1000) + 's)';
+            progLabel.textContent = t(opts.progressStr) + ' (' + Math.round((Date.now() - startTs) / 1000) + 's)';
           }, 1000);
           cancelBtn.addEventListener('click', function () { ac.abort(); });
 
-          window.KNKB.api('/api/translate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pageId: src.id, target: lang }),
-            signal: ac.signal,
-          }).then(function (tr) {
+          opts.run(ac.signal).then(function (tr) {
             clearInterval(elapsedTimer);
             if (destroyed || selQid !== qid) return;
             prog.remove();
-            box.appendChild(el('p', 'kg-d-sect', t(STR.translated) + ' · ' + tr.model));
-            box.appendChild(el('p', 'kg-d-meta', t(STR.translatedFrom) + tr.sourceLang));
-            box.appendChild(el('h4', 'kg-d-title', tr.title));
-            var bodyP = el('p', 'kg-d-body kg-preview', tr.content.length > 900 ? tr.content.slice(0, 900) + '…' : tr.content);
-            box.appendChild(bodyP);
-            var add = el('button', 'kg-btn primary', t(STR.addToKb));
-            box.appendChild(add);
-
-            // Contributed content so far -- kept mutable so a follow-up
-            // correction (re-contribute under the same lang+title, which
-            // upserts in place) always sends the latest saved version.
-            var current = {
-              title: tr.title, summary: tr.summary, content: tr.content, kind: tr.kind || 'topic',
-              pageId: null, sourceLang: tr.sourceLang,
-            };
-
-            function contribute(payload, onOk, onErr) {
-              window.KNKB.api('/api/contribute', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(Object.assign(
-                  { lang: lang, qid: qid, source: 'llm-translation', sourceLang: current.sourceLang }, payload
-                )),
-              }).then(function (cr) {
-                if (destroyed) return;
-                current.pageId = cr.pageId;
-                onOk(cr);
-              }).catch(function (er) { onErr(er); });
-            }
-
-            // After a save (initial add, or a later correction): the reader
-            // can still say "not quite right" and either re-edit or delete
-            // this contribution outright.
-            function renderPostAddControls(msgKey) {
-              box.appendChild(el('p', 'kg-d-body ok', t(STR[msgKey])));
-              var actions = el('div', 'kg-translate');
-              var correctBtn = el('button', 'kg-btn', t(STR.correctBtn));
-              var delBtn = el('button', 'kg-btn', t(STR.deleteBtn));
-              actions.appendChild(correctBtn);
-              actions.appendChild(delBtn);
-              box.appendChild(actions);
-
-              delBtn.addEventListener('click', function () {
-                if (!window.confirm(t(STR.deleteConfirm))) return;
-                delBtn.disabled = true; correctBtn.disabled = true;
-                window.KNKB.api('/api/page?id=' + current.pageId, { method: 'DELETE' }).then(function () {
-                  if (destroyed) return;
-                  actions.remove();
-                  box.appendChild(el('p', 'kg-d-body dim', t(STR.deleted)));
-                }).catch(function (er) {
-                  delBtn.disabled = false; correctBtn.disabled = false;
-                  box.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));
-                });
-              });
-
-              correctBtn.addEventListener('click', function () {
-                actions.remove();
-                var editBox = el('div', 'kg-translate');
-                var titleIn = el('input', 'kg-edit-title');
-                titleIn.type = 'text'; titleIn.value = current.title;
-                var contentTa = el('textarea', 'kg-edit-content');
-                contentTa.value = current.content;
-                editBox.appendChild(el('p', 'kg-d-sect', t(STR.correctTitle)));
-                editBox.appendChild(titleIn);
-                editBox.appendChild(contentTa);
-                var saveBtn = el('button', 'kg-btn primary', t(STR.correctSave));
-                var cancelBtn = el('button', 'kg-btn', t(STR.correctCancel));
-                editBox.appendChild(saveBtn);
-                editBox.appendChild(cancelBtn);
-                box.appendChild(editBox);
-
-                cancelBtn.addEventListener('click', function () {
-                  editBox.remove();
-                  box.appendChild(actions);
-                });
-                saveBtn.addEventListener('click', function () {
-                  saveBtn.disabled = true; cancelBtn.disabled = true;
-                  contribute({
-                    title: titleIn.value.trim() || current.title,
-                    summary: current.summary,
-                    content: contentTa.value,
-                    kind: current.kind,
-                  }, function () {
-                    if (destroyed) return;
-                    current.title = titleIn.value.trim() || current.title;
-                    current.content = contentTa.value;
-                    editBox.remove();
-                    renderPostAddControls('corrected');
-                  }, function (er) {
-                    saveBtn.disabled = false; cancelBtn.disabled = false;
-                    editBox.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));
-                  });
-                });
-              });
-            }
-
-            add.addEventListener('click', function () {
-              add.disabled = true;
-              add.textContent = t(STR.adding);
-              contribute({ title: current.title, summary: current.summary, content: current.content, kind: current.kind }, function () {
-                add.remove();
-                renderPostAddControls('added');
-              }, function (er) {
-                add.disabled = false;
-                add.textContent = t(STR.addToKb);
-                box.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));
-              });
-            });
+            renderLlmPreview(box, tr, opts.sourceTag, opts.metaNode(tr));
           }).catch(function (er) {
             clearInterval(elapsedTimer);
             if (destroyed) return;
             prog.remove();
             tb.disabled = false;
             if (ac.signal.aborted) {
-              box.appendChild(el('p', 'kg-d-body dim', t(STR.translateCancelled)));
+              box.appendChild(el('p', 'kg-d-body dim', t(opts.cancelledStr)));
+            } else if (er && er.message === 'busy') {
+              box.appendChild(el('p', 'kg-d-body err', t(STR.busyErr)));
             } else {
-              box.appendChild(el('p', 'kg-d-body err', t(STR.translateErr) + (er.message || er)));
+              box.appendChild(el('p', 'kg-d-body err', t(opts.errStr) + (er.message || er)));
             }
           });
-        });
+        }
+
+        detail.appendChild(el('p', 'kg-d-body dim', t(STR.noLangPage)));
+        var box = el('div', 'kg-translate');
+        detail.appendChild(box);
+
+        if (pages.length) {
+          // -------- translate: a source article exists in another language --------
+          var src = pages.find(function (p) { return p.lang === 'en'; })
+            || pages.find(function (p) { return p.lang === 'zh'; })
+            || pages[0];
+          var tb = el('button', 'kg-btn primary', t(STR.translateWith) + src.lang + ' · "' + src.title + '")');
+          box.appendChild(tb);
+          tb.addEventListener('click', function () {
+            runLlmDraft({
+              tb: tb, box: box, progressStr: STR.translating, cancelledStr: STR.translateCancelled,
+              errStr: STR.translateErr, sourceTag: 'llm-translation',
+              metaNode: function (tr) { return el('p', 'kg-d-meta', t(STR.translatedFrom) + tr.sourceLang); },
+              run: function (signal) {
+                return window.KNKB.api('/api/translate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ pageId: src.id, target: lang }),
+                  signal: signal,
+                });
+              },
+            });
+          });
+        } else {
+          // -------- generate: no source article in any language (a Wikidata
+          // stub node) -- offer an LLM-written, explicitly-unverified draft
+          // instead, seeded from the entity's label/kind/relations. --------
+          var gb = el('button', 'kg-btn primary', t(STR.generateWith));
+          box.appendChild(gb);
+          gb.addEventListener('click', function () {
+            runLlmDraft({
+              tb: gb, box: box, progressStr: STR.generating, cancelledStr: STR.generateCancelled,
+              errStr: STR.generateErr, sourceTag: 'llm-generated',
+              metaNode: function () { return el('p', 'kg-d-meta warn', t(STR.generatedDisclaimer)); },
+              run: function (signal) {
+                return window.KNKB.api('/api/entity/generate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ qid: qid, target: lang }),
+                  signal: signal,
+                });
+              },
+            });
+          });
+        }
       }).catch(function (e2) {
         if (destroyed) return;
         detail.innerHTML = '';

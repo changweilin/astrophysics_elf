@@ -50,6 +50,13 @@ export const config = {
     topP: envNum('SCI_TOP_P', 0.9),
     // Request timeout for a single generation (ms). Generous for slow 3060 runs.
     requestTimeoutMs: envNum('SCI_REQUEST_TIMEOUT_MS', 300000),
+    // How long Ollama keeps a model loaded (and its KV cache warm) after a
+    // call, in Ollama's own duration syntax (e.g. '30m', '1h', '-1' = forever).
+    // Ollama's default is 5m; a chat session's turns are often further apart
+    // than that, so the model (and any prefix cache) gets evicted between
+    // turns unless this is raised. See lib/ollama.mjs for why there is no
+    // separate "implicit caching" toggle to reach for instead.
+    keepAlive: envStr('SCI_OLLAMA_KEEP_ALIVE', '30m'),
     // Per-language models. `contextTokens` should match the num_ctx you serve;
     // on a 3060 the KV cache is the real budget, so 8192 is a safe default.
     models: {
