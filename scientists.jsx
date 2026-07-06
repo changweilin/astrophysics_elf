@@ -666,12 +666,21 @@ function ReplyModeChip({ replyMode, setReplyMode, lang, allowCompare = true }) {
 }
 
 // Wraps a compare-mode turn's two panes (direct vs. RAG-searched) so mobile
-// switches between them only by swiping the pane strip itself -- never the
-// whole page -- while a vertical swipe still scrolls the surrounding
-// conversation normally (see the touch-action: pan-x rule on .sci-compare-row).
-// Desktop just shows both side by side (see the non-mobile CSS) and the dots
-// stay hidden; on mobile the dots track scroll position so it reads as an
-// obvious two-page swipe control, not an accidental page-wide drag.
+// can switch between them two ways: swiping the pane strip itself (never the
+// whole page), or tapping the sliver of the other pane that peeks at the
+// strip's edge (see the mobile CSS -- each pane is ~88% width, so its
+// neighbor is always partly visible). Desktop just shows both side by side
+// (see the non-mobile CSS) and the dots/peek styling stay inert.
+//
+// touch-action: pan-x (see .sci-compare-row CSS) is supposed to hand a
+// vertical drag straight to the page's own scroller without the row ever
+// claiming it, but empirically (confirmed with a real touch-gesture replay,
+// not just mouse-drag testing) Chromium sometimes still swallows it -- the
+// conversation reads as "stuck" under a compare row instead of scrolling.
+// The touchmove listener below is the reliable fallback: once a gesture
+// reveals itself as more vertical than horizontal, this manually forwards
+// the remaining delta to the nearest .sci-scroll ancestor and takes over
+// from there, instead of trusting the browser to hand it off mid-gesture.
 function CompareSwipeRow({ className, children }) {
   const rowRef = useRef(null);
   const [active, setActive] = useState(0);
@@ -681,14 +690,84 @@ function CompareSwipeRow({ className, children }) {
     const w = el.clientWidth || 1;
     setActive(el.scrollLeft > w / 2 ? 1 : 0);
   }, []);
+
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return undefined;
+    const gesture = { active: false, intent: null, lastY: 0 };
+
+    function onTouchStart(e) {
+      if (e.touches.length !== 1) { gesture.active = false; return; }
+      const t = e.touches[0];
+      gesture.active = true;
+      gesture.intent = null;
+      gesture.startX = t.clientX;
+      gesture.startY = t.clientY;
+      gesture.lastY = t.clientY;
+      gesture.scroller = row.closest('.sci-scroll');
+    }
+    function onTouchMove(e) {
+      if (!gesture.active || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (!gesture.intent) {
+        const dx = t.clientX - gesture.startX;
+        const dy = t.clientY - gesture.startY;
+        if (Math.abs(dx) + Math.abs(dy) < 6) return;
+        gesture.intent = Math.abs(dy) > Math.abs(dx) ? 'v' : 'h';
+      }
+      if (gesture.intent === 'v' && gesture.scroller) {
+        e.preventDefault();
+        gesture.scroller.scrollTop -= (t.clientY - gesture.lastY);
+        gesture.lastY = t.clientY;
+      }
+      // 'h' intent: leave it to the row's own native horizontal scrolling.
+    }
+    function onTouchEnd() { gesture.active = false; gesture.intent = null; }
+
+    row.addEventListener('touchstart', onTouchStart, { passive: true });
+    row.addEventListener('touchmove', onTouchMove, { passive: false });
+    row.addEventListener('touchend', onTouchEnd, { passive: true });
+    row.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    return () => {
+      row.removeEventListener('touchstart', onTouchStart);
+      row.removeEventListener('touchmove', onTouchMove);
+      row.removeEventListener('touchend', onTouchEnd);
+      row.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, []);
+
+  const kids = React.Children.toArray(children);
+  function goTo(idx) {
+    const el = rowRef.current;
+    const pane = el && el.children[idx];
+    if (pane) pane.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }
+  // Only intercept a tap on the peeking pane when the row is actually a
+  // horizontally-scrollable strip (mobile layout) -- on desktop both panes
+  // sit side by side at full height and every click must reach the real
+  // bubble underneath (e.g. the copy/undo buttons in the right-hand pane).
+  function onPaneClickCapture(idx, e) {
+    const el = rowRef.current;
+    if (!el || el.scrollWidth <= el.clientWidth + 1) return;
+    if (idx !== active) { e.preventDefault(); e.stopPropagation(); goTo(idx); }
+  }
+
   return (
     <div className="sci-compare-wrap">
       <div className={'sci-compare-row' + (className ? ' ' + className : '')} ref={rowRef} onScroll={onScroll}>
-        {children}
+        {kids.map((child, idx) => (
+          <div
+            key={idx}
+            className={'sci-compare-pane' + (idx === active ? ' is-active' : ' is-peek')}
+            onClickCapture={(e) => onPaneClickCapture(idx, e)}
+          >
+            {child}
+          </div>
+        ))}
       </div>
       <div className="sci-compare-dots" aria-hidden="true">
-        <span className={'sci-compare-dot' + (active === 0 ? ' active' : '')} />
-        <span className={'sci-compare-dot' + (active === 1 ? ' active' : '')} />
+        <span className={'sci-compare-dot' + (active === 0 ? ' active' : '')} onClick={() => goTo(0)} />
+        <span className={'sci-compare-dot' + (active === 1 ? ' active' : '')} onClick={() => goTo(1)} />
       </div>
     </div>
   );
@@ -1195,8 +1274,12 @@ function SciAppRoot() {
 
   // `modeLabel` (e.g. tr.replyModeBadgeDirect/Rag) tags a compare-mode
   // keypoints notice so the two lineages' summaries aren't shown as one.
-  function pushNotice(kind, text, modeLabel) {
-    setMessages((m) => [...m, { role: 'notice', kind, text, modeLabel }]);
+  // `compareTag` ({compare:true, mode:'rag'|'direct'}) marks it the same way
+  // a compare-mode sci bubble is marked, so it (a) pairs into a side-by-side
+  // CompareSwipeRow like the conversation itself, and (b) is picked up by
+  // stripCompareMessages when a favorite keeps only one lineage.
+  function pushNotice(kind, text, modeLabel, compareTag) {
+    setMessages((m) => [...m, { role: 'notice', kind, text, modeLabel, ...compareTag }]);
   }
 
   // Drop any follow-up chips and invalidate an in-flight suggestion request (the
@@ -1336,8 +1419,8 @@ function SciAppRoot() {
       return;
     }
     pushNotice('summary', tr.summarizingNow);
-    await summarizeRagLineage({ silent: true });
-    await summarizeDirectLineage();
+    await summarizeRagLineage({ silent: true, compare: true });
+    await summarizeDirectLineage({ compare: true });
   }
 
   // RAG lineage (or the plain direct/rag single-mode chat): backed by a real
@@ -1346,6 +1429,7 @@ function SciAppRoot() {
   // the sibling direct-lineage call still has its own thing to report.
   async function summarizeRagLineage(opts) {
     const silent = !!(opts && opts.silent);
+    const compareTag = opts && opts.compare ? { compare: true, mode: 'rag' } : undefined;
     if (!sessionId.current) {
       if (!silent) pushNotice('summary', tr.summaryNothing);
       return;
@@ -1366,7 +1450,7 @@ function SciAppRoot() {
       }
       const r = await res.json().catch(() => null);
       if (res.ok && r && r.ok && r.changed) {
-        pushNotice('keypoints', r.summary || '', silent ? tr.replyModeBadgeRag : undefined);
+        pushNotice('keypoints', r.summary || '', silent ? tr.replyModeBadgeRag : undefined, compareTag);
         setUsage(typeof r.usage === 'number' ? r.usage : 0);
       } else if (res.ok && r && r.ok) {
         if (!silent) pushNotice('summary', tr.summaryNothing);
@@ -1382,7 +1466,8 @@ function SciAppRoot() {
   // is just the client-held summary text + a replay start index -- summarizing
   // folds everything up to now into that summary and moves the start index
   // forward, so future direct-mode turns replay less (see lineageHistory).
-  async function summarizeDirectLineage() {
+  async function summarizeDirectLineage(opts) {
+    const compareTag = opts && opts.compare ? { compare: true, mode: 'direct' } : undefined;
     const hist = lineageHistory(messagesRef.current, 'direct', directHistoryStartRef.current)
       .filter((m) => m.role === 'user' || (m.role === 'sci' && m.text && m.text.trim()));
     if (!hist.length) return;
@@ -1395,7 +1480,7 @@ function SciAppRoot() {
       if (res.ok && r && r.ok && r.changed) {
         directSummaryRef.current = r.summary || '';
         directHistoryStartRef.current = messagesRef.current.length;
-        pushNotice('keypoints', r.summary || '', tr.replyModeBadgeDirect);
+        pushNotice('keypoints', r.summary || '', tr.replyModeBadgeDirect, compareTag);
       }
     } catch (e) {
       pushNotice('err', tr.errPrefix + ((e && e.message) || e));
@@ -1757,6 +1842,17 @@ function SciAppRoot() {
       fetchFollowups();
     }
   }, [input, streaming, selected, replyMode, runChatCall, clearFollowups, fetchFollowups]);
+
+  // Renders one keypoints (summary) notice. Shared by the plain single-card
+  // path and the compare-mode side-by-side pair (see the messages.map above).
+  function renderKeypoints(m, i) {
+    return (
+      <div key={i} className="sci-keypoints">
+        <span className="kp-title">{tr.keypointsTitle}{m.modeLabel && <span className="sci-mode-badge">{m.modeLabel}</span>}</span>
+        <div className="kp-body">{m.text}</div>
+      </div>
+    );
+  }
 
   // Renders one sci-turn bubble. Shared by the normal single-bubble path and
   // the compare-mode side-by-side pair (see the messages.map below) --
@@ -2331,12 +2427,26 @@ function SciAppRoot() {
             {messages.map((m, i) => {
               if (m.role === 'notice') {
                 if (m.kind === 'keypoints') {
-                  return (
-                    <div key={i} className="sci-keypoints">
-                      <span className="kp-title">{tr.keypointsTitle}{m.modeLabel && <span className="sci-mode-badge">{m.modeLabel}</span>}</span>
-                      <div className="kp-body">{m.text}</div>
-                    </div>
-                  );
+                  // Compare mode's pair (rag then direct, pushed in that order
+                  // by summarizeNow) renders side by side, same as the
+                  // conversation's own compare rows -- the second notice of
+                  // the pair is skipped here since the first already rendered it.
+                  if (m.compare && m.mode === 'direct'
+                    && messages[i - 1] && messages[i - 1].role === 'notice' && messages[i - 1].kind === 'keypoints'
+                    && messages[i - 1].compare && messages[i - 1].mode === 'rag') {
+                    return null;
+                  }
+                  if (m.compare && m.mode === 'rag'
+                    && messages[i + 1] && messages[i + 1].role === 'notice' && messages[i + 1].kind === 'keypoints'
+                    && messages[i + 1].compare && messages[i + 1].mode === 'direct') {
+                    return (
+                      <CompareSwipeRow key={i}>
+                        {renderKeypoints(m, i)}
+                        {renderKeypoints(messages[i + 1], i + 1)}
+                      </CompareSwipeRow>
+                    );
+                  }
+                  return renderKeypoints(m, i);
                 }
                 return <div key={i} className={'sci-notice ' + (m.kind || '')}>{m.text}</div>;
               }

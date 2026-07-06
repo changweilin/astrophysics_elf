@@ -353,16 +353,17 @@ html, body {
 .sci-msg .sci-speaker { font-size: 0.72rem; font-weight: 600; color: var(--ink-faint); padding-left: 3px; display: flex; align-items: center; gap: 6px; }
 
 /* compare mode: direct-reply vs. KB-searched reply shown side by side. The
-   single-chat pane is one bubble (a direct .sci-compare-row child); the
-   Science Dialogue pane is a whole column of bubbles (.sci-compare-col) --
-   the ">"-scoping below keeps these rules from also matching the ordinary
-   .sci-msg bubbles nested *inside* a discuss column. */
+   single-chat pane is one bubble (a direct .sci-compare-pane child); the
+   Science Dialogue pane is a whole column of bubbles (.sci-compare-col).
+   CompareSwipeRow wraps each side in its own .sci-compare-pane, which is
+   where all row-participation sizing lives -- .sci-msg/.sci-keypoints/
+   .sci-compare-col keep only their own internal layout. */
 .sci-compare-wrap { width: 100%; align-self: stretch; }
 .sci-compare-row { display: flex; gap: 10px; width: 100%; align-self: stretch; }
-.sci-compare-row > .sci-msg { max-width: none; flex: 1 1 0; min-width: 0; }
-.sci-compare-col {
-  display: flex; flex-direction: column; gap: 14px; flex: 1 1 0; min-width: 0;
-}
+.sci-compare-pane { flex: 1 1 0; min-width: 0; }
+.sci-compare-pane > .sci-msg,
+.sci-compare-pane > .sci-keypoints { max-width: none; }
+.sci-compare-col { display: flex; flex-direction: column; gap: 14px; }
 .sci-compare-col-label {
   font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
   color: var(--ink-faint);
@@ -377,11 +378,15 @@ html, body {
 .sci-compare-dots { display: none; }
 
 @media (max-width: 760px) {
-  /* Two full-height columns don't fit a phone screen, so swipe between them
-     instead of stacking: a horizontally snapping strip, one pane per
-     screen-width. Kept inside the normal message width (not bled edge to
-     edge) and given its own card border/background so it visibly reads as
-     "swipe this strip", not "the whole page moved" -- the dots below
+  /* Two full-height columns don't fit a phone screen, so switch between them
+     instead of stacking: a horizontally snapping strip, each pane ~88% width
+     so the other one visibly peeks at the trailing edge -- tap that peeking
+     sliver to jump straight to it, or swipe the strip itself (a manual JS
+     fallback in CompareSwipeRow takes over a vertical drag and forwards it
+     to the page's own scroll -- touch-action alone was not reliable enough
+     here in practice). Kept inside the normal message width (not bled edge
+     to edge) and given its own card border/background so it visibly reads
+     as "swipe this strip", not "the whole page moved" -- the dots below
      reinforce that there's a second pane and which one is active. */
   .sci-compare-row {
     display: flex;
@@ -389,29 +394,22 @@ html, body {
     overflow-x: auto;
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
-    /* Claim horizontal panning for this strip only; a vertical drag that
-       starts here still passes straight through to the page's own vertical
-       scroll instead of the gesture getting stuck deciding between the two. */
     touch-action: pan-x;
-    gap: 0;
+    gap: 10px;
     border: 1px solid var(--line);
     border-radius: 12px;
     background: var(--panel-2);
     padding: 10px;
   }
-  .sci-compare-row > .sci-msg,
-  .sci-compare-row > .sci-compare-col {
-    flex: 0 0 100%;
-    max-width: 100%;
-    scroll-snap-align: start;
-    padding: 0 6px;
+  .sci-compare-pane {
+    flex: 0 0 88%;
+    max-width: 88%;
+    scroll-snap-align: center;
+    transition: opacity 0.15s ease;
   }
-  .sci-compare-row > .sci-msg:first-child,
-  .sci-compare-row > .sci-compare-col:first-child { padding-left: 0; }
-  .sci-compare-row > .sci-msg:last-child,
-  .sci-compare-row > .sci-compare-col:last-child { padding-right: 0; }
+  .sci-compare-pane.is-peek { opacity: 0.55; cursor: pointer; }
   .sci-compare-dots { display: flex; justify-content: center; align-items: center; gap: 6px; margin-top: 8px; }
-  .sci-compare-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); transition: background 0.15s ease, transform 0.15s ease; }
+  .sci-compare-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); transition: background 0.15s ease, transform 0.15s ease; cursor: pointer; }
   .sci-compare-dot.active { background: var(--accent); transform: scale(1.35); }
 }
 

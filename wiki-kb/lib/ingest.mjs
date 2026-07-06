@@ -75,7 +75,7 @@ export async function ingestTitle(db, lang, title, { force = false } = {}) {
 // pipeline as Wikipedia pages, but source != 'wikipedia' keeps it out of the
 // revision sweep so it can never be "deleted upstream".
 export function ingestManual(db, {
-  lang, title, summary, content, kind = 'note', qid = null, source = 'user',
+  lang, title, summary, content, kind = 'note', qid = null, source = 'user', sourceLang = null,
 } = {}) {
   const text = String(content ?? '').trim();
   const cleanTitle = String(title ?? '').trim();
@@ -90,6 +90,7 @@ export function ingestManual(db, {
     summary: (summary && String(summary).trim()) || leadOf(text),
     content: text,
     source,
+    sourceLang: sourceLang || null,
   });
 
   let pieces = chunkText(text);

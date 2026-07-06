@@ -196,22 +196,36 @@ export function getEntity(db, qid) {
   return { entity, out, in: inbound, pages };
 }
 
+// A hop-1 node can be a "list of X" page with hundreds of members; a plain
+// BFS at depth=2 would let a handful of those flood the subgraph with
+// low-value stubs in whatever order SQLite happens to return them. Instead,
+// hop 1 (the root's immediate neighborhood) is taken in full as before, but
+// hop 2 candidates are gathered first and only the best-connected ones are
+// kept -- the rest are simply left off this render (still reachable by
+// re-centering on them directly).
+const HOP2_MAX_NEW = 40;
+
 // Breadth-first neighborhood, both edge directions, capped for sane payloads.
 export function subgraph(db, qid, depth = 1, maxNodes = 150) {
   const nodes = new Map();
   const edges = [];
   const seen = new Set([qid]);
-  let frontier = [qid];
   const nodeStmt = db.prepare('SELECT qid, kind, label_en, label_zh FROM entities WHERE qid=?');
   const outStmt = db.prepare('SELECT src, rel, rel_label, dst FROM edges WHERE src=?');
   const inStmt = db.prepare('SELECT src, rel, rel_label, dst FROM edges WHERE dst=?');
+  const degreeStmt = db.prepare(
+    'SELECT (SELECT COUNT(*) FROM edges WHERE src=?) + (SELECT COUNT(*) FROM edges WHERE dst=?) AS n'
+  );
 
   const addNode = (id) => {
     if (!nodes.has(id)) nodes.set(id, nodeStmt.get(id) ?? { qid: id, kind: 'unknown' });
   };
   addNode(qid);
 
-  for (let d = 0; d < depth && frontier.length && nodes.size < maxNodes; d++) {
+  // Hop 1: root's immediate neighborhood, unconditionally (historical depth=1
+  // behavior, unchanged).
+  let frontier = [qid];
+  {
     const next = [];
     for (const cur of frontier) {
       for (const e of [...outStmt.all(cur), ...inStmt.all(cur)]) {
@@ -228,6 +242,35 @@ export function subgraph(db, qid, depth = 1, maxNodes = 150) {
     }
     frontier = next;
   }
+
+  // Hop 2 (depth>=2 only): rank genuinely-new nodes by total degree; edges
+  // that only cross-link already-included hop-1 nodes are free (they cost no
+  // node budget) and always kept.
+  if (depth >= 2 && frontier.length && nodes.size < maxNodes) {
+    const candidateEdgesByNode = new Map();
+    const crossLinks = [];
+    for (const cur of frontier) {
+      for (const e of [...outStmt.all(cur), ...inStmt.all(cur)]) {
+        const newIds = [e.src, e.dst].filter((id) => !seen.has(id));
+        if (!newIds.length) { crossLinks.push(e); continue; }
+        for (const id of newIds) {
+          if (!candidateEdgesByNode.has(id)) candidateEdgesByNode.set(id, []);
+          candidateEdgesByNode.get(id).push(e);
+        }
+      }
+    }
+    edges.push(...crossLinks);
+    const ranked = [...candidateEdgesByNode.keys()]
+      .map((id) => ({ id, degree: degreeStmt.get(id, id).n }))
+      .sort((a, b) => b.degree - a.degree);
+    const budget = Math.max(0, Math.min(HOP2_MAX_NEW, maxNodes - nodes.size));
+    for (const { id } of ranked.slice(0, budget)) {
+      addNode(id);
+      seen.add(id);
+      edges.push(...candidateEdgesByNode.get(id));
+    }
+  }
+
   // de-duplicate edges collected from both directions
   const key = (e) => `${e.src}|${e.rel}|${e.dst}`;
   const uniq = [...new Map(edges.map((e) => [key(e), e])).values()];

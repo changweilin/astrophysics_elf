@@ -26,7 +26,15 @@
     edgeLabel: '#6b7482',
     label: '#c8cfda',
     focusRing: 'rgba(111,195,201,0.35)',
+    parentRing: 'rgba(214,140,140,0.65)',
   };
+
+  // Relations that point "upward" (root -> parent), same taxonomy as
+  // wiki-kb/lib/graph.mjs RELS (duplicated here the same way kb-admin.js
+  // duplicates its own RELS list -- no shared module between the plain-JS
+  // frontend and the ESM backend). Used to ring parent nodes in a distinct
+  // color so they read as "above" the focus, not just another neighbor.
+  var PARENT_RELS = { P279: 1, P361: 1, P397: 1, P184: 1, P69: 1, P108: 1, P1066: 1 };
 
   // UI strings ({en, zh}; other locales read English, same policy as library.js)
   var STR = {
@@ -63,6 +71,9 @@
       zh: '本機模型翻譯中——可能需要一點時間…',
     },
     translated: { en: 'LLM translation (unsaved preview)', zh: 'LLM 翻譯結果(尚未儲存的預覽)' },
+    translatedFrom: { en: 'Translated from: ', zh: '翻譯來源:' },
+    cancel: { en: 'Cancel', zh: '中斷' },
+    translateCancelled: { en: 'Translation cancelled.', zh: '已中斷翻譯。' },
     addToKb: { en: 'Add to knowledge graph', zh: '加入知識圖譜' },
     adding: { en: 'Adding…', zh: '加入中…' },
     added: { en: 'Added — this article is now part of the knowledge base.', zh: '已加入——這篇內容現在是知識庫的一部分了。' },
@@ -82,8 +93,8 @@
     source: { en: 'source', zh: '來源' },
     readMore: { en: 'Full article on Wikipedia ↗', zh: '在 Wikipedia 閱讀全文 ↗' },
     hint: {
-      en: 'Drag to pan · scroll to zoom · click a node to read',
-      zh: '拖曳平移 · 滾輪縮放 · 點選節點閱讀',
+      en: 'Drag to pan · scroll to zoom · click a node to read · ringed nodes are parents',
+      zh: '拖曳平移 · 滾輪縮放 · 點選節點閱讀 · 有外框的節點為上層(父)節點',
     },
     depthLabel: { en: 'Link depth', zh: '連結層數' },
     histPrev: { en: 'Previous center', zh: '上一個中心點' },
@@ -280,6 +291,11 @@
       });
       G.edges = edges.filter(function (e) { return G.byId[e.src] && G.byId[e.dst]; });
       G.edges.forEach(function (e) { G.byId[e.src].deg++; G.byId[e.dst].deg++; });
+      // Mark direct parents of the focused root (edges root --parentRel--> dst)
+      // so draw() can ring them in a distinct color.
+      G.edges.forEach(function (e) {
+        if (e.src === root && PARENT_RELS[e.rel] && G.byId[e.dst]) G.byId[e.dst].parent = true;
+      });
       focusQid = root;
       settling = 260;               // frames of force layout before it freezes
       view = { x: 0, y: 0, scale: 1 };
@@ -365,6 +381,13 @@
           ctx.beginPath();
           ctx.arc(nd.x, nd.y, r + 6, 0, Math.PI * 2);
           ctx.fill();
+        }
+        if (nd.parent && nd.qid !== focusQid) {
+          ctx.strokeStyle = COLORS.parentRing;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(nd.x, nd.y, r + 3, 0, Math.PI * 2);
+          ctx.stroke();
         }
         ctx.fillStyle = COLORS[nd.kind] || COLORS.unknown;
         ctx.globalAlpha = nd.kind === 'stub' ? 0.7 : 1;
@@ -601,6 +624,9 @@
             detail.appendChild(el('p', 'kg-d-body', pg.summary || ''));
             var srcRow = el('div', 'kg-d-meta', t(STR.source) + ': ' + pg.source);
             detail.appendChild(srcRow);
+            if (pg.source_lang) {
+              detail.appendChild(el('div', 'kg-d-meta dim', t(STR.translatedFrom) + pg.source_lang));
+            }
             if (pg.url) {
               var a = el('a', 'kg-d-link', t(STR.readMore));
               a.href = pg.url; a.target = '_blank'; a.rel = 'noopener';
@@ -623,16 +649,40 @@
         detail.appendChild(box);
         tb.addEventListener('click', function () {
           tb.disabled = true;
-          box.appendChild(el('p', 'kg-d-body dim busy', t(STR.translating)));
+          // No real total to measure progress against (an LLM's output length
+          // isn't known ahead of time), so this is a time-based indeterminate
+          // bar plus an elapsed-seconds label -- honest about being an
+          // estimate, but still gives the reader visible movement and a way
+          // out via the cancel button (which aborts the fetch; the server
+          // then aborts its own call to Ollama, see wiki-kb/lib/routes.mjs).
+          var ac = new AbortController();
+          var startTs = Date.now();
+          var prog = el('div', 'kg-progress busy');
+          var progLabel = el('div', 'kg-progress-label', t(STR.translating));
+          var progBar = el('div', 'kg-progress-bar');
+          var progFill = el('div', 'kg-progress-fill');
+          progBar.appendChild(progFill);
+          var cancelBtn = el('button', 'kg-btn', t(STR.cancel));
+          prog.appendChild(progLabel);
+          prog.appendChild(progBar);
+          prog.appendChild(cancelBtn);
+          box.appendChild(prog);
+          var elapsedTimer = setInterval(function () {
+            progLabel.textContent = t(STR.translating) + ' (' + Math.round((Date.now() - startTs) / 1000) + 's)';
+          }, 1000);
+          cancelBtn.addEventListener('click', function () { ac.abort(); });
+
           window.KNKB.api('/api/translate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pageId: src.id, target: lang }),
+            signal: ac.signal,
           }).then(function (tr) {
+            clearInterval(elapsedTimer);
             if (destroyed || selQid !== qid) return;
-            var busy = box.querySelector('.busy');
-            if (busy) busy.remove();
+            prog.remove();
             box.appendChild(el('p', 'kg-d-sect', t(STR.translated) + ' · ' + tr.model));
+            box.appendChild(el('p', 'kg-d-meta', t(STR.translatedFrom) + tr.sourceLang));
             box.appendChild(el('h4', 'kg-d-title', tr.title));
             var bodyP = el('p', 'kg-d-body kg-preview', tr.content.length > 900 ? tr.content.slice(0, 900) + '…' : tr.content);
             box.appendChild(bodyP);
@@ -642,13 +692,18 @@
             // Contributed content so far -- kept mutable so a follow-up
             // correction (re-contribute under the same lang+title, which
             // upserts in place) always sends the latest saved version.
-            var current = { title: tr.title, summary: tr.summary, content: tr.content, kind: tr.kind || 'topic', pageId: null };
+            var current = {
+              title: tr.title, summary: tr.summary, content: tr.content, kind: tr.kind || 'topic',
+              pageId: null, sourceLang: tr.sourceLang,
+            };
 
             function contribute(payload, onOk, onErr) {
               window.KNKB.api('/api/contribute', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(Object.assign({ lang: lang, qid: qid, source: 'llm-translation' }, payload)),
+                body: JSON.stringify(Object.assign(
+                  { lang: lang, qid: qid, source: 'llm-translation', sourceLang: current.sourceLang }, payload
+                )),
               }).then(function (cr) {
                 if (destroyed) return;
                 current.pageId = cr.pageId;
@@ -735,11 +790,15 @@
               });
             });
           }).catch(function (er) {
+            clearInterval(elapsedTimer);
             if (destroyed) return;
-            var busy = box.querySelector('.busy');
-            if (busy) busy.remove();
+            prog.remove();
             tb.disabled = false;
-            box.appendChild(el('p', 'kg-d-body err', t(STR.translateErr) + (er.message || er)));
+            if (ac.signal.aborted) {
+              box.appendChild(el('p', 'kg-d-body dim', t(STR.translateCancelled)));
+            } else {
+              box.appendChild(el('p', 'kg-d-body err', t(STR.translateErr) + (er.message || er)));
+            }
           });
         });
       }).catch(function (e2) {

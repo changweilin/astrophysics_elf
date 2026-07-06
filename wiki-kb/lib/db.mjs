@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS pages(
   source TEXT NOT NULL DEFAULT 'wikipedia',
   license TEXT NOT NULL DEFAULT 'CC BY-SA 4.0',
   status TEXT NOT NULL DEFAULT 'active',
+  source_lang TEXT,
   UNIQUE(lang, title)
 );
 CREATE INDEX IF NOT EXISTS idx_pages_qid ON pages(qid);
@@ -103,7 +104,17 @@ export function openDb(dbPath = config.dbPath) {
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode=WAL;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+// `CREATE TABLE IF NOT EXISTS` only helps on a fresh database -- an existing
+// pages table (the crawled corpus) needs its new column added explicitly.
+function migrate(db) {
+  const cols = db.prepare('PRAGMA table_info(pages)').all().map((c) => c.name);
+  if (!cols.includes('source_lang')) {
+    db.exec('ALTER TABLE pages ADD COLUMN source_lang TEXT');
+  }
 }
 
 export const now = () => new Date().toISOString();
@@ -161,22 +172,23 @@ export function upsertPage(db, p) {
     db.prepare(
       `UPDATE pages SET pageid=?, qid=COALESCE(?,qid), kind=COALESCE(?,kind),
          url=COALESCE(?,url), summary=COALESCE(?,summary), content=COALESCE(?,content),
-         rev_id=?, rev_time=?, source=COALESCE(?,source), updated_at=?, status='active'
+         rev_id=?, rev_time=?, source=COALESCE(?,source), source_lang=COALESCE(?,source_lang),
+         updated_at=?, status='active'
        WHERE id=?`
     ).run(
       p.pageid ?? null, p.qid ?? null, p.kind ?? null, p.url ?? null,
       p.summary ?? null, p.content ?? null, p.revId ?? null, p.revTime ?? null,
-      p.source ?? null, ts, existing.id
+      p.source ?? null, p.sourceLang ?? null, ts, existing.id
     );
     return existing.id;
   }
   const r = db.prepare(
-    `INSERT INTO pages(lang,pageid,title,qid,kind,url,summary,content,rev_id,rev_time,crawled_at,updated_at,source)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO pages(lang,pageid,title,qid,kind,url,summary,content,rev_id,rev_time,crawled_at,updated_at,source,source_lang)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     p.lang, p.pageid ?? null, p.title, p.qid ?? null, p.kind ?? 'topic',
     p.url ?? null, p.summary ?? null, p.content ?? null, p.revId ?? null,
-    p.revTime ?? null, ts, ts, p.source ?? 'wikipedia'
+    p.revTime ?? null, ts, ts, p.source ?? 'wikipedia', p.sourceLang ?? null
   );
   return Number(r.lastInsertRowid);
 }

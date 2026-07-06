@@ -243,6 +243,7 @@ export function createKbRouter(db) {
         kind: typeof body.kind === 'string' && body.kind ? body.kind : 'note',
         qid,
         source: typeof body.source === 'string' && body.source ? body.source : 'user',
+        sourceLang: typeof body.sourceLang === 'string' && body.sourceLang ? body.sourceLang : null,
       });
       embedPending(db, {}).catch(() => {});
       json(res, 200, { ok: true, qid, ...r });
@@ -292,9 +293,18 @@ export function createKbRouter(db) {
         : getPageByTitle(db, body.lang, body.title);
       if (!page) { json(res, 404, { ok: false, error: 'source page not found' }); return true; }
       if (!body.target) { json(res, 400, { ok: false, error: 'target language required' }); return true; }
-      const r = await translatePage(page, String(body.target));
-      logSync(db, 'translate', r.target, page.title, `model=${r.model} from=${page.lang}`);
-      json(res, 200, { ok: true, ...r });
+      // Cancel the upstream Ollama generation the moment the reader hits
+      // "cancel" (which just aborts their fetch, closing this connection) --
+      // otherwise the GPU keeps grinding on a translation nobody is waiting for.
+      const ac = new AbortController();
+      req.on('close', () => ac.abort());
+      try {
+        const r = await translatePage(page, String(body.target), { signal: ac.signal });
+        logSync(db, 'translate', r.target, page.title, `model=${r.model} from=${page.lang}`);
+        if (!res.writableEnded) json(res, 200, { ok: true, ...r });
+      } catch (e) {
+        if (!res.writableEnded) json(res, ac.signal.aborted ? 499 : 500, { ok: false, error: String(e && e.message || e) });
+      }
       return true;
     }
     return false;

@@ -46,7 +46,7 @@ function parseSections(text) {
 // Translate one page. `page` is a row from the pages table; `target` is a
 // corpus language code. Long articles are truncated — the goal is a readable
 // knowledge-graph card plus RAG-retrievable text, not a full mirror.
-export async function translatePage(page, target, { maxChars = 3500 } = {}) {
+export async function translatePage(page, target, { maxChars = 3500, signal } = {}) {
   const targetName = LANG_NAMES[target];
   if (!targetName) throw new Error(`unsupported target language: ${target}`);
   const model = await resolveTranslateModel();
@@ -77,7 +77,7 @@ export async function translatePage(page, target, { maxChars = 3500 } = {}) {
       stream: false,
       options: { temperature: 0.2, num_predict: 2048 },
     }),
-    signal: AbortSignal.timeout(config.translate.timeoutMs),
+    signal: anySignal([AbortSignal.timeout(config.translate.timeoutMs), ...(signal ? [signal] : [])]),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -108,4 +108,17 @@ export async function translatePage(page, target, { maxChars = 3500 } = {}) {
     summary: fix(parsed.summary),
     content: fix(parsed.content),
   };
+}
+
+// Minimal AbortSignal.any polyfill (older Node lacks it) -- same pattern used
+// in scientists-backend/lib/ollama.mjs, duplicated here since wiki-kb has no
+// dependency on that package.
+function anySignal(signals) {
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals);
+  const ctrl = new AbortController();
+  for (const s of signals) {
+    if (s.aborted) { ctrl.abort(s.reason); break; }
+    s.addEventListener('abort', () => ctrl.abort(s.reason), { once: true });
+  }
+  return ctrl.signal;
 }
