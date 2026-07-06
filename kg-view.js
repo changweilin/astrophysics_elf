@@ -29,6 +29,19 @@
     parentRing: 'rgba(214,140,140,0.65)',
   };
 
+  // Outer-ring markers for content status relative to the reader's current
+  // language (see contentState() below) -- kept a clear ring's-width outside
+  // COLORS.parentRing so a node can carry both a taxonomy ring (parent) and a
+  // content-status ring at once without the two blending into one shape.
+  // 'native' (an original, non-LLM article already in this language) is the
+  // common/baseline case and intentionally gets no ring at all.
+  var STATE_RING = {
+    translated: { color: 'rgba(120,166,214,0.85)', dash: [3, 2] },
+    generated: { color: 'rgba(214,168,90,0.85)', dash: [3, 2] },
+    untranslated: { color: 'rgba(200,207,218,0.45)', dash: [1, 3] },
+    ungenerated: { color: 'rgba(120,128,144,0.5)', dash: [1, 3] },
+  };
+
   // Relations that point "upward" (root -> parent), same taxonomy as
   // wiki-kb/lib/graph.mjs RELS (duplicated here the same way kb-admin.js
   // duplicates its own RELS list -- no shared module between the plain-JS
@@ -114,18 +127,57 @@
     source: { en: 'source', zh: '來源' },
     readMore: { en: 'Full article on Wikipedia ↗', zh: '在 Wikipedia 閱讀全文 ↗' },
     hint: {
-      en: 'Drag to pan · scroll to zoom · click a node to read · ringed nodes are parents',
-      zh: '拖曳平移 · 滾輪縮放 · 點選節點閱讀 · 有外框的節點為上層(父)節點',
+      en: 'Drag to pan · scroll to zoom · click a node to read · double-click/tap a node to center on it',
+      zh: '拖曳平移 · 滾輪縮放 · 點選節點閱讀 · 雙擊(或連續點兩下)節點以此為中心',
     },
     depthLabel: { en: 'Link depth', zh: '連結層數' },
     histPrev: { en: 'Previous center', zh: '上一個中心點' },
     histNext: { en: 'Next center', zh: '下一個中心點' },
+    legendBtnLabel: { en: 'What do the colors mean?', zh: '顏色 / 標記說明' },
+    legendKindHead: { en: 'Node color = kind', zh: '節點顏色 = 類型' },
+    legendStateHead: { en: 'Outer ring = content status (this language)', zh: '外圈 = 內容狀態(目前語言)' },
+    legendParentLabel: { en: 'Ringed in red = a parent/upper node of the focused entity', zh: '紅色外框 = 目前中心節點的上層(父)節點' },
+    suggestedLinksHead: { en: 'Suggested links to other topics', zh: '建議連結到其他主題' },
+    suggestedLinksNote: {
+      en: 'Picked by the LLM from existing graph topics only — review before adding.',
+      zh: 'LLM 僅從既有圖譜主題中挑選——加入前請自行確認。',
+    },
   };
+
+  var LEGEND_KIND = [
+    ['person', { en: 'Person / scientist', zh: '人物 / 科學家' }],
+    ['topic', { en: 'Topic', zh: '主題' }],
+    ['note', { en: 'Note / contributed page', zh: '筆記 / 貢獻頁面' }],
+    ['list', { en: 'List page', zh: '清單頁面' }],
+    ['stub', { en: 'Stub (no article yet)', zh: '殘根節點(尚無條目)' }],
+  ];
+  var LEGEND_STATE = [
+    ['translated', { en: 'Translated by local LLM', zh: '已由本機 LLM 翻譯' }],
+    ['generated', { en: 'Written by local LLM (unverified, no source article)', zh: '由本機 LLM 生成(未經查證,無來源條目)' }],
+    ['untranslated', { en: 'Not yet in this language (source exists in another)', zh: '此語言尚無內容(其他語言已有來源)' }],
+    ['ungenerated', { en: 'No article in any language yet', zh: '任何語言都尚無條目' }],
+  ];
 
   // Small stroke icons (match the muted style used elsewhere in the app --
   // currentColor, no fill, gentle strokes).
   var ICON_CHEVRON_LEFT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>';
   var ICON_CHEVRON_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
+  var ICON_INFO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"/></svg>';
+
+  // Content status for one graph node relative to the reader's current
+  // language -- see STATE_RING for the visual side. `node.pages` is the
+  // per-language {lang, source} list the backend attaches (subgraph()/
+  // listEntities() in wiki-kb/lib/graph.mjs + db.mjs).
+  function contentState(node, uiLang) {
+    var pages = (node && node.pages) || [];
+    var mine = pages.filter(function (p) { return p.lang === uiLang; });
+    if (mine.length) {
+      if (mine.some(function (p) { return p.source === 'llm-translation'; })) return 'translated';
+      if (mine.some(function (p) { return p.source === 'llm-generated'; })) return 'generated';
+      return 'native';
+    }
+    return pages.length ? 'untranslated' : 'ungenerated';
+  }
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -184,7 +236,54 @@
       depthGrp.appendChild(b);
     });
     toolbar.appendChild(depthGrp);
+    var legendBtn = el('button', 'kg-tbtn', '');
+    legendBtn.innerHTML = ICON_INFO;
+    legendBtn.title = t(STR.legendBtnLabel);
+    legendBtn.setAttribute('aria-label', t(STR.legendBtnLabel));
+    toolbar.appendChild(legendBtn);
     stage.appendChild(toolbar);
+
+    // Legend popover: explains every visual channel used on the canvas (fill
+    // color = kind, parent ring, content-status ring) in one place, so
+    // "all annotations get an explanation" holds even as more get added.
+    var legend = el('div', 'kg-legend hidden');
+    (function buildLegend() {
+      legend.appendChild(el('p', 'kg-legend-head', t(STR.legendKindHead)));
+      LEGEND_KIND.forEach(function (pair) {
+        var row = el('div', 'kg-legend-row');
+        var sw = el('span', 'kg-legend-dot');
+        sw.style.background = COLORS[pair[0]] || COLORS.unknown;
+        row.appendChild(sw);
+        row.appendChild(el('span', null, t(pair[1])));
+        legend.appendChild(row);
+      });
+      var parentRow = el('div', 'kg-legend-row');
+      var parentSw = el('span', 'kg-legend-dot ring');
+      parentSw.style.borderColor = COLORS.parentRing;
+      parentRow.appendChild(parentSw);
+      parentRow.appendChild(el('span', null, t(STR.legendParentLabel)));
+      legend.appendChild(parentRow);
+
+      legend.appendChild(el('p', 'kg-legend-head', t(STR.legendStateHead)));
+      LEGEND_STATE.forEach(function (pair) {
+        var row = el('div', 'kg-legend-row');
+        var sw = el('span', 'kg-legend-dot ring');
+        sw.style.borderColor = STATE_RING[pair[0]].color;
+        sw.style.borderStyle = 'dashed';
+        row.appendChild(sw);
+        row.appendChild(el('span', null, t(pair[1])));
+        legend.appendChild(row);
+      });
+    })();
+    stage.appendChild(legend);
+    legendBtn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      legend.classList.toggle('hidden');
+    });
+    legend.addEventListener('click', function (ev) { ev.stopPropagation(); });
+    function hideLegend() { legend.classList.add('hidden'); }
+    document.addEventListener('click', hideLegend);
+
     function repaintDepthBtns() {
       [].forEach.call(depthGrp.children, function (btn, i) {
         btn.className = 'kg-tbtn kg-depthbtn' + (depth === (i + 1) ? ' active' : '');
@@ -344,6 +443,7 @@
           qid: n.qid,
           kind: n.kind || 'unknown',
           label: entLabel(n),
+          state: contentState(n, lang),
           x: prev ? prev.x : Math.cos(angle) * 160 + (Math.random() - 0.5) * 40,
           y: prev ? prev.y : Math.sin(angle) * 160 + (Math.random() - 0.5) * 40,
           vx: 0, vy: 0,
@@ -453,6 +553,20 @@
           ctx.arc(nd.x, nd.y, r + 3, 0, Math.PI * 2);
           ctx.stroke();
         }
+        // Content-status ring: drawn further out than the parent ring so the
+        // two never merge into one shape (a node can be both a parent AND, say,
+        // untranslated). 'native' (ordinary original-language article) is the
+        // common case and deliberately carries no ring.
+        var stateRing = STATE_RING[nd.state];
+        if (stateRing) {
+          ctx.strokeStyle = stateRing.color;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash(stateRing.dash);
+          ctx.beginPath();
+          ctx.arc(nd.x, nd.y, r + 6, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
         ctx.fillStyle = COLORS[nd.kind] || COLORS.unknown;
         ctx.globalAlpha = nd.kind === 'stub' ? 0.7 : 1;
         ctx.beginPath();
@@ -502,12 +616,27 @@
       drag.x = ev.clientX; drag.y = ev.clientY;
       kickDraw();
     });
+    // Double-click/double-tap-to-recenter: tracked here (rather than a native
+    // 'dblclick' listener) because 'dblclick' isn't reliably synthesized for
+    // touch pointers once a canvas sets touch-action:none + pointer capture,
+    // which this one does for panning -- checking the same node was picked
+    // twice within a short window works for both mouse and touch, and never
+    // fights with the drag-to-pan gesture (which requires actual movement).
+    var lastTap = null;
+    var DBLTAP_MS = 350;
     canvas.addEventListener('pointerup', function (ev) {
       var wasClick = drag && !drag.moved;
       drag = null;
-      if (wasClick) {
-        var nd = pick(ev.clientX, ev.clientY);
-        if (nd) selectNode(nd.qid);
+      if (!wasClick) return;
+      var nd = pick(ev.clientX, ev.clientY);
+      if (!nd) { lastTap = null; return; }
+      var now = Date.now();
+      if (lastTap && lastTap.qid === nd.qid && (now - lastTap.time) < DBLTAP_MS) {
+        lastTap = null;
+        focusEntity(nd.qid);
+      } else {
+        lastTap = { qid: nd.qid, time: now };
+        selectNode(nd.qid);
       }
     });
     canvas.addEventListener('wheel', function (ev) {
@@ -559,6 +688,9 @@
           var row = el('div', 'kg-entrow');
           var dotEl = el('span', 'dot');
           dotEl.style.background = COLORS[e.kind] || COLORS.unknown;
+          var st = contentState(e, lang);
+          var ring = STATE_RING[st];
+          if (ring) { dotEl.style.boxShadow = '0 0 0 2px ' + ring.color; dotEl.title = t(LEGEND_STATE.find(function (p) { return p[0] === st; })[1]); }
           row.appendChild(dotEl);
           row.appendChild(el('span', 'nm', entLabel(e)));
           row.appendChild(el('span', 'deg', String(e.degree)));
@@ -713,6 +845,27 @@
           box.appendChild(el('h4', 'kg-d-title', tr.title));
           var bodyP = el('p', 'kg-d-body kg-preview', tr.content.length > 900 ? tr.content.slice(0, 900) + '…' : tr.content);
           box.appendChild(bodyP);
+
+          // LLM-suggested links to other existing graph topics (generate flow
+          // only -- see wiki-kb/lib/translate.mjs generateEntityArticle). The
+          // model could only select QIDs from a fixed candidate list it was
+          // handed, so these are safe to show as pre-checked, reader-reviewed
+          // suggestions; nothing is written until "Add to knowledge graph".
+          var linkChecks = [];
+          if (tr.suggestedLinks && tr.suggestedLinks.length) {
+            box.appendChild(el('p', 'kg-d-sect', t(STR.suggestedLinksHead)));
+            box.appendChild(el('p', 'kg-d-meta dim', t(STR.suggestedLinksNote)));
+            tr.suggestedLinks.forEach(function (sl) {
+              var row = el('label', 'kg-suggest-row');
+              var cb = document.createElement('input');
+              cb.type = 'checkbox'; cb.checked = true; cb.dataset.qid = sl.qid;
+              row.appendChild(cb);
+              row.appendChild(document.createTextNode(' ' + sl.label + ' (' + sl.qid + ')'));
+              box.appendChild(row);
+              linkChecks.push(cb);
+            });
+          }
+
           var add = el('button', 'kg-btn primary', t(STR.addToKb));
           box.appendChild(add);
 
@@ -807,7 +960,12 @@
           add.addEventListener('click', function () {
             add.disabled = true;
             add.textContent = t(STR.adding);
-            contribute({ title: current.title, summary: current.summary, content: current.content, kind: current.kind }, function () {
+            var relatedLinks = linkChecks
+              .filter(function (cb) { return cb.checked; })
+              .map(function (cb) { return { qid: cb.dataset.qid }; });
+            var payload = { title: current.title, summary: current.summary, content: current.content, kind: current.kind };
+            if (relatedLinks.length) payload.relatedLinks = relatedLinks;
+            contribute(payload, function () {
               add.remove();
               renderPostAddControls('added');
             }, function (er) {
@@ -939,6 +1097,7 @@
       destroy: function () {
         destroyed = true;
         window.removeEventListener('resize', resize);
+        document.removeEventListener('click', hideLegend);
         if (raf) cancelAnimationFrame(raf);
         container.classList.remove('kg-root');
         container.innerHTML = '';

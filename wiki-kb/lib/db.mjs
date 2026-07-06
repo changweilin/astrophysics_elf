@@ -270,13 +270,30 @@ export function listEntities(db, { q, kind, category, limit = 50, sort, dir } = 
   const where = `WHERE ${filters.join(' AND ')}`;
   const sortCol = ENTITY_SORT_COLUMNS[sort] || 'degree';
   const sortDir = dir === 'asc' ? 'ASC' : 'DESC';
-  return db
+  const rows = db
     .prepare(
       `SELECT e.qid, e.kind, e.label_en, e.label_zh, e.description, e.birth, e.death, e.category,
               (SELECT COUNT(*) FROM edges x WHERE x.src = e.qid OR x.dst = e.qid) AS degree
        FROM entities e ${where} ORDER BY ${sortCol} ${sortDir}, e.qid LIMIT ?`
     )
     .all(...args, Math.max(1, Math.min(300, limit)));
+
+  // Attach per-language content status (source: wikipedia/llm-translation/
+  // llm-generated/...) so the browse list can show the same translated/
+  // generated/untranslated/ungenerated markers as the canvas graph.
+  if (rows.length) {
+    const placeholders = rows.map(() => '?').join(',');
+    const pageRows = db
+      .prepare(`SELECT qid, lang, source FROM pages WHERE status='active' AND qid IN (${placeholders})`)
+      .all(...rows.map((r) => r.qid));
+    const byQid = new Map();
+    for (const pr of pageRows) {
+      if (!byQid.has(pr.qid)) byQid.set(pr.qid, []);
+      byQid.get(pr.qid).push({ lang: pr.lang, source: pr.source });
+    }
+    for (const r of rows) r.pages = byQid.get(r.qid) || [];
+  }
+  return rows;
 }
 
 // Manual (admin/user) entity upsert. Without a qid a collision-free local id is

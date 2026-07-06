@@ -191,7 +191,7 @@ export function getEntity(db, qid) {
     )
     .all(qid);
   const pages = db
-    .prepare("SELECT id, lang, title, url, kind FROM pages WHERE qid=? AND status='active'")
+    .prepare("SELECT id, lang, title, url, kind, source FROM pages WHERE qid=? AND status='active'")
     .all(qid);
   return { entity, out, in: inbound, pages };
 }
@@ -216,9 +216,15 @@ export function subgraph(db, qid, depth = 1, maxNodes = 150) {
   const degreeStmt = db.prepare(
     'SELECT (SELECT COUNT(*) FROM edges WHERE src=?) + (SELECT COUNT(*) FROM edges WHERE dst=?) AS n'
   );
+  // Per-language content status (for the reader-facing translated/generated/
+  // untranslated/ungenerated markers, see kg-view.js contentState()).
+  const pagesStmt = db.prepare("SELECT lang, source FROM pages WHERE qid=? AND status='active'");
 
   const addNode = (id) => {
-    if (!nodes.has(id)) nodes.set(id, nodeStmt.get(id) ?? { qid: id, kind: 'unknown' });
+    if (!nodes.has(id)) {
+      const base = nodeStmt.get(id) ?? { qid: id, kind: 'unknown' };
+      nodes.set(id, { ...base, pages: pagesStmt.all(id) });
+    }
   };
   addNode(qid);
 

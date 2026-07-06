@@ -73,6 +73,19 @@ export const CATEGORY_TREE = [
   { key: 'other', label: { en: 'Other / Uncategorized', zh: '其他 / 未分類' } },
 ];
 
+// Human-readable label for a category key (leaf or group), for prompt context
+// and admin UI use. Falls back to the raw key if the tree doesn't have it.
+export function categoryLabel(key, lang = 'en') {
+  if (!key) return null;
+  for (const node of CATEGORY_TREE) {
+    if (node.key === key) return node.label[lang] || node.label.en;
+    for (const child of node.children || []) {
+      if (child.key === key) return child.label[lang] || child.label.en;
+    }
+  }
+  return key;
+}
+
 function isPersonKind(kind) {
   return kind === 'person' || kind === 'scientist';
 }
@@ -121,16 +134,25 @@ export function classifyEntity(db, entity, stmts) {
   return isPersonKind(entity.kind) ? 'people/other' : 'other';
 }
 
-// Batch-classify every non-stub entity missing a category (or all of them,
-// with `force`). Mirrors syncEntities' batch style in lib/graph.mjs so it
-// slots into the same crawl pipeline (see crawl.mjs).
-export function classifyEntities(db, { limit = Infinity, force = false, log = () => {} } = {}) {
-  const stmts = {
+// Prepared statements classifyEntity() needs -- factored out so a caller that
+// only has ONE entity to classify (e.g. a stub picked up by /api/entity/
+// generate, which never gets a batch-classified `category` since
+// classifyEntities() only runs on non-stub rows) doesn't have to duplicate
+// this shape itself.
+export function buildClassifyStmts(db) {
+  return {
     pagesForQid: db.prepare("SELECT id FROM pages WHERE qid=? AND status='active'"),
     categoriesForPage: db.prepare('SELECT category FROM page_categories WHERE page_id=?'),
     edgesForRel: db.prepare('SELECT rel_label, dst FROM edges WHERE src=? AND rel=?'),
     entityByQid: db.prepare('SELECT label_en, label_zh FROM entities WHERE qid=?'),
   };
+}
+
+// Batch-classify every non-stub entity missing a category (or all of them,
+// with `force`). Mirrors syncEntities' batch style in lib/graph.mjs so it
+// slots into the same crawl pipeline (see crawl.mjs).
+export function classifyEntities(db, { limit = Infinity, force = false, log = () => {} } = {}) {
+  const stmts = buildClassifyStmts(db);
   const where = force ? "kind != 'stub'" : "kind != 'stub' AND category IS NULL";
   const rows = db.prepare(`SELECT qid, kind, label_en, label_zh, description FROM entities WHERE ${where} LIMIT ?`)
     .all(Number.isFinite(limit) ? limit : 1e9);

@@ -46,7 +46,7 @@ import { ingestTitle, ingestManual, embedPending } from './ingest.mjs';
 import { embedAvailable } from './embed.mjs';
 import { translatePage, generateEntityArticle } from './translate.mjs';
 import { isBusy as llmBusy } from './ollama-gate.mjs';
-import { CATEGORY_TREE, categoryCounts } from './classify.mjs';
+import { CATEGORY_TREE, categoryCounts, classifyEntity, buildClassifyStmts } from './classify.mjs';
 import { config } from '../config.mjs';
 
 function json(res, status, body) {
@@ -277,6 +277,16 @@ export function createKbRouter(db) {
         source: typeof body.source === 'string' && body.source ? body.source : 'user',
         sourceLang: typeof body.sourceLang === 'string' && body.sourceLang ? body.sourceLang : null,
       });
+      // LLM-suggested links (from POST /api/entity/generate's `suggestedLinks`,
+      // reader-confirmed in the UI before this request) -- committed only now,
+      // same preview-then-commit rule as the content itself.
+      if (qid && Array.isArray(body.relatedLinks) && body.relatedLinks.length) {
+        for (const link of body.relatedLinks) {
+          const dst = link && typeof link.qid === 'string' ? link.qid.trim() : '';
+          if (dst) addEdge(db, qid, 'related', 'related to', dst, 'llm-suggested');
+        }
+        logSync(db, 'edge-add', null, qid, `llm-suggested +${body.relatedLinks.length}`);
+      }
       embedPending(db, {}).catch(() => {});
       json(res, 200, { ok: true, qid, ...r });
       return true;
@@ -351,7 +361,35 @@ export function createKbRouter(db) {
       req.on('close', () => ac.abort());
       try {
         const relations = [...(found.out || []), ...(found.in || [])];
-        const r = await generateEntityArticle(found.entity, String(body.target), { relations, signal: ac.signal });
+        const connected = new Set([found.entity.qid, ...relations.map((r) => r.dst || r.src)]);
+        // Fixed candidate pool for the LLM to pick NEW links from (never let
+        // it invent a QID against a 110k-node graph): same-category siblings
+        // plus whatever the hybrid retriever turns up for this label -- the
+        // latter also catches cross-category links (e.g. a topic <-> the
+        // scientist who discovered it).
+        const label = found.entity.label_en || found.entity.label_zh || found.entity.qid;
+        // Batch classification (lib/classify.mjs classifyEntities) only ever
+        // runs on non-stub rows, so a stub entity -- the normal case reaching
+        // this route -- never has a persisted `category`. Classify it live
+        // instead of leaving both the prompt's anti-conflation context and
+        // the candidate pool empty for exactly the nodes that need them most.
+        const category = found.entity.category || classifyEntity(db, found.entity, buildClassifyStmts(db));
+        const entityForPrompt = { ...found.entity, category };
+        const siblings = category ? listEntities(db, { category, limit: 12 }) : [];
+        let searchHits = [];
+        try {
+          const searchQ = [label, found.entity.description].filter(Boolean).join(' ');
+          searchHits = searchQ ? await search(db, { q: searchQ, k: 10 }) : [];
+        } catch { searchHits = []; }
+        const candMap = new Map();
+        for (const s of siblings) {
+          if (!connected.has(s.qid)) candMap.set(s.qid, s.label_en || s.label_zh || s.qid);
+        }
+        for (const h of searchHits) {
+          if (h.qid && !connected.has(h.qid) && !candMap.has(h.qid)) candMap.set(h.qid, h.title);
+        }
+        const candidates = [...candMap].slice(0, 20).map(([qid, clabel]) => ({ qid, label: clabel }));
+        const r = await generateEntityArticle(entityForPrompt, String(body.target), { relations, candidates, signal: ac.signal });
         logSync(db, 'generate', r.target, found.entity.label_en || found.entity.label_zh || found.entity.qid, `model=${r.model}`);
         if (!res.writableEnded) json(res, 200, { ok: true, ...r });
       } catch (e) {

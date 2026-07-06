@@ -6,6 +6,7 @@
 import { config } from '../config.mjs';
 import { toTaiwan } from './zh-convert.mjs';
 import { withBusy } from './ollama-gate.mjs';
+import { categoryLabel } from './classify.mjs';
 
 const LANG_NAMES = {
   en: 'English',
@@ -114,6 +115,15 @@ export async function translatePage(page, target, { maxChars = 3500, signal } = 
   });
 }
 
+// Split off a trailing "RELATED: ..." line (if the model produced one) from
+// the TITLE/SUMMARY/CONTENT block so parseSections() only ever sees the
+// three markers it already understands.
+function splitRelated(raw) {
+  const m = /\nRELATED:\s*([\s\S]*)$/i.exec(raw);
+  if (!m) return { body: raw, relatedRaw: '' };
+  return { body: raw.slice(0, m.index), relatedRaw: m[1].trim() };
+}
+
 // Generate a short article for a knowledge-graph node that has NO existing
 // corpus page in ANY language -- typically a Wikidata "stub" entity that only
 // exists in the graph because some other page links to it (see
@@ -124,24 +134,39 @@ export async function translatePage(page, target, { maxChars = 3500, signal } = 
 // `generated: true` and the caller (kg-view.js) MUST show it as an
 // unverified, LLM-written draft rather than reusing the "translated from"
 // framing.
-export async function generateEntityArticle(entity, target, { relations = [], signal } = {}) {
+//
+// `relations` (existing edges) and `candidates` (other graph nodes the caller
+// has picked as plausible link targets -- see routes.mjs) are both given as
+// context: relations anchor the topic's domain so a same-named-but-unrelated
+// subject in a different field doesn't get conflated with it, and candidates
+// let the model propose NEW edges (`suggestedLinks`) without ever letting it
+// invent a QID -- it may only select from the fixed list it was handed.
+export async function generateEntityArticle(entity, target, { relations = [], candidates = [], signal } = {}) {
   const targetName = LANG_NAMES[target];
   if (!targetName) throw new Error(`unsupported target language: ${target}`);
   const model = await resolveTranslateModel();
 
   const label = entity.label_en || entity.label_zh || entity.qid;
+  const categoryName = categoryLabel(entity.category, 'en');
   const relLines = relations
     .filter((r) => r.label_en || r.label_zh)
     .slice(0, 12)
     .map((r) => `- ${r.rel_label || r.rel}: ${r.label_en || r.label_zh}`);
+  const candList = candidates.filter((c) => c.qid && c.label).slice(0, 20);
+  const candLines = candList.map((c) => `- ${c.qid}: ${c.label}`);
 
   const prompt = [
     `You are a careful science writer. Write a short, factual encyclopedia-style entry in ${targetName} about the topic below, using only well-established knowledge.`,
+    'IMPORTANT: the topic label alone may be shared by an unrelated subject in a different field (e.g. a person vs. a place, or a physics term vs. an everyday word). Stay strictly within the domain implied by the category and known relations given below -- never write about a different, unrelated subject that merely shares the same name.',
+    categoryName ? `TOPIC CATEGORY: ${categoryName}` : '',
     'Rules:',
-    'Output ONLY the entry, in exactly this format (keep the three uppercase markers):',
+    'Output ONLY the entry, in exactly this format (keep the uppercase markers):',
     'TITLE: <title>',
     'SUMMARY: <one or two sentence summary>',
     'CONTENT: <3-6 sentences of factual body text>',
+    candLines.length
+      ? 'RELATED: <comma-separated QIDs, taken ONLY from the CANDIDATE TOPICS list below, that this entry meaningfully discusses or connects to -- or write "none" if none genuinely apply>'
+      : '',
     '- Keep physics/math notation, symbols, formulas, units and proper nouns unchanged.',
     '- If you are not confident about a specific fact (exact dates, numeric values, discoverer names), write in general/qualitative terms instead of inventing specifics.',
     '- Do not add commentary, notes, disclaimers, or text in any other language.',
@@ -149,6 +174,7 @@ export async function generateEntityArticle(entity, target, { relations = [], si
     `TOPIC: ${label}`,
     entity.description ? `KNOWN DESCRIPTION: ${entity.description}` : '',
     relLines.length ? `KNOWN GRAPH RELATIONS:\n${relLines.join('\n')}` : '',
+    candLines.length ? `CANDIDATE TOPICS (for RELATED: -- do not use any QID not listed here):\n${candLines.join('\n')}` : '',
   ].filter(Boolean).join('\n');
 
   return withBusy(async () => {
@@ -172,10 +198,18 @@ export async function generateEntityArticle(entity, target, { relations = [], si
     const raw = String(data?.response ?? '').trim();
     if (!raw) throw new Error('generate: empty model response');
 
-    const parsed = parseSections(raw) || { title: label, summary: '', content: raw };
+    const { body: sectionsRaw, relatedRaw } = splitRelated(raw);
+    const parsed = parseSections(sectionsRaw) || { title: label, summary: '', content: sectionsRaw };
     if (!parsed.content) parsed.content = parsed.summary || raw;
     if (!parsed.summary) parsed.summary = parsed.content.slice(0, 400);
     const fix = target === 'zh' ? toTaiwan : (s) => s;
+
+    const suggestedLinks = relatedRaw && !/^none\b/i.test(relatedRaw)
+      ? relatedRaw.split(',').map((s) => s.trim()).filter(Boolean)
+        .map((qid) => candList.find((c) => c.qid === qid))
+        .filter(Boolean)
+      : [];
+
     return {
       model,
       target,
@@ -185,6 +219,7 @@ export async function generateEntityArticle(entity, target, { relations = [], si
       summary: fix(parsed.summary),
       content: fix(parsed.content),
       generated: true,
+      suggestedLinks,
     };
   });
 }
