@@ -85,7 +85,15 @@
       en: 'Drag to pan · scroll to zoom · click a node to read',
       zh: '拖曳平移 · 滾輪縮放 · 點選節點閱讀',
     },
+    depthLabel: { en: 'Link depth', zh: '連結層數' },
+    histPrev: { en: 'Previous center', zh: '上一個中心點' },
+    histNext: { en: 'Next center', zh: '下一個中心點' },
   };
+
+  // Small stroke icons (match the muted style used elsewhere in the app --
+  // currentColor, no fill, gentle strokes).
+  var ICON_CHEVRON_LEFT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>';
+  var ICON_CHEVRON_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -114,6 +122,52 @@
     stage.appendChild(canvas);
     var hint = el('div', 'kg-hint', t(STR.hint));
     stage.appendChild(hint);
+
+    // Toolbar overlay: center-point back/forward history + link-depth (1/2 hop).
+    var toolbar = el('div', 'kg-toolbar');
+    var histPrevBtn = el('button', 'kg-tbtn', '');
+    histPrevBtn.innerHTML = ICON_CHEVRON_LEFT;
+    histPrevBtn.title = t(STR.histPrev);
+    histPrevBtn.setAttribute('aria-label', t(STR.histPrev));
+    var histNextBtn = el('button', 'kg-tbtn', '');
+    histNextBtn.innerHTML = ICON_CHEVRON_RIGHT;
+    histNextBtn.title = t(STR.histNext);
+    histNextBtn.setAttribute('aria-label', t(STR.histNext));
+    toolbar.appendChild(histPrevBtn);
+    toolbar.appendChild(histNextBtn);
+    var depthGrp = el('div', 'kg-depthgrp');
+    depthGrp.setAttribute('role', 'group');
+    depthGrp.setAttribute('aria-label', t(STR.depthLabel));
+    depthGrp.title = t(STR.depthLabel);
+    [1, 2].forEach(function (d) {
+      var b = el('button', 'kg-tbtn kg-depthbtn', String(d));
+      b.title = t(STR.depthLabel) + ': ' + d;
+      b.addEventListener('click', function () {
+        if (depth === d) return;
+        depth = d;
+        try { localStorage.setItem('kn_kg_depth', String(d)); } catch (e) {}
+        repaintDepthBtns();
+        if (focusQid) focusEntity(focusQid, { skipHistory: true });
+      });
+      depthGrp.appendChild(b);
+    });
+    toolbar.appendChild(depthGrp);
+    stage.appendChild(toolbar);
+    function repaintDepthBtns() {
+      [].forEach.call(depthGrp.children, function (btn, i) {
+        btn.className = 'kg-tbtn kg-depthbtn' + (depth === (i + 1) ? ' active' : '');
+      });
+    }
+    histPrevBtn.addEventListener('click', function () {
+      if (histIdx <= 0) return;
+      histIdx--;
+      focusEntity(histStack[histIdx], { skipHistory: true });
+    });
+    histNextBtn.addEventListener('click', function () {
+      if (histIdx >= histStack.length - 1) return;
+      histIdx++;
+      focusEntity(histStack[histIdx], { skipHistory: true });
+    });
     var detail = el('aside', 'kg-detail');
     container.appendChild(side);
     container.appendChild(stage);
@@ -166,6 +220,21 @@
     var G = { nodes: [], edges: [], byId: {} };  // layout state
     var focusQid = null;
     var selQid = null;
+    // Link depth for the focused subgraph (1 or 2 hops); persists across visits.
+    var depth = (function () {
+      try {
+        var v = parseInt(localStorage.getItem('kn_kg_depth') || '1', 10);
+        return v === 2 ? 2 : 1;
+      } catch (e) { return 1; }
+    })();
+    // Back/forward history of focused center-nodes (like browser history: a
+    // stack + current index, so forward is only available right after a back).
+    var histStack = [];
+    var histIdx = -1;
+    function repaintHistButtons() {
+      histPrevBtn.disabled = histIdx <= 0;
+      histNextBtn.disabled = histIdx >= histStack.length - 1;
+    }
     // Sort state for the detail panel's relations list (persists across node
     // switches within this mounted instance, same convention as {by, dir} in
     // the library page's own sort controls).
@@ -415,9 +484,21 @@
       });
     }
 
-    function focusEntity(qid) {
+    function focusEntity(qid, opts) {
+      opts = opts || {};
       selQid = qid;
-      window.KNKB.api('/api/graph?qid=' + encodeURIComponent(qid) + '&depth=1')
+      if (!opts.skipHistory) {
+        // A real navigation (click, search pick, "focus here"): drop any
+        // forward history past the current point (like browser history), then
+        // push -- unless we're already sitting on this node.
+        if (histIdx < histStack.length - 1) histStack = histStack.slice(0, histIdx + 1);
+        if (histStack[histIdx] !== qid) {
+          histStack.push(qid);
+          histIdx = histStack.length - 1;
+        }
+      }
+      repaintHistButtons();
+      window.KNKB.api('/api/graph?qid=' + encodeURIComponent(qid) + '&depth=' + depth)
         .then(function (r) {
           if (destroyed) return;
           setGraph(r.root, r.nodes, r.edges);
@@ -675,6 +756,8 @@
       searchTimer = setTimeout(function () { loadList(inQ.value.trim()); }, 300);
     });
 
+    repaintDepthBtns();
+    repaintHistButtons();
     resize();
     loadList('');
     detail.appendChild(el('div', 'kg-msg', t(STR.pickNode)));

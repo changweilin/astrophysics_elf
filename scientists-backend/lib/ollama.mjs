@@ -65,6 +65,15 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
         model: model.name,
         messages,
         stream: true,
+        // Same reasoning as chat() below: a model that natively supports
+        // Ollama's thinking toggle streams its chain-of-thought through the
+        // SEPARATE message.thinking field while message.content -- the only
+        // field this function reads -- stays empty for the whole turn. Left
+        // on, that turn's bubble never receives a single token even though
+        // Ollama is visibly busy generating: the reported "LLM is running but
+        // the reply never appears" symptom. Ignored (safely) by models that
+        // don't support the toggle.
+        think: false,
         options: buildOptions(model, optionOverrides),
       }),
       signal: composite,

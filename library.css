@@ -322,6 +322,26 @@ body.lp-graphmode .lp-foot { grid-column: 1; }
   position: absolute; left: 10px; bottom: 8px; pointer-events: none;
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--fg-3);
 }
+.kg-toolbar {
+  position: absolute; left: 10px; top: 10px; z-index: 2;
+  display: flex; align-items: center; gap: 8px;
+}
+.kg-tbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; box-sizing: border-box;
+  background: var(--bg-1); border: 1px solid var(--line-soft);
+  border-radius: 6px; color: var(--fg-2); cursor: pointer;
+  font: 600 11px var(--mono);
+}
+.kg-tbtn svg { width: 15px; height: 15px; }
+.kg-tbtn:hover:not(:disabled) { border-color: var(--cyan-dim); color: var(--cyan); }
+.kg-tbtn:disabled { opacity: 0.35; cursor: default; }
+.kg-depthgrp {
+  display: flex; gap: 2px; background: var(--bg-1); border: 1px solid var(--line-soft);
+  border-radius: 6px; padding: 2px;
+}
+.kg-depthgrp .kg-tbtn { width: 22px; height: 22px; border: none; }
+.kg-depthgrp .kg-tbtn.active { background: var(--cyan-dim); color: var(--bg-0); }
 .kg-search input {
   width: 100%; background: var(--bg-2); border: 1px solid var(--line);
   border-radius: 7px; color: var(--fg-0); padding: 7px 10px; font: 13px var(--sans);

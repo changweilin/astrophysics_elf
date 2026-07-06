@@ -217,7 +217,7 @@ html, body {
   border-left: 3px solid var(--accent); border-radius: 12px; padding: 12px 14px;
 }
 .sci-keypoints .kp-title {
-  display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px;
+  display: flex; align-items: center; gap: 8px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px;
   color: var(--accent); font-weight: 600; margin-bottom: 6px;
 }
 .sci-keypoints .kp-body { font-size: 0.86rem; color: var(--ink-dim); line-height: 1.6; white-space: pre-wrap; }
@@ -268,6 +268,8 @@ html, body {
 .sci-modal input { width: 100%; background: var(--bg-2); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-family: var(--mono); font-size: 0.82rem; }
 .sci-modal .hint { font-size: 0.72rem; color: var(--ink-faint); margin-top: 6px; line-height: 1.5; }
 .sci-modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+.sci-save-choice-opts { display: flex; flex-direction: column; gap: 8px; }
+.sci-save-choice-opts .sci-send { width: 100%; }
 
 /* ---- saved-thread collection (收藏) ---- */
 .sci-favorites { min-height: 0; overflow-y: auto; padding: 18px 16px; }
@@ -350,37 +352,67 @@ html, body {
 .sci-msg .sci-bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .sci-msg .sci-speaker { font-size: 0.72rem; font-weight: 600; color: var(--ink-faint); padding-left: 3px; display: flex; align-items: center; gap: 6px; }
 
-/* compare mode: direct-reply vs. KB-searched reply shown side by side */
+/* compare mode: direct-reply vs. KB-searched reply shown side by side. The
+   single-chat pane is one bubble (a direct .sci-compare-row child); the
+   Science Dialogue pane is a whole column of bubbles (.sci-compare-col) --
+   the ">"-scoping below keeps these rules from also matching the ordinary
+   .sci-msg bubbles nested *inside* a discuss column. */
+.sci-compare-wrap { width: 100%; align-self: stretch; }
 .sci-compare-row { display: flex; gap: 10px; width: 100%; align-self: stretch; }
-.sci-compare-row .sci-msg { max-width: none; flex: 1 1 0; min-width: 0; }
+.sci-compare-row > .sci-msg { max-width: none; flex: 1 1 0; min-width: 0; }
+.sci-compare-col {
+  display: flex; flex-direction: column; gap: 14px; flex: 1 1 0; min-width: 0;
+}
+.sci-compare-col-label {
+  font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--ink-faint);
+}
 .sci-mode-badge {
   font-size: 0.66rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
   color: var(--ink-faint); background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 6px; padding: 1px 6px;
 }
+/* Dots under a compare row that track which pane is showing on mobile (see
+   CompareSwipeRow). Hidden on desktop, where both panes just sit side by side. */
+.sci-compare-dots { display: none; }
+
 @media (max-width: 760px) {
   /* Two full-height columns don't fit a phone screen, so swipe between them
      instead of stacking: a horizontally snapping strip, one pane per
-     screen-width, with small labelled dots so it's clear there's a second
-     pane and which one is showing. */
+     screen-width. Kept inside the normal message width (not bled edge to
+     edge) and given its own card border/background so it visibly reads as
+     "swipe this strip", not "the whole page moved" -- the dots below
+     reinforce that there's a second pane and which one is active. */
   .sci-compare-row {
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
+    /* Claim horizontal panning for this strip only; a vertical drag that
+       starts here still passes straight through to the page's own vertical
+       scroll instead of the gesture getting stuck deciding between the two. */
+    touch-action: pan-x;
     gap: 0;
-    margin: 0 -16px;
-    padding: 0 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel-2);
+    padding: 10px;
   }
-  .sci-compare-row .sci-msg {
+  .sci-compare-row > .sci-msg,
+  .sci-compare-row > .sci-compare-col {
     flex: 0 0 100%;
     max-width: 100%;
     scroll-snap-align: start;
     padding: 0 6px;
   }
-  .sci-compare-row .sci-msg:first-child { padding-left: 0; }
-  .sci-compare-row .sci-msg:last-child { padding-right: 0; }
+  .sci-compare-row > .sci-msg:first-child,
+  .sci-compare-row > .sci-compare-col:first-child { padding-left: 0; }
+  .sci-compare-row > .sci-msg:last-child,
+  .sci-compare-row > .sci-compare-col:last-child { padding-right: 0; }
+  .sci-compare-dots { display: flex; justify-content: center; align-items: center; gap: 6px; margin-top: 8px; }
+  .sci-compare-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); transition: background 0.15s ease, transform 0.15s ease; }
+  .sci-compare-dot.active { background: var(--accent); transform: scale(1.35); }
 }
 
 /* retrieval citations under a KB-searched reply */

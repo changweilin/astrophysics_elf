@@ -103,6 +103,10 @@ const T = {
     favKbDone: '已加入知識圖譜——RAG 檢索與圖譜檢視現在都找得到這段對話',
     favKbErr: '加入知識圖譜失敗:',
     favKbHint: '(需要 wiki-kb 服務運行中;可用 ?kb= 參數或圖書館頁設定位址)',
+    favCompareTitle: '這段對話包含比較回覆,要收藏哪一個?',
+    favCompareDirect: '收藏直接回覆',
+    favCompareRag: '收藏知識庫回覆',
+    favCompareBoth: '都收藏(分開儲存)',
     tabDiscuss: '科學對話',
     discussRoster: '點選加入討論成員',
     managePanel: '管理討論成員',
@@ -220,6 +224,10 @@ const T = {
     favKbDone: 'Added -- this thread is now retrievable via RAG and visible in the knowledge graph',
     favKbErr: 'Could not add to the knowledge graph: ',
     favKbHint: '(requires the wiki-kb service; set its URL via ?kb= or on the library page)',
+    favCompareTitle: 'This thread has compare replies -- which one do you want to save?',
+    favCompareDirect: 'Save the direct reply',
+    favCompareRag: 'Save the KB-searched reply',
+    favCompareBoth: 'Save both (separately)',
     tabDiscuss: 'Dialogue',
     discussRoster: 'Tap to add panel members',
     managePanel: 'Manage panel',
@@ -657,6 +665,35 @@ function ReplyModeChip({ replyMode, setReplyMode, lang, allowCompare = true }) {
   );
 }
 
+// Wraps a compare-mode turn's two panes (direct vs. RAG-searched) so mobile
+// switches between them only by swiping the pane strip itself -- never the
+// whole page -- while a vertical swipe still scrolls the surrounding
+// conversation normally (see the touch-action: pan-x rule on .sci-compare-row).
+// Desktop just shows both side by side (see the non-mobile CSS) and the dots
+// stay hidden; on mobile the dots track scroll position so it reads as an
+// obvious two-page swipe control, not an accidental page-wide drag.
+function CompareSwipeRow({ className, children }) {
+  const rowRef = useRef(null);
+  const [active, setActive] = useState(0);
+  const onScroll = useCallback(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const w = el.clientWidth || 1;
+    setActive(el.scrollLeft > w / 2 ? 1 : 0);
+  }, []);
+  return (
+    <div className="sci-compare-wrap">
+      <div className={'sci-compare-row' + (className ? ' ' + className : '')} ref={rowRef} onScroll={onScroll}>
+        {children}
+      </div>
+      <div className="sci-compare-dots" aria-hidden="true">
+        <span className={'sci-compare-dot' + (active === 0 ? ' active' : '')} />
+        <span className={'sci-compare-dot' + (active === 1 ? ' active' : '')} />
+      </div>
+    </div>
+  );
+}
+
 // ---- local persistence ----
 // The live conversation and the saved-thread collection both survive a page
 // reload (and let you continue talking later) by living in localStorage.
@@ -684,14 +721,34 @@ function threadTitle(messages) {
   return first ? first.text : '';
 }
 
+// Reduce a compare-mode transcript (direct + RAG bubbles interleaved, tagged
+// `compare`/`mode`) to one lineage's ordinary turns: drop the sibling reply
+// and the compare bookkeeping fields, so it reads (and saves/replays) exactly
+// like a normal, non-compare conversation. Used when a compare-mode thread is
+// saved to favorites with only one side picked (or split into two favorites).
+function stripCompareMessages(msgs, mode) {
+  return (msgs || [])
+    .filter((m) => !(m.compare && m.mode !== mode))
+    .map((m) => {
+      if (!m.compare) return m;
+      const { compare, mode: _mode, cid, done, turnId, ...rest } = m;
+      return rest;
+    });
+}
+
 // Reduce a discussion transcript to the compact (question -> conclusion) rounds
 // the backend keeps as panel memory, so a resumed discussion can be rehydrated.
-function extractRounds(messages) {
+// A compare-mode turn has TWO conclusions (direct + rag, tagged `mode`) for one
+// question; `mode` picks which lineage's conclusion counts for that turn --
+// defaulting to 'rag' (the session-backed, "primary" lineage) when omitted, so
+// generic callers (e.g. follow-up suggestions) get a sensible single thread.
+function extractRounds(messages, mode) {
   const rounds = [];
   let q = null;
   for (const m of messages || []) {
     if (m.role === 'user') q = m.text;
-    else if (m.role === 'sci' && m.conclusion && q != null) {
+    else if (m.role === 'sci' && m.conclusion && q != null
+      && (!m.compare || m.mode === (mode || 'rag'))) {
       rounds.push({ question: q, conclusion: m.text });
       q = null;
     }
@@ -767,10 +824,10 @@ function SciAppRoot() {
     try { localStorage.setItem('kn_sci_reply_mode', replyMode); } catch (e) {}
   }, [replyMode]);
 
-  // Same idea for the Science Dialogue tab, but without 'compare': running a
-  // full multi-round, multi-scientist roundtable twice per question (once
-  // direct, once RAG) is expensive and would need its own parallel-transcript
-  // UI, so the panel only toggles retrieval on/off for now.
+  // Same idea for the Science Dialogue tab, including 'compare': a compare-mode
+  // question runs the FULL multi-round roundtable twice (direct lineage, then
+  // the RAG-searched one) -- see sendDiscuss/runDiscussCall -- and renders
+  // side by side per turn, same layout as the single chat's compare rows.
   const [discussReplyMode, setDiscussReplyMode] = useState(() => {
     try { return localStorage.getItem('kn_sci_discuss_reply_mode') || 'direct'; } catch (e) { return 'direct'; }
   });
@@ -919,6 +976,12 @@ function SciAppRoot() {
     lastScrollTop.current = scrollTop;
   }, []);
 
+  // 'chat' (live single conversation) | 'discuss' (Science Dialogue) | 'favorites' (saved threads)
+  const [view, setView] = useState('chat');
+
+  // Reset the hide-on-scroll header tuck whenever the active view changes, so
+  // switching tabs never leaves the header stuck mid-collapse from the
+  // previous view's scroll position.
   useEffect(() => {
     translateYRef.current = 0;
     if (appRef.current) {
@@ -926,13 +989,14 @@ function SciAppRoot() {
     }
   }, [view]);
 
-  // 'chat' (live single conversation) | 'favorites' (saved threads)
-  const [view, setView] = useState('chat');
   const [favorites, setFavorites] = useState(() => {
     const v = loadJSON(FAV_KEY, []);
     return Array.isArray(v) ? v : [];
   });
   const [openFav, setOpenFav] = useState(null); // a saved thread being viewed
+  // null | 'chat' | 'discuss' -- which tab's compare-mode "Save" is waiting on
+  // the direct/RAG/both save-choice modal (see resolveSaveChoice).
+  const [saveChoiceFor, setSaveChoiceFor] = useState(null);
 
   // Topic-aware follow-up suggestions generated from the running conversation.
   // Purely UI chips: only a clicked one becomes a turn, so the unclicked options
@@ -980,6 +1044,14 @@ function SciAppRoot() {
   const sessionId = useRef(initialSession.sessionId);
   const abortRef = useRef(null);
   const scrollRef = useRef(null);
+
+  // Compare mode's "direct" lineage never holds a server session (it's an
+  // isolated call, see runChatCall) -- so unlike the RAG side, ITS carried
+  // memory has to live here on the client: a compact summary string, plus the
+  // message-array index it covers (messages before that index are folded into
+  // the summary and no longer replayed; see lineageHistory / summarizeNow).
+  const directSummaryRef = useRef('');
+  const directHistoryStartRef = useRef(0);
 
   // Latest messages, readable from the (memoized) sendMessage without stale closure.
   const messagesRef = useRef(messages);
@@ -1121,8 +1193,10 @@ function SciAppRoot() {
     requestAnimationFrame(() => { autoScrollLockRef.current = false; });
   }, [messages, streaming]);
 
-  function pushNotice(kind, text) {
-    setMessages((m) => [...m, { role: 'notice', kind, text }]);
+  // `modeLabel` (e.g. tr.replyModeBadgeDirect/Rag) tags a compare-mode
+  // keypoints notice so the two lineages' summaries aren't shown as one.
+  function pushNotice(kind, text, modeLabel) {
+    setMessages((m) => [...m, { role: 'notice', kind, text, modeLabel }]);
   }
 
   // Drop any follow-up chips and invalidate an in-flight suggestion request (the
@@ -1196,6 +1270,10 @@ function SciAppRoot() {
     setFollowups(nextSession.followups || []);
     setShownFollowups(nextSession.shownFollowups || []);
     setInput(nextSession.input || '');
+    // Compare mode's direct-lineage memory is ephemeral (not part of the
+    // persisted per-scientist session), so a persona switch just starts fresh.
+    directSummaryRef.current = '';
+    directHistoryStartRef.current = 0;
 
     // Invalidate any in-flight follow-up fetch for the scientist we're leaving
     // (so its response can't land on top of the one we're switching to) WITHOUT
@@ -1224,6 +1302,8 @@ function SciAppRoot() {
     setShownFollowups([]);
     needHistoryRef.current = true;
     restoredFollowupRef.current = false;
+    directSummaryRef.current = '';
+    directHistoryStartRef.current = 0;
 
     // Clear inside sessions dictionary
     setSessions((prev) => ({
@@ -1242,13 +1322,35 @@ function SciAppRoot() {
 
   // Manually compress the running dialogue into a few key points. The backend
   // summarizes + restarts the session memory; we surface the bullets inline.
+  // Compare mode has two independent lineages -- the RAG side's real backend
+  // session, and the direct side's client-carried memory (directSummaryRef) --
+  // so both are summarized in turn, each reported as its own keypoints card.
   async function summarizeNow() {
     if (streaming) return;
-    if (!sessionId.current || !messages.some((m) => m.role === 'user')) {
+    if (!messages.some((m) => m.role === 'user')) {
       pushNotice('summary', tr.summaryNothing);
       return;
     }
+    if (replyMode !== 'compare') {
+      await summarizeRagLineage();
+      return;
+    }
     pushNotice('summary', tr.summarizingNow);
+    await summarizeRagLineage({ silent: true });
+    await summarizeDirectLineage();
+  }
+
+  // RAG lineage (or the plain direct/rag single-mode chat): backed by a real
+  // server session, so this is the original manual-summarize call. `silent`
+  // (compare mode) skips the standalone "nothing to summarize" chatter since
+  // the sibling direct-lineage call still has its own thing to report.
+  async function summarizeRagLineage(opts) {
+    const silent = !!(opts && opts.silent);
+    if (!sessionId.current) {
+      if (!silent) pushNotice('summary', tr.summaryNothing);
+      return;
+    }
+    if (!silent) pushNotice('summary', tr.summarizingNow);
     try {
       const res = await fetch(backendUrl + '/api/session/summarize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1264,10 +1366,10 @@ function SciAppRoot() {
       }
       const r = await res.json().catch(() => null);
       if (res.ok && r && r.ok && r.changed) {
-        pushNotice('keypoints', r.summary || '');
+        pushNotice('keypoints', r.summary || '', silent ? tr.replyModeBadgeRag : undefined);
         setUsage(typeof r.usage === 'number' ? r.usage : 0);
       } else if (res.ok && r && r.ok) {
-        pushNotice('summary', tr.summaryNothing);
+        if (!silent) pushNotice('summary', tr.summaryNothing);
       } else {
         pushNotice('err', tr.errPrefix + ((r && r.error) || 'summarize failed'));
       }
@@ -1276,9 +1378,42 @@ function SciAppRoot() {
     }
   }
 
-  // Snapshot the current thread into the saved collection.
+  // Direct lineage (compare mode only): stateless/isolated, so its "session"
+  // is just the client-held summary text + a replay start index -- summarizing
+  // folds everything up to now into that summary and moves the start index
+  // forward, so future direct-mode turns replay less (see lineageHistory).
+  async function summarizeDirectLineage() {
+    const hist = lineageHistory(messagesRef.current, 'direct', directHistoryStartRef.current)
+      .filter((m) => m.role === 'user' || (m.role === 'sci' && m.text && m.text.trim()));
+    if (!hist.length) return;
+    try {
+      const res = await fetch(backendUrl + '/api/session/summarize', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ history: hist, summary: directSummaryRef.current, lang, model: modelParam }),
+      });
+      const r = await res.json().catch(() => null);
+      if (res.ok && r && r.ok && r.changed) {
+        directSummaryRef.current = r.summary || '';
+        directHistoryStartRef.current = messagesRef.current.length;
+        pushNotice('keypoints', r.summary || '', tr.replyModeBadgeDirect);
+      }
+    } catch (e) {
+      pushNotice('err', tr.errPrefix + ((e && e.message) || e));
+    }
+  }
+
+  // Snapshot the current thread into the saved collection. A compare-mode
+  // thread (direct + RAG bubbles side by side) can't be flattened into one
+  // ordinary saved conversation without picking a side, so ask which lineage
+  // (or both, saved as two separate favorites) before committing.
   function saveFavorite() {
     if (!selected || !messages.some((m) => m.role === 'user' || m.role === 'sci')) return;
+    if (messages.some((m) => m.compare)) { setSaveChoiceFor('chat'); return; }
+    commitChatFavorite(messages.slice());
+    pushNotice('saved', tr.saved);
+  }
+
+  function commitChatFavorite(msgs, titleSuffix) {
     const fav = {
       id: uid(),
       scientistId: selected.id,
@@ -1286,12 +1421,37 @@ function SciAppRoot() {
       accent: selected.accent || '',
       years: selected.years || '',
       lang,
-      messages: messages.slice(),
-      title: threadTitle(messages),
+      messages: msgs,
+      title: threadTitle(msgs) + (titleSuffix || ''),
       savedAt: Date.now(),
     };
     setFavorites((f) => [fav, ...f]);
-    pushNotice('saved', tr.saved);
+  }
+
+  // Resolve the direct/RAG/both save-choice modal for whichever thread asked
+  // for it (the single chat, or -- once the discussion panel supports compare
+  // mode -- the Science Dialogue tab; see saveChoiceFor).
+  function resolveSaveChoice(choice) {
+    const target = saveChoiceFor;
+    setSaveChoiceFor(null);
+    if (!choice) return;
+    if (target === 'chat') {
+      if (choice === 'both') {
+        commitChatFavorite(stripCompareMessages(messages, 'direct'), ' · ' + tr.replyModeBadgeDirect);
+        commitChatFavorite(stripCompareMessages(messages, 'rag'), ' · ' + tr.replyModeBadgeRag);
+      } else {
+        commitChatFavorite(stripCompareMessages(messages, choice));
+      }
+      pushNotice('saved', tr.saved);
+    } else if (target === 'discuss') {
+      if (choice === 'both') {
+        commitDiscussFavorite(stripCompareMessages(discussMessages, 'direct'), ' · ' + tr.replyModeBadgeDirect);
+        commitDiscussFavorite(stripCompareMessages(discussMessages, 'rag'), ' · ' + tr.replyModeBadgeRag);
+      } else {
+        commitDiscussFavorite(stripCompareMessages(discussMessages, choice));
+      }
+      pushDiscussNotice('saved', tr.saved);
+    }
   }
 
   function deleteFavorite(id) {
@@ -1343,6 +1503,8 @@ function SciAppRoot() {
     restoredFollowupRef.current = false; // re-offer follow-ups for it
     clearFollowups();
     setShownFollowups([]);
+    directSummaryRef.current = '';
+    directHistoryStartRef.current = 0;
     setOpenFav(null);
     setView('chat');
   }
@@ -1452,7 +1614,7 @@ function SciAppRoot() {
   // `isolated` calls (compare mode's direct-reply companion) send their own
   // history snapshot and never touch the real session (mirrors the existing
   // auto-assign/follow-ups isolated-call pattern already used server-side).
-  const runChatCall = useCallback(async (msg, { mode, isolated, cid, history }) => {
+  const runChatCall = useCallback(async (msg, { mode, isolated, cid, history, summary }) => {
     const ac = new AbortController();
     const requestId = uid();
     abortRef.current = [...(abortRef.current || []), { ac, requestId }];
@@ -1470,6 +1632,7 @@ function SciAppRoot() {
           lang,
           message: msg,
           history: history && history.length ? history : undefined,
+          summary: isolated && summary ? summary : undefined,
           model: modelParam,
           replyMode: mode,
           isolated: isolated || undefined,
@@ -1517,9 +1680,12 @@ function SciAppRoot() {
   // (non-compare) turn has no mode conflict and belongs to both lineages. This
   // is what keeps the direct and RAG threads from contaminating each other's
   // context in compare mode -- each side only ever sees its own prior answers.
-  function lineageHistory(snapshot, mode) {
+  // `fromIndex` skips turns already folded into that lineage's own carried
+  // summary (only meaningful for the direct lineage -- see directHistoryStartRef).
+  function lineageHistory(snapshot, mode, fromIndex = 0) {
     const out = [];
-    for (const m of snapshot) {
+    for (let i = fromIndex; i < snapshot.length; i++) {
+      const m = snapshot[i];
       if (m.role === 'user') out.push(m);
       else if (m.role === 'sci' && (!m.compare || m.mode === mode)) out.push(m);
     }
@@ -1560,7 +1726,11 @@ function SciAppRoot() {
         // lineageHistory above). Sequential (not Promise.all) so the two
         // don't contend for the single Ollama generation slot at once, and so
         // "which one is the primary/session-backed call" stays unambiguous.
-        await runChatCall(msg, { mode: 'direct', isolated: true, cid: cidDirect, history: lineageHistory(priorMessages, 'direct') });
+        await runChatCall(msg, {
+          mode: 'direct', isolated: true, cid: cidDirect,
+          history: lineageHistory(priorMessages, 'direct', directHistoryStartRef.current),
+          summary: directSummaryRef.current,
+        });
         primaryResult = await runChatCall(msg, {
           mode: 'rag', isolated: false, cid: cidRag,
           history: needHistoryRef.current ? lineageHistory(priorMessages, 'rag') : null,
@@ -1665,24 +1835,36 @@ function SciAppRoot() {
     });
   }
 
-  function handleDiscussEvent(ev) {
+  // `ctx.isolated` is compare mode's direct-reply lineage (see runDiscussCall):
+  // its meta/model/usage must never clobber the real (RAG) session's state,
+  // exactly like the single chat's isolated compare call. `ctx.mode`/`turnId`
+  // tag every message this call produces, so a compare turn's two full
+  // roundtables (direct then RAG) render side by side afterward.
+  function handleDiscussEvent(ev, ctx) {
+    const { isolated, mode, turnId } = ctx || {};
+    const compare = !!turnId;
     if (ev.type === 'meta') {
-      if (ev.sessionId) discussSessionId.current = ev.sessionId;
-      if (ev.model) setDiscussModel(ev.model);
-      if (typeof ev.usage === 'number') setDiscussUsage(ev.usage);
+      if (!isolated) {
+        if (ev.sessionId) discussSessionId.current = ev.sessionId;
+        if (ev.model) setDiscussModel(ev.model);
+        if (typeof ev.usage === 'number') setDiscussUsage(ev.usage);
+      }
     } else if (ev.type === 'phase') {
-      setDiscussMessages((m) => [...m, { role: 'phase', phase: ev.phase, round: ev.round, maxRounds: ev.maxRounds, stopReason: ev.stopReason }]);
+      setDiscussMessages((m) => [...m, { role: 'phase', phase: ev.phase, round: ev.round, maxRounds: ev.maxRounds, stopReason: ev.stopReason, compare, mode, turnId }]);
     } else if (ev.type === 'speaker') {
-      setDiscussMessages((m) => [...m, { role: 'sci', id: ev.id, name: ev.name, accent: ev.accent, text: '', conclusion: ev.role === 'conclusion' }]);
+      setDiscussMessages((m) => [...m, { role: 'sci', id: ev.id, name: ev.name, accent: ev.accent, text: '', conclusion: ev.role === 'conclusion', compare, mode, turnId }]);
     } else if (ev.type === 'token') {
       appendDiscussDelta(ev.text || '');
     } else if (ev.type === 'summary') {
       // Emitted when a large rehydrated history is compressed before the turn.
-      if (ev.state === 'start') pushDiscussNotice('summary', tr.summarizing);
+      // The isolated lineage never holds server memory to restart, so there's
+      // nothing to report here for it.
+      if (isolated) { /* no-op */ }
+      else if (ev.state === 'start') pushDiscussNotice('summary', tr.summarizing);
       else if (ev.state === 'done') pushDiscussNotice('summary', tr.summarized.replace('{n}', ev.summaryCount || 1));
       else if (ev.state === 'error') pushDiscussNotice('summary', tr.summaryErr);
     } else if (ev.type === 'turn-done' || ev.type === 'done') {
-      if (typeof ev.usage === 'number') setDiscussUsage(ev.usage);
+      if (!isolated && typeof ev.usage === 'number') setDiscussUsage(ev.usage);
     } else if (ev.type === 'error') {
       pushDiscussNotice('err', tr.errPrefix + ev.error);
     }
@@ -1723,33 +1905,29 @@ function SciAppRoot() {
     fetchDiscussFollowups();
   }, [health, discussStreaming, discussMessages, discussFollowups]);
 
-  async function sendDiscuss(text) {
-    const msg = (text != null ? text : discussInput).trim();
-    if (!msg || discussStreaming || panel.length === 0) return;
-    // Replay prior rounds once after a reload / resume to rebuild panel memory.
-    const replayRounds = needDiscussHistoryRef.current ? extractRounds(discussMessagesRef.current) : null;
-    setDiscussInput('');
-    clearDiscussFollowups();
-    setDiscussMessages((m) => [...m, { role: 'user', text: msg }]);
-    setDiscussStreaming(true);
-
+  // One full /api/discuss roundtable (a whole multi-round panel debate down to
+  // its conclusion), streamed into discussMessages tagged by `mode`/`turnId`
+  // when this is one half of a compare-mode turn. `isolated` mirrors the
+  // single chat's compare-mode direct call: no server session, so the caller
+  // must resend that lineage's own (question -> conclusion) rounds every time.
+  const runDiscussCall = useCallback(async (msg, { mode, isolated, turnId, rounds }) => {
     const ac = new AbortController();
     const requestId = uid();
-    discussAbortRef.current = { ac, requestId };
+    discussAbortRef.current = [...(discussAbortRef.current || []), { ac, requestId }];
     let ok = false;
     try {
       const res = await fetch(backendUrl + '/api/discuss', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: discussSessionId.current || undefined,
+          sessionId: isolated ? undefined : (discussSessionId.current || undefined),
           requestId,
           scientistIds: panel,
           lang,
           message: msg,
-          rounds: replayRounds && replayRounds.length ? replayRounds : undefined,
+          rounds: rounds && rounds.length ? rounds : undefined,
           model: modelParam,
-          replyMode: discussReplyMode,
+          replyMode: mode,
         }),
         signal: ac.signal,
       });
@@ -1770,18 +1948,53 @@ function SciAppRoot() {
           if (!line) continue;
           let ev;
           try { ev = JSON.parse(line); } catch (e) { continue; }
-          handleDiscussEvent(ev);
+          handleDiscussEvent(ev, { isolated, mode, turnId });
         }
       }
       ok = true;
     } catch (e) {
       if (!ac.signal.aborted) pushDiscussNotice('err', tr.errPrefix + (e && e.message || e));
     } finally {
+      discussAbortRef.current = (discussAbortRef.current || []).filter((x) => x.ac !== ac);
+    }
+    return ok;
+  }, [backendUrl, panel, lang, modelParam, tr]);
+
+  async function sendDiscuss(text) {
+    const msg = (text != null ? text : discussInput).trim();
+    if (!msg || discussStreaming || panel.length === 0) return;
+    const priorMessages = discussMessagesRef.current.slice();
+    setDiscussInput('');
+    clearDiscussFollowups();
+    setDiscussMessages((m) => [...m, { role: 'user', text: msg }]);
+    setDiscussStreaming(true);
+
+    const isCompare = discussReplyMode === 'compare';
+    let primaryOk = false;
+    try {
+      if (isCompare) {
+        // Direct lineage first (isolated -- resends its own extracted rounds
+        // every turn, since it holds no server session), then the RAG lineage
+        // (the real, session-backed panel) -- same order as the single chat's
+        // compare mode, and for the same reason: keeps "which call owns the
+        // real session" unambiguous.
+        const turnId = uid();
+        await runDiscussCall(msg, { mode: 'direct', isolated: true, turnId, rounds: extractRounds(priorMessages, 'direct') });
+        primaryOk = await runDiscussCall(msg, {
+          mode: 'rag', isolated: false, turnId,
+          rounds: needDiscussHistoryRef.current ? extractRounds(priorMessages, 'rag') : null,
+        });
+      } else {
+        primaryOk = await runDiscussCall(msg, {
+          mode: discussReplyMode, isolated: false, turnId: null,
+          rounds: needDiscussHistoryRef.current ? extractRounds(priorMessages) : null,
+        });
+      }
+    } finally {
       setDiscussStreaming(false);
-      discussAbortRef.current = null;
     }
 
-    if (ok) {
+    if (primaryOk) {
       needDiscussHistoryRef.current = false;
       restoredDiscussFollowupRef.current = true; // live flow owns follow-ups now
       fetchDiscussFollowups();
@@ -1789,14 +2002,14 @@ function SciAppRoot() {
   }
 
   function stopDiscuss() {
-    const cur = discussAbortRef.current;
-    if (!cur) return;
-    cur.ac.abort();
-    if (cur.requestId) {
-      fetch(backendUrl + '/api/discuss/stop', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: cur.requestId }),
-      }).catch(() => {});
+    for (const { ac, requestId } of discussAbortRef.current || []) {
+      ac.abort();
+      if (requestId) {
+        fetch(backendUrl + '/api/discuss/stop', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId }),
+        }).catch(() => {});
+      }
     }
   }
 
@@ -1851,6 +2064,12 @@ function SciAppRoot() {
 
   function saveDiscussFavorite() {
     if (!discussMessages.some((m) => m.role === 'user' || m.role === 'sci')) return;
+    if (discussMessages.some((m) => m.compare)) { setSaveChoiceFor('discuss'); return; }
+    commitDiscussFavorite(discussMessages.slice());
+    pushDiscussNotice('saved', tr.saved);
+  }
+
+  function commitDiscussFavorite(msgs, titleSuffix) {
     const names = panel.map((id) => {
       const sc = scientists.find((s) => s.id === id);
       return sc ? nameFor(sc, lang) : id;
@@ -1870,12 +2089,11 @@ function SciAppRoot() {
       name: names.join(' · '),
       accent: (lead && lead.accent) || '',
       lang,
-      messages: discussMessages.slice(),
-      title: threadTitle(discussMessages),
+      messages: msgs,
+      title: threadTitle(msgs) + (titleSuffix || ''),
       savedAt: Date.now(),
     };
     setFavorites((f) => [fav, ...f]);
-    pushDiscussNotice('saved', tr.saved);
   }
 
   function onDiscussKeyDown(e) {
@@ -2115,7 +2333,7 @@ function SciAppRoot() {
                 if (m.kind === 'keypoints') {
                   return (
                     <div key={i} className="sci-keypoints">
-                      <span className="kp-title">{tr.keypointsTitle}</span>
+                      <span className="kp-title">{tr.keypointsTitle}{m.modeLabel && <span className="sci-mode-badge">{m.modeLabel}</span>}</span>
                       <div className="kp-body">{m.text}</div>
                     </div>
                   );
@@ -2153,10 +2371,10 @@ function SciAppRoot() {
               if (m.compare && m.mode === 'rag'
                 && messages[i + 1] && messages[i + 1].compare && messages[i + 1].mode === 'direct') {
                 return (
-                  <div key={i} className="sci-compare-row">
+                  <CompareSwipeRow key={i}>
                     {renderSciBubble(m, i)}
                     {renderSciBubble(messages[i + 1], i + 1)}
-                  </div>
+                  </CompareSwipeRow>
                 );
               }
               return renderSciBubble(m, i);
@@ -2228,6 +2446,10 @@ function SciAppRoot() {
           lang={lang}
           onClose={() => setBioId(null)}
         />
+      )}
+
+      {saveChoiceFor && (
+        <SaveCompareModal tr={tr} onPick={resolveSaveChoice} onClose={() => resolveSaveChoice(null)} />
       )}
     </div>
   );
@@ -2437,77 +2659,125 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete, onBio, onEdit })
 // Science Dialogue view and by saved-thread playback). Speaker turns carry the
 // speaking scientist's avatar + name; the closing synthesis renders as a
 // distinct "conclusion" card.
-function DiscussMessages({ messages, tr, lang, streaming, onBio, onUndo }) {
-  let lastSci = -1;
-  for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].role === 'sci') { lastSci = i; break; } }
-  return messages.map((m, i) => {
-    if (m.role === 'notice') {
-      if (m.kind === 'keypoints') {
-        return <div key={i} className="sci-keypoints"><span className="kp-title">{tr.keypointsTitle}</span><div className="kp-body">{m.text}</div></div>;
-      }
-      return <div key={i} className={'sci-notice ' + (m.kind || '')}>{m.text}</div>;
+// Render one discussion item (notice / phase / user / speaker / conclusion).
+// `key` is the React key (a true index for top-level items, a column-local
+// one for items inside a compare-mode column); `typing` is already resolved
+// per-item (is THIS the bubble currently streaming). Shared by the flat
+// (non-compare) path and the two side-by-side columns of a compare turn.
+function renderDiscussItem(m, key, { tr, lang, onBio, onUndo, undoDisabled, typing }) {
+  if (m.role === 'notice') {
+    if (m.kind === 'keypoints') {
+      return <div key={key} className="sci-keypoints"><span className="kp-title">{tr.keypointsTitle}</span><div className="kp-body">{m.text}</div></div>;
     }
-    if (m.role === 'phase') {
-      if (m.phase === 'concluding') {
-        return <div key={i} className="sci-phase concluding">{tr.concluding}</div>;
-      }
-      const label = lang === 'zh' ? ('第 ' + (m.round || 1) + ' 輪討論') : ('Round ' + (m.round || 1));
-      return <div key={i} className="sci-phase"><span>{label}</span></div>;
+    return <div key={key} className={'sci-notice ' + (m.kind || '')}>{m.text}</div>;
+  }
+  if (m.role === 'phase') {
+    if (m.phase === 'concluding') {
+      return <div key={key} className="sci-phase concluding">{tr.concluding}</div>;
     }
-    if (m.role === 'user') {
-      return (
-        <div key={i} className="sci-msg user">
-          <div className="sci-bubble-wrap">
-            <div className="sci-bubble">{renderText(m.text)}</div>
-            <div className="sci-msg-actions">
-              {onUndo && (
-                <UndoButton
-                  onUndo={() => onUndo(i)}
-                  title={lang === 'zh' ? '收回此訊息' : 'Undo this message'}
-                  disabled={streaming}
-                  lang={lang}
-                />
-              )}
-              <CopyButton text={m.text} title={lang === 'zh' ? '複製訊息' : 'Copy message'} />
-            </div>
-          </div>
-        </div>
-      );
-    }
-    // m.role === 'sci'
-    const typing = i === lastSci && streaming;
-    const showCopy = !typing;
-    if (m.conclusion) {
-      return (
-        <div key={i} className="sci-conclusion">
-          <div className="cc-head">
-            <SciAvatar id={m.id} accent={m.accent} name={m.name} size={26} onClick={onBio ? () => onBio(m.id) : undefined} />
-            <span className="cc-title">{tr.conclusion} · {m.name}</span>
-          </div>
-          <div className="cc-body">{renderText(m.text)}{typing && <span className="sci-typing" />}</div>
-          {showCopy && (
-            <div className="sci-msg-actions">
-              <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
-            </div>
-          )}
-        </div>
-      );
-    }
+    const label = lang === 'zh' ? ('第 ' + (m.round || 1) + ' 輪討論') : ('Round ' + (m.round || 1));
+    return <div key={key} className="sci-phase"><span>{label}</span></div>;
+  }
+  if (m.role === 'user') {
     return (
-      <div key={i} className="sci-msg sci discuss">
-        <SciAvatar id={m.id} accent={m.accent} name={m.name} size={30} onClick={onBio ? () => onBio(m.id) : undefined} />
+      <div key={key} className="sci-msg user">
         <div className="sci-bubble-wrap">
-          <div className="sci-speaker">{m.name}</div>
-          <div className="sci-bubble">{renderText(m.text)}{typing && <span className="sci-typing" />}</div>
-          {showCopy && (
-            <div className="sci-msg-actions">
-              <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
-            </div>
-          )}
+          <div className="sci-bubble">{renderText(m.text)}</div>
+          <div className="sci-msg-actions">
+            {onUndo && (
+              <UndoButton
+                onUndo={() => onUndo(key)}
+                title={lang === 'zh' ? '收回此訊息' : 'Undo this message'}
+                disabled={undoDisabled}
+                lang={lang}
+              />
+            )}
+            <CopyButton text={m.text} title={lang === 'zh' ? '複製訊息' : 'Copy message'} />
+          </div>
         </div>
       </div>
     );
-  });
+  }
+  // m.role === 'sci'
+  const showCopy = !typing;
+  if (m.conclusion) {
+    return (
+      <div key={key} className="sci-conclusion">
+        <div className="cc-head">
+          <SciAvatar id={m.id} accent={m.accent} name={m.name} size={26} onClick={onBio ? () => onBio(m.id) : undefined} />
+          <span className="cc-title">{tr.conclusion} · {m.name}</span>
+        </div>
+        <div className="cc-body">{renderText(m.text)}{typing && <span className="sci-typing" />}</div>
+        {showCopy && (
+          <div className="sci-msg-actions">
+            <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+          </div>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div key={key} className="sci-msg sci discuss">
+      <SciAvatar id={m.id} accent={m.accent} name={m.name} size={30} onClick={onBio ? () => onBio(m.id) : undefined} />
+      <div className="sci-bubble-wrap">
+        <div className="sci-speaker">{m.name}</div>
+        <div className="sci-bubble">{renderText(m.text)}{typing && <span className="sci-typing" />}</div>
+        {showCopy && (
+          <div className="sci-msg-actions">
+            <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Index of the last 'sci' item in a list (used to place the typing cursor).
+function lastSciIndex(list) {
+  for (let k = list.length - 1; k >= 0; k--) if (list[k].role === 'sci') return k;
+  return -1;
+}
+
+function DiscussMessages({ messages, tr, lang, streaming, onBio, onUndo }) {
+  const lastSci = lastSciIndex(messages);
+  const out = [];
+  let i = 0;
+  while (i < messages.length) {
+    const m = messages[i];
+    if (m.compare) {
+      // A compare-mode turn's direct-lineage roundtable and RAG-lineage
+      // roundtable are pushed back-to-back (see sendDiscuss/runDiscussCall),
+      // tagged with a shared turnId -- gather that whole contiguous run and
+      // split it into two columns rendered side by side, same visual pattern
+      // as the single chat's compare rows (.sci-compare-row).
+      const turnId = m.turnId;
+      const run = [];
+      while (i < messages.length && messages[i].compare && messages[i].turnId === turnId) {
+        run.push(messages[i]);
+        i++;
+      }
+      const directItems = run.filter((x) => x.mode === 'direct');
+      const ragItems = run.filter((x) => x.mode === 'rag');
+      const lastDirectSci = lastSciIndex(directItems);
+      const lastRagSci = lastSciIndex(ragItems);
+      out.push(
+        <CompareSwipeRow key={'cmp-' + turnId} className="sci-compare-row-discuss">
+          <div className="sci-compare-col">
+            <div className="sci-compare-col-label">{tr.replyModeBadgeDirect}</div>
+            {directItems.map((mm, k) => renderDiscussItem(mm, 'd' + k, { tr, lang, onBio, typing: streaming && k === lastDirectSci }))}
+          </div>
+          <div className="sci-compare-col">
+            <div className="sci-compare-col-label">{tr.replyModeBadgeRag}</div>
+            {ragItems.map((mm, k) => renderDiscussItem(mm, 'r' + k, { tr, lang, onBio, typing: streaming && k === lastRagSci }))}
+          </div>
+        </CompareSwipeRow>
+      );
+      continue;
+    }
+    out.push(renderDiscussItem(m, i, { tr, lang, onBio, onUndo, undoDisabled: streaming, typing: streaming && i === lastSci }));
+    i++;
+  }
+  return out;
 }
 
 // The Science Dialogue tab: pick a panel of scientists (left, or via the mobile
@@ -2599,7 +2869,7 @@ function DiscussView({
           <span className="sci-chathead-break-a" aria-hidden="true" />
           <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}><span className={'sci-dot ' + statusClass} /></span>
           <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={busy} />
-          <ReplyModeChip replyMode={replyMode} setReplyMode={setReplyMode} lang={lang} allowCompare={false} />
+          <ReplyModeChip replyMode={replyMode} setReplyMode={setReplyMode} lang={lang} />
           <span className="sci-chathead-break-b" aria-hidden="true" />
           <div className="sci-meter" title={tr.ctx}>
             <span>{tr.ctx}</span>
@@ -2837,6 +3107,27 @@ function PanelPicker({ tr, lang, scientists, panel, onToggle, onClose, sortBy, s
         </div>
         <div className="row">
           <button className="sci-send" onClick={onClose}>{tr.done}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Asks which lineage of a compare-mode thread (direct / RAG / both, saved
+// separately) to keep when "Save" is pressed on a conversation that has any
+// compare-mode turns. Shared by the single chat and the Science Dialogue tab.
+function SaveCompareModal({ tr, onPick, onClose }) {
+  return (
+    <div className="sci-modal-backdrop" onClick={onClose}>
+      <div className="sci-modal sci-save-choice" onClick={(e) => e.stopPropagation()}>
+        <h3>{tr.favCompareTitle}</h3>
+        <div className="sci-save-choice-opts">
+          <button className="sci-send" onClick={() => onPick('direct')}>{tr.favCompareDirect}</button>
+          <button className="sci-send" onClick={() => onPick('rag')}>{tr.favCompareRag}</button>
+          <button className="sci-send" onClick={() => onPick('both')}>{tr.favCompareBoth}</button>
+        </div>
+        <div className="row">
+          <button className="sci-iconbtn" onClick={onClose}>{tr.cancel}</button>
         </div>
       </div>
     </div>

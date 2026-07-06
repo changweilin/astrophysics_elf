@@ -428,26 +428,37 @@ async function handleSummarize(req, res) {
   const lang = normalizeLang(body.lang);
 
   const session = getSession(sessionId);
-  if (!session) return sendJson(res, 404, { error: 'unknown session' });
+  // No real session: this is compare mode's isolated direct-reply lineage,
+  // which never holds server-side state. The client carries its own history
+  // + prior summary forward (mirrors the isolated /api/chat contract) and we
+  // just return the merged text -- there is no session to restart.
+  const isolated = !session;
+  if (isolated && !(Array.isArray(body.history) && body.history.length)) {
+    return sendJson(res, 404, { error: 'unknown session' });
+  }
+
+  const history = session ? session.messages : sanitizeHistory(body.history);
+  const priorSummary = session ? session.summary : (typeof body.summary === 'string' ? body.summary : '');
+
   // Nothing to compress yet -> report unchanged so the UI can say so.
-  if (!session.messages.length) {
-    return sendJson(res, 200, { ok: true, changed: false, summary: session.summary || '', summaryCount: session.summaryCount });
+  if (!history.length) {
+    return sendJson(res, 200, { ok: true, changed: false, summary: priorSummary || '', summaryCount: session ? session.summaryCount : 0 });
   }
 
   const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
-  const scientist = getScientist(session.scientistId);
 
   try {
-    const merged = await summarizeConversation(model, lang, session.messages, session.summary);
-    restartWithSummary(session, merged);
-    const systemPrompt = scientist ? buildSystemPrompt(scientist, { summary: merged }) : '';
-    sendJson(res, 200, {
-      ok: true,
-      changed: true,
-      summary: merged,
-      summaryCount: session.summaryCount,
-      usage: scientist ? usageFraction(model, systemPrompt, session.messages) : 0,
-    });
+    const merged = await summarizeConversation(model, lang, history, priorSummary);
+    let summaryCount = 0;
+    let usage = 0;
+    if (session) {
+      restartWithSummary(session, merged);
+      summaryCount = session.summaryCount;
+      const scientist = getScientist(session.scientistId);
+      const systemPrompt = scientist ? buildSystemPrompt(scientist, { summary: merged }) : '';
+      usage = scientist ? usageFraction(model, systemPrompt, session.messages) : 0;
+    }
+    sendJson(res, 200, { ok: true, changed: true, summary: merged, summaryCount, usage });
   } catch (err) {
     sendJson(res, 500, { error: String(err && err.message || err) });
   }
