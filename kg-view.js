@@ -110,6 +110,8 @@
     },
     addToKb: { en: 'Add to knowledge graph', zh: '加入知識圖譜' },
     adding: { en: 'Adding…', zh: '加入中…' },
+    showFullContent: { en: 'Show full content', zh: '顯示詳細內容' },
+    hideFullContent: { en: 'Hide full content', zh: '隱藏詳細內容' },
     added: { en: 'Added — this article is now part of the knowledge base.', zh: '已加入——這篇內容現在是知識庫的一部分了。' },
     translateErr: { en: 'Translation failed: ', zh: '翻譯失敗:' },
     addErr: { en: 'Could not add: ', zh: '加入失敗:' },
@@ -127,13 +129,14 @@
     source: { en: 'source', zh: '來源' },
     readMore: { en: 'Full article on Wikipedia ↗', zh: '在 Wikipedia 閱讀全文 ↗' },
     hint: {
-      en: 'Drag to pan · scroll to zoom · click a node to read · double-click/tap a node to center on it',
-      zh: '拖曳平移 · 滾輪縮放 · 點選節點閱讀 · 雙擊(或連續點兩下)節點以此為中心',
+      en: 'Mouse: drag to pan · scroll to zoom. Touch: one finger scrolls the page · two fingers pinch/pan the graph. Click/tap a node to read · double-click/double-tap a node to center on it.',
+      zh: '滑鼠:拖曳平移 · 滾輪縮放。觸控:單指滑動頁面 · 雙指平移/縮放圖譜。點選節點閱讀 · 雙擊(或連續點兩下)節點以此為中心。',
     },
     depthLabel: { en: 'Link depth', zh: '連結層數' },
     histPrev: { en: 'Previous center', zh: '上一個中心點' },
     histNext: { en: 'Next center', zh: '下一個中心點' },
-    legendBtnLabel: { en: 'What do the colors mean?', zh: '顏色 / 標記說明' },
+    legendBtnLabel: { en: 'Legend', zh: '說明' },
+    legendHintHead: { en: 'How to use', zh: '操作說明' },
     legendKindHead: { en: 'Node color = kind', zh: '節點顏色 = 類型' },
     legendStateHead: { en: 'Outer ring = content status (this language)', zh: '外圈 = 內容狀態(目前語言)' },
     legendParentLabel: { en: 'Ringed in red = a parent/upper node of the focused entity', zh: '紅色外框 = 目前中心節點的上層(父)節點' },
@@ -248,6 +251,8 @@
     // "all annotations get an explanation" holds even as more get added.
     var legend = el('div', 'kg-legend hidden');
     (function buildLegend() {
+      legend.appendChild(el('p', 'kg-legend-head', t(STR.legendHintHead)));
+      legend.appendChild(el('p', 'kg-legend-hint', t(STR.hint)));
       legend.appendChild(el('p', 'kg-legend-head', t(STR.legendKindHead)));
       LEGEND_KIND.forEach(function (pair) {
         var row = el('div', 'kg-legend-row');
@@ -304,6 +309,20 @@
     container.appendChild(stage);
     container.appendChild(detail);
 
+    // Mobile stacks side/stage/detail into one vertical page (see the
+    // max-width:980px rule in library.css) instead of the desktop 3-column
+    // grid, so a tap on one list should carry the reader down/up to the next
+    // block rather than leaving them staring at whichever piece happened to
+    // already be on screen.
+    var MOBILE_MQ = '(max-width: 980px)';
+    function isMobileLayout() {
+      return !!(window.matchMedia && window.matchMedia(MOBILE_MQ).matches);
+    }
+    function scrollIntoViewOnMobile(node) {
+      if (!isMobileLayout()) return;
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     var searchWrap = el('div', 'kg-search');
     var inQ = document.createElement('input');
     inQ.type = 'text';
@@ -336,11 +355,15 @@
           curCategory = curCategory === (key || '') ? '' : (key || '');
           repaintCatBtns();
           loadList(lastQ);
+          scrollIntoViewOnMobile(list);
         });
         leafBtns.push(btn);
       }
       allBtn.dataset.cat = '';
-      allBtn.addEventListener('click', function () { curCategory = ''; repaintCatBtns(); loadList(lastQ); });
+      allBtn.addEventListener('click', function () {
+        curCategory = ''; repaintCatBtns(); loadList(lastQ);
+        scrollIntoViewOnMobile(list);
+      });
       (r.tree || []).forEach(function (node) {
         var groupBtn = el('button', 'kg-btn kg-cat-group', t(node.label) + ' (' + node.n + ')');
         catTree.appendChild(groupBtn);
@@ -401,6 +424,15 @@
         return v === 2 ? 2 : 1;
       } catch (e) { return 1; }
     })();
+    // Remembered center node (qid): restored on the first list load below so a
+    // page reload reopens on the same part of the graph the reader left.
+    var CENTER_KEY = 'kn_kg_center_qid';
+    function savedCenterQid() {
+      try { return localStorage.getItem(CENTER_KEY) || null; } catch (e) { return null; }
+    }
+    function saveCenterQid(qid) {
+      try { localStorage.setItem(CENTER_KEY, qid); } catch (e) {}
+    }
     // Back/forward history of focused center-nodes (like browser history: a
     // stack + current index, so forward is only available right after a back).
     var histStack = [];
@@ -426,10 +458,19 @@
     function resize() {
       var r = stage.getBoundingClientRect();
       var dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.round(r.width * dpr));
-      canvas.height = Math.max(1, Math.round(r.height * dpr));
+      var w = Math.max(1, Math.round(r.width * dpr));
+      var h = Math.max(1, Math.round(r.height * dpr));
+      // Setting canvas.width/height clears its bitmap even when the value is
+      // unchanged. Mobile browsers fire spurious 'resize' events for things
+      // like the address bar hiding/showing on tap or scroll -- without this
+      // guard + redraw, a tap on a node could clear the stage and never
+      // repaint it (looks like a flicker, then a black stage).
+      if (w === canvas.width && h === canvas.height) return;
+      canvas.width = w;
+      canvas.height = h;
       canvas.style.width = r.width + 'px';
       canvas.style.height = r.height + 'px';
+      kickDraw();
     }
     window.addEventListener('resize', resize);
 
@@ -604,11 +645,60 @@
       }
       return best;
     }
+    // Touch policy (see the touch-action:pan-y rule in library.css): a lone
+    // finger is left alone so the browser scrolls the *page* natively (the
+    // stage is one block in a long mobile page, not the whole viewport) --
+    // only a second finger arriving turns the gesture into a pinch-pan/zoom
+    // of the graph. Mouse/pen keep the original single-pointer drag-to-pan.
+    // `pointers` tracks every currently-down pointer so the code can tell a
+    // lone touch from the first half of a pinch; the three gesture states
+    // below (`drag` for mouse, `touchTap` for a lone finger, `pinch` for two)
+    // are kept mutually exclusive so no two of them ever fight over `view`.
+    var pointers = new Map(); // pointerId -> {x, y}
+    var touchTap = null;      // lone-finger tap/double-tap tracking (no panning)
+    var pinch = null;         // two-finger pan+zoom state
+    function pinchPointsOf() { return Array.from(pointers.values()).slice(0, 2); }
     canvas.addEventListener('pointerdown', function (ev) {
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (pointers.size >= 2) {
+        touchTap = null;
+        drag = null;
+        var pts = pinchPointsOf();
+        var d0 = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+        pinch = {
+          startDist: d0, startScale: view.scale,
+          startMidX: (pts[0].x + pts[1].x) / 2, startMidY: (pts[0].y + pts[1].y) / 2,
+          startViewX: view.x, startViewY: view.y,
+        };
+        canvas.setPointerCapture(ev.pointerId);
+        ev.preventDefault();
+        return;
+      }
+      if (ev.pointerType === 'touch') {
+        touchTap = { x: ev.clientX, y: ev.clientY, moved: false };
+        return; // no capture/preventDefault: let the page scroll natively
+      }
       drag = { x: ev.clientX, y: ev.clientY, moved: false };
       canvas.setPointerCapture(ev.pointerId);
     });
     canvas.addEventListener('pointermove', function (ev) {
+      if (!pointers.has(ev.pointerId)) return;
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (pinch && pointers.size >= 2) {
+        var pts = pinchPointsOf();
+        var d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        var midX = (pts[0].x + pts[1].x) / 2, midY = (pts[0].y + pts[1].y) / 2;
+        view.scale = Math.min(3.5, Math.max(0.3, pinch.startScale * (d / pinch.startDist)));
+        view.x = pinch.startViewX + (midX - pinch.startMidX);
+        view.y = pinch.startViewY + (midY - pinch.startMidY);
+        ev.preventDefault();
+        kickDraw();
+        return;
+      }
+      if (touchTap) {
+        if (Math.abs(ev.clientX - touchTap.x) + Math.abs(ev.clientY - touchTap.y) > 3) touchTap.moved = true;
+        return; // the page (not the graph) is what scrolls under a lone finger
+      }
       if (!drag) return;
       var dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
@@ -618,17 +708,13 @@
     });
     // Double-click/double-tap-to-recenter: tracked here (rather than a native
     // 'dblclick' listener) because 'dblclick' isn't reliably synthesized for
-    // touch pointers once a canvas sets touch-action:none + pointer capture,
-    // which this one does for panning -- checking the same node was picked
-    // twice within a short window works for both mouse and touch, and never
-    // fights with the drag-to-pan gesture (which requires actual movement).
+    // touch pointers -- checking the same node was picked twice within a
+    // short window works for both mouse and touch, and never fights with the
+    // drag-to-pan gesture (which requires actual movement).
     var lastTap = null;
     var DBLTAP_MS = 350;
-    canvas.addEventListener('pointerup', function (ev) {
-      var wasClick = drag && !drag.moved;
-      drag = null;
-      if (!wasClick) return;
-      var nd = pick(ev.clientX, ev.clientY);
+    function handleTap(px, py) {
+      var nd = pick(px, py);
       if (!nd) { lastTap = null; return; }
       var now = Date.now();
       if (lastTap && lastTap.qid === nd.qid && (now - lastTap.time) < DBLTAP_MS) {
@@ -638,6 +724,29 @@
         lastTap = { qid: nd.qid, time: now };
         selectNode(nd.qid);
       }
+    }
+    canvas.addEventListener('pointerup', function (ev) {
+      var wasPinch = pinch && pointers.size >= 2;
+      pointers.delete(ev.pointerId);
+      try { canvas.releasePointerCapture(ev.pointerId); } catch (e) {}
+      if (wasPinch) {
+        if (pointers.size < 2) pinch = null;
+        return; // ending a pinch never selects/centers a node
+      }
+      if (touchTap) {
+        var tt = touchTap; touchTap = null;
+        if (!tt.moved) handleTap(ev.clientX, ev.clientY);
+        return;
+      }
+      var wasClick = drag && !drag.moved;
+      drag = null;
+      if (wasClick) handleTap(ev.clientX, ev.clientY);
+    });
+    canvas.addEventListener('pointercancel', function (ev) {
+      pointers.delete(ev.pointerId);
+      if (pointers.size < 2) pinch = null;
+      touchTap = null;
+      drag = null;
     });
     canvas.addEventListener('wheel', function (ev) {
       ev.preventDefault();
@@ -694,11 +803,19 @@
           row.appendChild(dotEl);
           row.appendChild(el('span', 'nm', entLabel(e)));
           row.appendChild(el('span', 'deg', String(e.degree)));
-          row.addEventListener('click', function () { focusEntity(e.qid); });
+          row.addEventListener('click', function () {
+            focusEntity(e.qid);
+            scrollIntoViewOnMobile(stage);
+          });
           list.appendChild(row);
         });
-        // First load: focus the busiest entity so the stage is never blank.
-        if (!q && !focusQid && r.entities[0]) focusEntity(r.entities[0].qid);
+        // First load: reopen on whatever node the reader last centered on (see
+        // CENTER_KEY), falling back to the busiest entity so the stage is
+        // never blank (including when the saved node no longer resolves).
+        if (!q && !focusQid && r.entities[0]) {
+          var saved = savedCenterQid();
+          focusEntity(saved || r.entities[0].qid, { fallbackQid: r.entities[0].qid });
+        }
       }).catch(function () {
         if (!destroyed) showSideMsg(t(STR.offline), true);
       });
@@ -722,9 +839,18 @@
         .then(function (r) {
           if (destroyed) return;
           setGraph(r.root, r.nodes, r.edges);
+          saveCenterQid(qid);
           renderDetail(qid);
         })
         .catch(function (e) {
+          if (destroyed) return;
+          // A restored-from-storage center that no longer resolves (deleted
+          // entity, stale id): fall back once to the caller-supplied default
+          // instead of leaving the stage blank.
+          if (opts.fallbackQid && qid !== opts.fallbackQid) {
+            focusEntity(opts.fallbackQid, { skipHistory: opts.skipHistory });
+            return;
+          }
           detail.innerHTML = '';
           detail.appendChild(el('div', 'kg-msg', (e && e.message) || String(e)));
         });
@@ -823,6 +949,29 @@
             detail.appendChild(srcRow);
             if (pg.source_lang) {
               detail.appendChild(el('div', 'kg-d-meta dim', t(STR.translatedFrom) + pg.source_lang));
+            }
+            // Detailed-content toggle: the summary above is always short;
+            // the full stored article (fetched on demand via ?chunks=1, since
+            // most readers never open it) goes here, below the summary and
+            // above the outbound Wikipedia link.
+            if (pg.contentChars > 0) {
+              var fullBtn = el('button', 'kg-btn', t(STR.showFullContent));
+              var fullBox = null;
+              fullBtn.addEventListener('click', function () {
+                if (fullBox) { fullBox.remove(); fullBox = null; fullBtn.textContent = t(STR.showFullContent); return; }
+                fullBtn.disabled = true;
+                window.KNKB.api('/api/page?id=' + mine.id + '&chunks=1').then(function (cr) {
+                  if (destroyed || selQid !== qid) return;
+                  fullBtn.disabled = false;
+                  fullBtn.textContent = t(STR.hideFullContent);
+                  fullBox = el('div', 'kg-d-body kg-preview');
+                  fullBox.textContent = (cr.chunks || []).map(function (c) { return c.text; }).join('\n\n') || pg.summary || '';
+                  fullBtn.insertAdjacentElement('afterend', fullBox);
+                }).catch(function () {
+                  fullBtn.disabled = false;
+                });
+              });
+              detail.appendChild(fullBtn);
             }
             if (pg.url) {
               var a = el('a', 'kg-d-link', t(STR.readMore));
