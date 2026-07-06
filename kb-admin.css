@@ -169,6 +169,10 @@ table.ka-table { border-collapse: collapse; width: 100%; font-size: 13px; }
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
+.ka-table th.ka-th-sort { cursor: pointer; user-select: none; }
+.ka-table th.ka-th-sort:hover { color: var(--cyan); }
+.ka-table th.ka-th-sort.active { color: var(--cyan); }
+.ka-table th .ka-sort-arrow { font-family: var(--sans); }
 .ka-table td { padding: 7px 10px; border-bottom: 1px solid rgba(38,44,58,0.55); vertical-align: top; }
 .ka-table tr:last-child td { border-bottom: none; }
 .ka-table tr.sel { background: rgba(111,195,201,0.07); }

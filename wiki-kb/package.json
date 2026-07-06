@@ -21,5 +21,8 @@
     "serve": "node server.mjs",
     "stats": "node kb-admin.mjs stats",
     "check": "node --check config.mjs && node --check lib/db.mjs && node --check lib/wiki-api.mjs && node --check lib/seeds.mjs && node --check lib/chunk.mjs && node --check lib/embed.mjs && node --check lib/graph.mjs && node --check lib/retrieve.mjs && node --check lib/ingest.mjs && node --check lib/discover.mjs && node --check crawl.mjs && node --check check-updates.mjs && node --check kb-admin.mjs && node --check server.mjs"
+  },
+  "dependencies": {
+    "opencc-js": "^1.4.0"
   }
 }

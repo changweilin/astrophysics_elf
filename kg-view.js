@@ -19,6 +19,7 @@
     scientist: '#d9a866',
     topic: '#6fc3c9',
     note: '#9d8cd6',
+    list: '#8caa7e',
     stub: '#4a5262',
     unknown: '#4a5262',
     edge: 'rgba(120,132,152,0.28)',
@@ -45,6 +46,12 @@
     pickNode: { en: 'Select a node to read about it.', zh: '點選節點即可閱讀對應內容。' },
     recenter: { en: 'Focus graph here', zh: '以此節點為中心' },
     outEdges: { en: 'Relations', zh: '關聯' },
+    showAllRels: { en: 'Show all', zh: '顯示全部' },
+    sortByRel: { en: 'relation', zh: '關聯類型' },
+    sortByName: { en: 'name', zh: '名稱' },
+    sortByDegree: { en: 'links', zh: '連結數' },
+    sortByAlpha: { en: 'A-Z', zh: '字母' },
+    sortByKind: { en: 'kind', zh: '類型' },
     pages: { en: 'Article', zh: '條目內容' },
     noLangPage: {
       en: 'No article in your language yet.',
@@ -61,6 +68,17 @@
     added: { en: 'Added — this article is now part of the knowledge base.', zh: '已加入——這篇內容現在是知識庫的一部分了。' },
     translateErr: { en: 'Translation failed: ', zh: '翻譯失敗:' },
     addErr: { en: 'Could not add: ', zh: '加入失敗:' },
+    correctBtn: { en: 'Not quite right — correct it', zh: '翻譯不滿意——提出修正' },
+    deleteBtn: { en: 'Delete', zh: '刪除' },
+    deleteConfirm: {
+      en: 'Delete this contributed translation? This removes it from the knowledge base.',
+      zh: '確定刪除這篇貢獻的翻譯?這會將它從知識庫中移除。',
+    },
+    deleted: { en: 'Deleted.', zh: '已刪除。' },
+    correctTitle: { en: 'Title', zh: '標題' },
+    correctSave: { en: 'Save correction', zh: '儲存修正' },
+    correctCancel: { en: 'Cancel', zh: '取消' },
+    corrected: { en: 'Correction saved.', zh: '已儲存修正。' },
     source: { en: 'source', zh: '來源' },
     readMore: { en: 'Full article on Wikipedia ↗', zh: '在 Wikipedia 閱讀全文 ↗' },
     hint: {
@@ -107,15 +125,57 @@
     inQ.placeholder = t(STR.search);
     searchWrap.appendChild(inQ);
     side.appendChild(searchWrap);
-    var listTitle = el('p', 'kg-side-title', t(STR.browse));
-    side.appendChild(listTitle);
+    var listTitleRow = el('div', 'kg-d-sect-row');
+    listTitleRow.appendChild(el('p', 'kg-side-title', t(STR.browse)));
+    var listSortBar = el('div', 'kg-d-sort');
+    listTitleRow.appendChild(listSortBar);
+    side.appendChild(listTitleRow);
     var list = el('div', 'kg-entlist');
     side.appendChild(list);
+
+    // Sort state for the root-node browse list (link count / name / kind,
+    // forward+reverse) -- server-side, since the list is a truncated top-N
+    // and re-sorting client-side would just reorder whichever N happened to
+    // come back for the previous sort, not surface the true top-N for that
+    // order.
+    var listSort = { by: 'degree', dir: 'desc' };
+    var lastQ = '';
+    var LIST_SORT_KEYS = [['degree', STR.sortByDegree], ['label', STR.sortByAlpha], ['kind', STR.sortByKind]];
+    function repaintListSortBar() {
+      [].forEach.call(listSortBar.children, function (btn, i) {
+        var key = LIST_SORT_KEYS[i][0];
+        var label = t(LIST_SORT_KEYS[i][1]) + (listSort.by === key ? (listSort.dir === 'asc' ? ' ↑' : ' ↓') : '');
+        btn.textContent = label;
+        btn.className = 'kg-btn kg-sort-btn' + (listSort.by === key ? ' active' : '');
+      });
+    }
+    LIST_SORT_KEYS.forEach(function (pair) {
+      var key = pair[0];
+      var btn = el('button', 'kg-btn kg-sort-btn', '');
+      btn.addEventListener('click', function () {
+        if (listSort.by === key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
+        else { listSort.by = key; listSort.dir = key === 'degree' ? 'desc' : 'asc'; }
+        repaintListSortBar();
+        loadList(lastQ);
+      });
+      listSortBar.appendChild(btn);
+    });
+    repaintListSortBar();
 
     // ---- graph model + layout ----
     var G = { nodes: [], edges: [], byId: {} };  // layout state
     var focusQid = null;
     var selQid = null;
+    // Sort state for the detail panel's relations list (persists across node
+    // switches within this mounted instance, same convention as {by, dir} in
+    // the library page's own sort controls).
+    var relSort = { by: null, dir: 'asc' };
+    // Relation list starts truncated (most nodes have a handful of edges and
+    // a long default list would dominate the panel); list-kind nodes commonly
+    // have hundreds of child items, so a "show all" expand is worth it. Resets
+    // whenever the reader moves to a different node.
+    var relExpanded = false;
+    var relExpandedQid = null;
     var view = { x: 0, y: 0, scale: 1 };
     var raf = null;
     var settling = 0;
@@ -323,9 +383,14 @@
     }
 
     function loadList(q) {
+      lastQ = q || '';
       showSideMsg(t(STR.loading));
       var qs = new URLSearchParams({ limit: '40' });
       if (q) qs.set('q', q);
+      // 'label' is a UI-level sort key; the API sorts on whichever language
+      // column the reader is actually looking at.
+      qs.set('sort', listSort.by === 'label' ? (lang === 'zh' ? 'label_zh' : 'label_en') : listSort.by);
+      qs.set('dir', listSort.dir);
       window.KNKB.api('/api/entities?' + qs).then(function (r) {
         if (destroyed) return;
         list.innerHTML = '';
@@ -396,19 +461,52 @@
         }
 
         // relations summary (few, textual, read-only)
-        var rels = (d.out || []).slice(0, 8);
+        var relLabel = function (ed) {
+          return (lang === 'zh' ? (ed.label_zh || ed.label_en) : (ed.label_en || ed.label_zh)) || ed.dst;
+        };
+        if (relExpandedQid !== qid) { relExpanded = false; relExpandedQid = qid; }
+        var allRels = (d.out || []).slice();
+        if (relSort.by) {
+          allRels.sort(function (a, b) {
+            var va = relSort.by === 'name' ? relLabel(a) : (a.rel_label || a.rel);
+            var vb = relSort.by === 'name' ? relLabel(b) : (b.rel_label || b.rel);
+            var cmp = String(va).localeCompare(String(vb));
+            return relSort.dir === 'asc' ? cmp : -cmp;
+          });
+        }
+        var rels = relExpanded ? allRels : allRels.slice(0, 8);
         if (rels.length) {
-          detail.appendChild(el('p', 'kg-d-sect', t(STR.outEdges)));
+          var sectRow = el('div', 'kg-d-sect-row');
+          sectRow.appendChild(el('p', 'kg-d-sect', t(STR.outEdges)));
+          var sortBar = el('div', 'kg-d-sort');
+          [['rel', STR.sortByRel], ['name', STR.sortByName]].forEach(function (pair) {
+            var key = pair[0];
+            var label = t(pair[1]) + (relSort.by === key ? (relSort.dir === 'asc' ? ' ↑' : ' ↓') : '');
+            var b = el('button', 'kg-btn kg-sort-btn' + (relSort.by === key ? ' active' : ''), label);
+            b.addEventListener('click', function () {
+              if (relSort.by === key) relSort.dir = relSort.dir === 'asc' ? 'desc' : 'asc';
+              else { relSort.by = key; relSort.dir = 'asc'; }
+              renderDetail(qid);
+            });
+            sortBar.appendChild(b);
+          });
+          sectRow.appendChild(sortBar);
+          detail.appendChild(sectRow);
           var ul = el('div', 'kg-d-rels');
           rels.forEach(function (ed) {
             var row = el('div', 'kg-d-rel');
             row.appendChild(el('span', 'rel', ed.rel_label || ed.rel));
-            var a = el('a', null, (lang === 'zh' ? (ed.label_zh || ed.label_en) : (ed.label_en || ed.label_zh)) || ed.dst);
+            var a = el('a', null, relLabel(ed));
             a.addEventListener('click', function () { selectNode(ed.dst); });
             row.appendChild(a);
             ul.appendChild(row);
           });
           detail.appendChild(ul);
+          if (!relExpanded && allRels.length > rels.length) {
+            var showAll = el('button', 'kg-btn', t(STR.showAllRels) + ' (' + allRels.length + ')');
+            showAll.addEventListener('click', function () { relExpanded = true; renderDetail(qid); });
+            detail.appendChild(showAll);
+          }
         }
 
         detail.appendChild(el('p', 'kg-d-sect', t(STR.pages)));
@@ -459,26 +557,97 @@
             box.appendChild(bodyP);
             var add = el('button', 'kg-btn primary', t(STR.addToKb));
             box.appendChild(add);
-            add.addEventListener('click', function () {
-              add.disabled = true;
-              add.textContent = t(STR.adding);
+
+            // Contributed content so far -- kept mutable so a follow-up
+            // correction (re-contribute under the same lang+title, which
+            // upserts in place) always sends the latest saved version.
+            var current = { title: tr.title, summary: tr.summary, content: tr.content, kind: tr.kind || 'topic', pageId: null };
+
+            function contribute(payload, onOk, onErr) {
               window.KNKB.api('/api/contribute', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  lang: lang,
-                  title: tr.title,
-                  summary: tr.summary,
-                  content: tr.content,
-                  kind: tr.kind || 'topic',
-                  qid: qid,
-                  source: 'llm-translation',
-                }),
-              }).then(function () {
+                body: JSON.stringify(Object.assign({ lang: lang, qid: qid, source: 'llm-translation' }, payload)),
+              }).then(function (cr) {
                 if (destroyed) return;
+                current.pageId = cr.pageId;
+                onOk(cr);
+              }).catch(function (er) { onErr(er); });
+            }
+
+            // After a save (initial add, or a later correction): the reader
+            // can still say "not quite right" and either re-edit or delete
+            // this contribution outright.
+            function renderPostAddControls(msgKey) {
+              box.appendChild(el('p', 'kg-d-body ok', t(STR[msgKey])));
+              var actions = el('div', 'kg-translate');
+              var correctBtn = el('button', 'kg-btn', t(STR.correctBtn));
+              var delBtn = el('button', 'kg-btn', t(STR.deleteBtn));
+              actions.appendChild(correctBtn);
+              actions.appendChild(delBtn);
+              box.appendChild(actions);
+
+              delBtn.addEventListener('click', function () {
+                if (!window.confirm(t(STR.deleteConfirm))) return;
+                delBtn.disabled = true; correctBtn.disabled = true;
+                window.KNKB.api('/api/page?id=' + current.pageId, { method: 'DELETE' }).then(function () {
+                  if (destroyed) return;
+                  actions.remove();
+                  box.appendChild(el('p', 'kg-d-body dim', t(STR.deleted)));
+                }).catch(function (er) {
+                  delBtn.disabled = false; correctBtn.disabled = false;
+                  box.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));
+                });
+              });
+
+              correctBtn.addEventListener('click', function () {
+                actions.remove();
+                var editBox = el('div', 'kg-translate');
+                var titleIn = el('input', 'kg-edit-title');
+                titleIn.type = 'text'; titleIn.value = current.title;
+                var contentTa = el('textarea', 'kg-edit-content');
+                contentTa.value = current.content;
+                editBox.appendChild(el('p', 'kg-d-sect', t(STR.correctTitle)));
+                editBox.appendChild(titleIn);
+                editBox.appendChild(contentTa);
+                var saveBtn = el('button', 'kg-btn primary', t(STR.correctSave));
+                var cancelBtn = el('button', 'kg-btn', t(STR.correctCancel));
+                editBox.appendChild(saveBtn);
+                editBox.appendChild(cancelBtn);
+                box.appendChild(editBox);
+
+                cancelBtn.addEventListener('click', function () {
+                  editBox.remove();
+                  box.appendChild(actions);
+                });
+                saveBtn.addEventListener('click', function () {
+                  saveBtn.disabled = true; cancelBtn.disabled = true;
+                  contribute({
+                    title: titleIn.value.trim() || current.title,
+                    summary: current.summary,
+                    content: contentTa.value,
+                    kind: current.kind,
+                  }, function () {
+                    if (destroyed) return;
+                    current.title = titleIn.value.trim() || current.title;
+                    current.content = contentTa.value;
+                    editBox.remove();
+                    renderPostAddControls('corrected');
+                  }, function (er) {
+                    saveBtn.disabled = false; cancelBtn.disabled = false;
+                    editBox.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));
+                  });
+                });
+              });
+            }
+
+            add.addEventListener('click', function () {
+              add.disabled = true;
+              add.textContent = t(STR.adding);
+              contribute({ title: current.title, summary: current.summary, content: current.content, kind: current.kind }, function () {
                 add.remove();
-                box.appendChild(el('p', 'kg-d-body ok', t(STR.added)));
-              }).catch(function (er) {
+                renderPostAddControls('added');
+              }, function (er) {
                 add.disabled = false;
                 add.textContent = t(STR.addToKb);
                 box.appendChild(el('p', 'kg-d-body err', t(STR.addErr) + (er.message || er)));

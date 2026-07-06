@@ -9,6 +9,7 @@ import {
 } from './db.mjs';
 import { chunkText } from './chunk.mjs';
 import { classifyKind, shouldSkipTitle } from './seeds.mjs';
+import { toTaiwan } from './zh-convert.mjs';
 import { embedTexts, toBlob } from './embed.mjs';
 import { config } from '../config.mjs';
 
@@ -24,12 +25,26 @@ export async function ingestTitle(db, lang, title, { force = false } = {}) {
   if (!b || b.missing) return { status: 'missing', title };
   if (b.disambiguation || shouldSkipTitle(b.title)) return { status: 'skipped', title: b.title };
 
+  // zh.wikipedia titles are stored in whichever variant their creator used
+  // (often Simplified) -- the request's variant=zh-tw does not convert this
+  // field (see fetchDisplayTitle). Best-effort fix-up so every stored zh title
+  // is Taiwan Traditional; fails soft to the as-fetched title.
+  if (lang === 'zh') {
+    try {
+      const displayTitle = await wiki.fetchDisplayTitle(lang, b.title);
+      if (displayTitle) b.title = displayTitle;
+    } catch { /* keep as-fetched title */ }
+  }
+
   const existing = getPageByTitle(db, lang, b.title);
   if (existing && !force && existing.rev_id === b.revId && existing.content) {
     return { status: 'unchanged', pageId: existing.id, title: b.title };
   }
 
-  const text = (b.extract || '').trim();
+  // MediaWiki's LanguageConverter (variant=zh-tw) handles most of this
+  // already, but is not applied everywhere (e.g. templated content) -- this
+  // is the belt-and-suspenders pass so stored content is never Simplified.
+  const text = lang === 'zh' ? toTaiwan((b.extract || '').trim()) : (b.extract || '').trim();
   const kind = classifyKind(b.categories);
   const pageId = upsertPage(db, {
     lang,

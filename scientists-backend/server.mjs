@@ -36,6 +36,7 @@ import {
 import { runDiscussion } from './lib/discussion.mjs';
 import { assignScientist } from './lib/router.mjs';
 import { generateFollowups } from './lib/followups.mjs';
+import { registerRequest, unregisterRequest, abortRequest } from './lib/active-requests.mjs';
 import { retrieveContext } from './knowledge/wiki.mjs';
 import { openDb } from '../wiki-kb/lib/db.mjs';
 import { createKbRouter, kbHealthPayload } from '../wiki-kb/lib/routes.mjs';
@@ -54,7 +55,12 @@ function applyCors(req, res) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  // DELETE is required by the merged wiki-kb routes (page/edge delete) --
+  // without it, any cross-origin page (e.g. library.html/kb-admin.html on the
+  // static :5184 server calling this :5188 API) has its DELETE requests
+  // silently rejected at the CORS preflight, well before routes.mjs even sees
+  // them.
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
@@ -229,6 +235,15 @@ function languageLock(lang) {
     : '(Reply in English throughout.)';
 }
 
+// Reply-mode selector: 'direct' skips knowledge-base retrieval entirely;
+// 'rag' forces it regardless of the server's default-off SCI_WIKI_RAG env
+// switch (that switch alone would otherwise make the RAG/compare options a
+// no-op out of the box). Omitted/unrecognized falls back to the original
+// behavior (retrieval gated only by config.wiki.enabled).
+function normalizeReplyMode(raw) {
+  return raw === 'direct' || raw === 'rag' ? raw : null;
+}
+
 async function handleChat(req, res) {
   let body;
   try { body = await readJson(req); } catch { return sendJson(res, 400, { error: 'bad JSON body' }); }
@@ -237,7 +252,16 @@ async function handleChat(req, res) {
   const scientistId = String(body.scientistId || '');
   const lang = normalizeLang(body.lang);
   const sessionId = body.sessionId ? String(body.sessionId) : '';
+  const requestId = body.requestId ? String(body.requestId) : '';
   const isAuto = scientistId === AUTO_ID;
+  const replyMode = normalizeReplyMode(body.replyMode);
+  // Compare mode's second ("direct") call is an ISOLATED generation, exactly
+  // like the auto-assign routing / follow-ups calls elsewhere in this file:
+  // it reads the client-replayed transcript for context but its prompt/output
+  // never touch the real session, so it doesn't fork or pollute the
+  // conversation's memory. The client sends its current visible history with
+  // this flag instead of relying on server-side session state.
+  const isolated = body.isolated === true;
 
   // In auto mode the answering persona is chosen per-question below; otherwise it
   // must be a known scientist up front.
@@ -254,11 +278,15 @@ async function handleChat(req, res) {
   const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
   // The session id stays stable across turns. In auto mode it tracks 'auto', so
   // each question can be answered by a different expert without resetting memory.
-  const session = getOrCreateSession(sessionId, scientistId, lang);
+  // Isolated (compare-mode) calls never create or touch a real session.
+  const session = isolated ? null : getOrCreateSession(sessionId, scientistId, lang);
 
   // Rehydrate context from replayed history when this session is empty (page
   // reload / saved-thread resume / restarted backend). No-op for a live session.
-  seedSessionIfEmpty(session, body.history);
+  if (session) seedSessionIfEmpty(session, body.history);
+
+  let priorMessages = session ? session.messages : sanitizeHistory(body.history);
+  let priorSummary = session ? session.summary : (typeof body.summary === 'string' ? body.summary : '');
 
   // Open the SSE stream.
   res.writeHead(200, {
@@ -268,9 +296,13 @@ async function handleChat(req, res) {
     'X-Accel-Buffering': 'no',
   });
 
-  // Cancel the upstream generation if the browser disconnects.
+  // Cancel the upstream generation if the browser disconnects. This is a
+  // fallback: the real cancel path is the explicit /api/chat/stop endpoint
+  // below (see lib/active-requests.mjs for why "wait for the socket to
+  // close" alone isn't reliable enough over a mobile/proxied connection).
   const ac = new AbortController();
   req.on('close', () => ac.abort());
+  registerRequest(requestId, ac);
 
   try {
     // Auto-assign: route this question to the best-matched scientist with an
@@ -287,8 +319,12 @@ async function handleChat(req, res) {
       scientist = getScientist(scientistId);
     }
 
-    // Optional Wikipedia retrieval (best-effort; '' when disabled).
-    const wikiContext = await retrieveContext(message, lang);
+    // Optional Wikipedia/KB retrieval. 'direct' skips it outright; 'rag' forces
+    // it past the config.wiki.enabled default; unset keeps the legacy gating.
+    const wikiResult = replyMode === 'direct'
+      ? { context: '', sources: [] }
+      : await retrieveContext(message, lang, { force: replyMode === 'rag', signal: ac.signal });
+    const wikiContext = wikiResult.context;
 
     // System prompt WITHOUT summary, used only for the summarize decision so the
     // growing summary itself doesn't keep tripping the threshold.
@@ -296,34 +332,43 @@ async function handleChat(req, res) {
 
     // Context management: summarize + restart at the configured fraction. This
     // also compresses a large *rehydrated* history before it enters the prompt.
-    if (shouldSummarize(model, baseSystem, session.messages, message)) {
+    // Isolated calls never mutate shared state, so they skip this step and
+    // simply use whatever (bounded) history the client sent.
+    if (!isolated && shouldSummarize(model, baseSystem, priorMessages, message)) {
       sse(res, 'summary', { state: 'start', lang });
       try {
-        const merged = await summarizeConversation(model, lang, session.messages, session.summary);
+        const merged = await summarizeConversation(model, lang, priorMessages, priorSummary);
         restartWithSummary(session, merged);
+        priorMessages = session.messages;
+        priorSummary = session.summary;
         sse(res, 'summary', { state: 'done', summary: merged, summaryCount: session.summaryCount });
       } catch (e) {
         // Summarization failure shouldn't kill the chat; drop oldest turns instead.
         session.messages = session.messages.slice(-4);
+        priorMessages = session.messages;
         sse(res, 'summary', { state: 'error', error: String(e && e.message || e) });
       }
     }
 
     // Final system prompt includes any carried-over summary memory.
-    const systemPrompt = buildSystemPrompt(scientist, { wikiContext, summary: session.summary });
+    const systemPrompt = buildSystemPrompt(scientist, { wikiContext, summary: priorSummary });
 
     sse(res, 'meta', {
-      sessionId: session.id,
+      sessionId: session ? session.id : (sessionId || 'isolated'),
       model: model.name,
       lang: model.lang,
       scientistId: scientist.id,
       auto: isAuto,
-      usage: usageFraction(model, systemPrompt, session.messages),
+      usage: usageFraction(model, systemPrompt, priorMessages),
+      replyMode: replyMode || (config.wiki.enabled ? 'rag' : 'direct'),
+      ragUsed: !!wikiContext,
+      sources: wikiResult.sources,
+      isolated,
     });
 
     const messages = [
       { role: 'system', content: systemPrompt },
-      ...session.messages,
+      ...priorMessages,
       { role: 'user', content: `${message}\n\n${languageLock(lang)}` },
     ];
 
@@ -333,23 +378,37 @@ async function handleChat(req, res) {
       sse(res, 'token', { text: delta });
     });
 
-    // Persist the turn.
-    appendMessage(session, 'user', message);
-    appendMessage(session, 'assistant', reply);
-    if (stats.promptTokens) session.lastPromptTokens = stats.promptTokens;
+    // Persist the turn (isolated/compare calls never write to a session).
+    if (!isolated) {
+      appendMessage(session, 'user', message);
+      appendMessage(session, 'assistant', reply);
+      if (stats.promptTokens) session.lastPromptTokens = stats.promptTokens;
+    }
 
     sse(res, 'done', {
-      sessionId: session.id,
+      sessionId: session ? session.id : (sessionId || 'isolated'),
       promptTokens: stats.promptTokens,
       completionTokens: stats.completionTokens,
-      usage: usageFraction(model, systemPrompt, session.messages),
+      usage: usageFraction(model, systemPrompt, priorMessages),
       contextTokens: model.contextTokens,
     });
   } catch (err) {
     if (!ac.signal.aborted) sse(res, 'error', { error: String(err && err.message || err) });
   } finally {
+    unregisterRequest(requestId);
     res.end();
   }
+}
+
+// Explicit cancel: the client sends back the requestId it minted for the
+// /api/chat call it wants to stop. Aborting here happens immediately and does
+// not depend on the browser's fetch-abort actually tearing down the
+// underlying TCP connection promptly (see lib/active-requests.mjs).
+async function handleChatStop(req, res) {
+  let body;
+  try { body = await readJson(req); } catch { return sendJson(res, 400, { error: 'bad JSON body' }); }
+  const requestId = body.requestId ? String(body.requestId) : '';
+  sendJson(res, 200, { ok: abortRequest(requestId) });
 }
 
 async function handleReset(req, res) {
@@ -459,7 +518,9 @@ async function handleDiscuss(req, res) {
   const message = typeof body.message === 'string' ? body.message.trim() : '';
   const lang = normalizeLang(body.lang);
   const sessionId = body.sessionId ? String(body.sessionId) : '';
+  const requestId = body.requestId ? String(body.requestId) : '';
   const rawIds = Array.isArray(body.scientistIds) ? body.scientistIds.map(String) : [];
+  const replyMode = normalizeReplyMode(body.replyMode);
 
   // Keep only known ids, de-duplicated and capped, preserving the caller order.
   const ids = [];
@@ -491,12 +552,26 @@ async function handleDiscuss(req, res) {
 
   const ac = new AbortController();
   req.on('close', () => ac.abort());
+  registerRequest(requestId, ac);
   const emit = (type, data) => sse(res, type, data);
 
   try {
+    // Optional Wikipedia/KB retrieval, same reply-mode semantics as the single
+    // chat: 'direct' skips it, 'rag' forces it, unset keeps the legacy gating.
+    // Retrieved once for the question and shared by every panelist + the
+    // conclusion, rather than once per speaker.
+    const wikiResult = replyMode === 'direct'
+      ? { context: '', sources: [] }
+      : await retrieveContext(message, lang, { force: replyMode === 'rag', signal: ac.signal });
+
     // No usage here: runDiscussion reports the real starting usage from the
     // carried memory below, so a continued discussion isn't shown as 0%.
-    emit('meta', { sessionId: disc.id, model: model.name, lang: model.lang, speakers });
+    emit('meta', {
+      sessionId: disc.id, model: model.name, lang: model.lang, speakers,
+      replyMode: replyMode || (config.wiki.enabled ? 'rag' : 'direct'),
+      ragUsed: !!wikiResult.context,
+      sources: wikiResult.sources,
+    });
 
     // Context management: the panel's memory carries ALL prior (question ->
     // conclusion) rounds and -- like the single chat -- is summarized and
@@ -520,7 +595,7 @@ async function handleDiscuss(req, res) {
     }
 
     const result = await runDiscussion(
-      { model, lang, scientists: ranked, question: message, memory, signal: ac.signal },
+      { model, lang, scientists: ranked, question: message, memory, wikiContext: wikiResult.context, signal: ac.signal },
       emit,
     );
 
@@ -537,8 +612,16 @@ async function handleDiscuss(req, res) {
   } catch (err) {
     if (!ac.signal.aborted) emit('error', { error: String(err && err.message || err) });
   } finally {
+    unregisterRequest(requestId);
     res.end();
   }
+}
+
+async function handleDiscussStop(req, res) {
+  let body;
+  try { body = await readJson(req); } catch { return sendJson(res, 400, { error: 'bad JSON body' }); }
+  const requestId = body.requestId ? String(body.requestId) : '';
+  sendJson(res, 200, { ok: abortRequest(requestId) });
 }
 
 async function handleDiscussReset(req, res) {
@@ -626,6 +709,9 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && path === '/api/chat') {
       return await handleChat(req, res);
     }
+    if (req.method === 'POST' && path === '/api/chat/stop') {
+      return await handleChatStop(req, res);
+    }
     if (req.method === 'POST' && path === '/api/session/reset') {
       return await handleReset(req, res);
     }
@@ -637,6 +723,9 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && path === '/api/discuss') {
       return await handleDiscuss(req, res);
+    }
+    if (req.method === 'POST' && path === '/api/discuss/stop') {
+      return await handleDiscussStop(req, res);
     }
     if (req.method === 'POST' && path === '/api/discuss/reset') {
       return await handleDiscussReset(req, res);

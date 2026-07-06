@@ -124,12 +124,12 @@ async function isResolved(model, lang, question, turns, signal) {
 
 // Run a full roundtable for one user question. `scientists` is the ranked panel
 // (most-expert first). Returns the visible turns + conclusion and stop metadata.
-export async function runDiscussion({ model, lang, scientists, question, memory = '', signal }, emit) {
+export async function runDiscussion({ model, lang, scientists, question, memory = '', wikiContext = '', signal }, emit) {
   const dc = config.discussion;
   const window = model.contextTokens;
   const baseTokens = estimateTokens(buildPanelPrompt(scientists[0], {
     colleagues: scientists.slice(1).map((s) => nameOf(s, lang)),
-    lang,
+    lang, wikiContext,
   })) + estimateTokens(question) + estimateTokens(memory);
 
   const turns = []; // [{ id, name, accent, content }]
@@ -162,7 +162,7 @@ export async function runDiscussion({ model, lang, scientists, question, memory 
       const name = nameOf(sci, lang);
       emit('speaker', { id: sci.id, name, accent: sci.accent || '', role: 'turn', round: round + 1 });
 
-      const system = buildPanelPrompt(sci, { colleagues, lang, summary: memory });
+      const system = buildPanelPrompt(sci, { colleagues, lang, summary: memory, wikiContext });
       const userMsg = turnUserMessage(lang, question, memory, turns, name);
 
       const out = await streamComplete({
@@ -210,7 +210,7 @@ export async function runDiscussion({ model, lang, scientists, question, memory 
 
   const conclSystem = buildConclusionPrompt(lead, {
     colleagues: scientists.slice(1).map((s) => nameOf(s, lang)),
-    lang,
+    lang, wikiContext,
   });
   const conclUser = conclusionUserMessage(lang, question, memory, turns, leadName);
 

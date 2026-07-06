@@ -49,11 +49,11 @@ export async function search(db, opts = {}) {
   // 2) vector candidates (full scan on small corpora, rerank-only on large)
   let qv = null;
   try {
-    qv = await embedQuery(q);
+    qv = await embedQuery(q, opts.signal);
   } catch {
     qv = null;
   }
-  if (qv) {
+  if (qv && !(opts.signal && opts.signal.aborted)) {
     const embedded = db
       .prepare('SELECT COUNT(*) n FROM chunks WHERE embedding IS NOT NULL')
       .get().n;
@@ -65,7 +65,13 @@ export async function search(db, opts = {}) {
       );
       const iter = stmt.iterate ? stmt.iterate() : stmt.all();
       const top = [];
+      // This is a synchronous CPU loop (no `await`) that can run for a while
+      // on a large corpus, so it never yields to the event loop on its own --
+      // check the abort signal periodically so a cancelled request actually
+      // stops scanning instead of blocking everything else until done.
+      let n = 0;
       for (const row of iter) {
+        if (opts.signal && (++n & 1023) === 0 && opts.signal.aborted) break;
         const cos = dot(qv, fromBlob(row.embedding));
         const hit = cand.get(row.id);
         if (hit) hit.cos = cos;

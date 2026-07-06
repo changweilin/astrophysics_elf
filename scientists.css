@@ -151,6 +151,9 @@ html, body {
 .sci-chat-head .who .meta { font-size: 0.76rem; color: var(--ink-faint); }
 .sci-chat-head .spacer { flex: 1; }
 .sci-modelchip-wrap { display: inline-flex; align-items: center; gap: 6px; }
+/* Mobile-only row-break markers for .sci-chat-head (see the 760px query) --
+   hidden here so they don't add stray flex gaps on desktop. */
+.sci-chathead-break-a, .sci-chathead-break-b { display: none; }
 .sci-modelchip {
   font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim);
   border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px;
@@ -345,7 +348,45 @@ html, body {
 /* a speaker turn (discussion roundtable, or an auto-assigned single chat):
    avatar + optional name caption + bubble */
 .sci-msg .sci-bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.sci-msg .sci-speaker { font-size: 0.72rem; font-weight: 600; color: var(--ink-faint); padding-left: 3px; }
+.sci-msg .sci-speaker { font-size: 0.72rem; font-weight: 600; color: var(--ink-faint); padding-left: 3px; display: flex; align-items: center; gap: 6px; }
+
+/* compare mode: direct-reply vs. KB-searched reply shown side by side */
+.sci-compare-row { display: flex; gap: 10px; width: 100%; align-self: stretch; }
+.sci-compare-row .sci-msg { max-width: none; flex: 1 1 0; min-width: 0; }
+.sci-mode-badge {
+  font-size: 0.66rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--ink-faint); background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 1px 6px;
+}
+@media (max-width: 760px) {
+  /* Two full-height columns don't fit a phone screen, so swipe between them
+     instead of stacking: a horizontally snapping strip, one pane per
+     screen-width, with small labelled dots so it's clear there's a second
+     pane and which one is showing. */
+  .sci-compare-row {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    gap: 0;
+    margin: 0 -16px;
+    padding: 0 16px;
+  }
+  .sci-compare-row .sci-msg {
+    flex: 0 0 100%;
+    max-width: 100%;
+    scroll-snap-align: start;
+    padding: 0 6px;
+  }
+  .sci-compare-row .sci-msg:first-child { padding-left: 0; }
+  .sci-compare-row .sci-msg:last-child { padding-right: 0; }
+}
+
+/* retrieval citations under a KB-searched reply */
+.sci-sources { font-size: 0.7rem; color: var(--ink-faint); padding-left: 3px; line-height: 1.5; }
+.sci-source a { color: var(--ink-dim); text-decoration: underline; text-decoration-color: var(--line); }
+.sci-source a:hover { color: var(--accent); }
 
 /* closing synthesis card */
 .sci-conclusion {
@@ -454,6 +495,47 @@ html, body {
     will-change: transform;
     transition: transform 0.08s ease-out;
     flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Reflow the chat-head controls into 3 explicit rows via `order` (not DOM
+     structure), so desktop -- which relies on this being one flat flex row
+     with .spacer pushing the tail right -- is completely untouched; these
+     rules only exist inside this mobile query. Applies to both the single
+     chat and Science Dialogue headers, which share these class names:
+       row 1: scientist/panel picker + name
+       row 2: model select + reply-mode select, 50/50
+       row 3: status dot + context meter + action buttons
+     .sci-chathead-break-a/-b are empty spans placed after "row 1" and after
+     "row 2" in the JSX; giving them `flex-basis: 100%` forces the next item
+     onto a new line regardless of exact content width. */
+  .sci-chat-head .sci-managebtn,
+  .sci-chat-head .sci-panel-stack.head { order: 1; }
+  .sci-chat-head .sci-head-who-wrap,
+  .sci-chat-head > .who { order: 2; }
+  .sci-chat-head .spacer { display: none; }
+  .sci-chathead-break-a, .sci-chathead-break-b {
+    display: block; flex-basis: 100%; width: 100%; height: 0;
+  }
+  .sci-chathead-break-a { order: 3; }
+
+  .sci-chat-head .sci-modelchip-wrap {
+    order: 4; flex: 1 1 0; min-width: 0; justify-content: center;
+  }
+  .sci-chathead-break-b { order: 6; }
+
+  .sci-chat-head .sci-statusdot { order: 7; }
+  .sci-chat-head .sci-meter { order: 8; flex: 1 1 auto; }
+  .sci-chat-head .sci-headbtns { order: 9; margin-left: auto; }
+
+  /* Narrower, evenly-split model/reply selects so both fit comfortably side
+     by side on a phone-width row instead of the desktop's fixed 220px cap. */
+  .sci-chat-head .sci-model-select {
+    max-width: none;
+    width: 100%;
+    min-width: 0;
+    font-size: 0.68rem;
+    padding: 5px 6px;
   }
 
   .sci-scroll {

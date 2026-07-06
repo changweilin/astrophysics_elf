@@ -189,9 +189,18 @@ export function setPageCategories(db, pageId, categories) {
   for (const c of categories || []) ins.run(pageId, c);
 }
 
+// Column names the admin UI is allowed to sort by, mapped to a safe SQL
+// ORDER BY expression (a fixed whitelist, not user input, so this stays
+// injection-safe even though it's string-interpolated below).
+const PAGE_SORT_COLUMNS = {
+  id: 'id', lang: 'lang', title: 'title', kind: 'kind', qid: 'qid',
+  source: 'source', updated_at: 'updated_at', rev_time: 'rev_time',
+  chunks: 'chunks', contentChars: 'contentChars',
+};
+
 // Browse/filter pages for the admin UI. Returns { total, rows } (rows carry
 // contentChars instead of the full text so listings stay light).
-export function listPages(db, { lang, kind, status = 'active', q, limit = 50, offset = 0 } = {}) {
+export function listPages(db, { lang, kind, status = 'active', q, limit = 50, offset = 0, sort, dir } = {}) {
   const filters = [];
   const args = [];
   if (status && status !== 'all') { filters.push('status=?'); args.push(status); }
@@ -200,19 +209,32 @@ export function listPages(db, { lang, kind, status = 'active', q, limit = 50, of
   if (q) { filters.push('title LIKE ?'); args.push(`%${q}%`); }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   const total = db.prepare(`SELECT COUNT(*) n FROM pages ${where}`).get(...args).n;
+  const sortCol = PAGE_SORT_COLUMNS[sort] || 'updated_at';
+  const sortDir = dir === 'asc' ? 'ASC' : 'DESC';
   const rows = db
     .prepare(
       `SELECT id, lang, title, qid, kind, url, source, status, rev_time, updated_at,
               LENGTH(COALESCE(content,'')) AS contentChars,
               (SELECT COUNT(*) FROM chunks c WHERE c.page_id = pages.id) AS chunks
-       FROM pages ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+       FROM pages ${where} ORDER BY ${sortCol} ${sortDir}, id LIMIT ? OFFSET ?`
     )
     .all(...args, Math.max(1, Math.min(500, limit)), Math.max(0, offset));
   return { total, rows };
 }
 
-// Browse/search knowledge-graph entities, busiest (highest degree) first.
-export function listEntities(db, { q, kind, limit = 50 } = {}) {
+// Column names the library page's KG root-node list is allowed to sort by,
+// mapped to a safe SQL ORDER BY expression (a fixed whitelist, not user
+// input, so this stays injection-safe even though it's string-interpolated
+// below). 'degree' is the link-count the sidebar shows next to each node.
+const ENTITY_SORT_COLUMNS = {
+  degree: 'degree', label_en: 'e.label_en', label_zh: 'e.label_zh',
+  kind: 'e.kind', qid: 'e.qid',
+};
+
+// Browse/search knowledge-graph entities, busiest (highest degree) first by
+// default; `sort`/`dir` let the caller re-order by link count, name, or kind
+// (forward/reverse) instead.
+export function listEntities(db, { q, kind, limit = 50, sort, dir } = {}) {
   const filters = [];
   const args = [];
   if (kind) { filters.push('e.kind=?'); args.push(kind); }
@@ -222,11 +244,13 @@ export function listEntities(db, { q, kind, limit = 50 } = {}) {
     args.push(`%${q}%`, `%${q}%`, q);
   }
   const where = `WHERE ${filters.join(' AND ')}`;
+  const sortCol = ENTITY_SORT_COLUMNS[sort] || 'degree';
+  const sortDir = dir === 'asc' ? 'ASC' : 'DESC';
   return db
     .prepare(
       `SELECT e.qid, e.kind, e.label_en, e.label_zh, e.description, e.birth, e.death,
               (SELECT COUNT(*) FROM edges x WHERE x.src = e.qid OR x.dst = e.qid) AS degree
-       FROM entities e ${where} ORDER BY degree DESC, e.qid LIMIT ?`
+       FROM entities e ${where} ORDER BY ${sortCol} ${sortDir}, e.qid LIMIT ?`
     )
     .all(...args, Math.max(1, Math.min(300, limit)));
 }
@@ -307,6 +331,21 @@ export function replaceChunks(db, pageId, pieces) {
     );
   });
   return { total: pieces.length, keptEmbeddings: kept };
+}
+
+// Rename a page's title in place (e.g. Simplified -> Taiwan Traditional
+// variant fix-up). Refuses when the target title already names a different
+// active page for the same lang (a real duplicate -- left for manual review
+// rather than silently merging/overwriting).
+export function renamePageTitle(db, pageId, newTitle) {
+  const page = getPageById(db, pageId);
+  if (!page) return { ok: false, reason: 'not-found' };
+  const clash = db
+    .prepare('SELECT id FROM pages WHERE lang=? AND title=? AND id!=?')
+    .get(page.lang, newTitle, pageId);
+  if (clash) return { ok: false, reason: 'title-collision', existingId: clash.id };
+  db.prepare('UPDATE pages SET title=?, updated_at=? WHERE id=?').run(newTitle, now(), pageId);
+  return { ok: true };
 }
 
 // Soft delete keeps the page row (status='deleted') but always removes chunks

@@ -7,6 +7,7 @@
 
 import { wdGetEntities } from './wiki-api.mjs';
 import { now, logSync } from './db.mjs';
+import { toTaiwan } from './zh-convert.mjs';
 
 export const RELS = {
   // topics
@@ -107,8 +108,8 @@ export async function syncEntities(db, { limit = 2000, log = () => {} } = {}) {
         qid,
         kind,
         pickLabel(ent.labels, ['en']),
-        pickLabel(ent.labels, ['zh-tw', 'zh']),
-        pickLabel(ent.descriptions, ['en', 'zh-tw', 'zh']),
+        toTaiwan(pickLabel(ent.labels, ['zh-tw', 'zh'])),
+        toTaiwan(pickLabel(ent.descriptions, ['en', 'zh-tw', 'zh'])),
         isHuman ? claimTime(claims, 'P569') : null,
         isHuman ? claimTime(claims, 'P570') : null,
         JSON.stringify(kept),
@@ -165,7 +166,7 @@ async function labelStubs(db, { limit = 3000, log = () => {} } = {}) {
       ins.run(
         qid,
         ent ? pickLabel(ent.labels, ['en']) : null,
-        ent ? pickLabel(ent.labels, ['zh-tw', 'zh']) : null,
+        ent ? toTaiwan(pickLabel(ent.labels, ['zh-tw', 'zh'])) : null,
         ts
       );
       n++;

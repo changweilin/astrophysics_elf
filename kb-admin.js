@@ -27,6 +27,7 @@
     // pages tab
     pFilter: { lang: '', kind: '', status: 'active', q: '', offset: 0 },
     pData: null,
+    pSort: { by: 'updated_at', dir: 'desc' },   // server-side (table spans many pages)
     // graph tab
     gQuery: '',
     gList: [],
@@ -37,8 +38,10 @@
     rLangs: ['zh', 'en'],
     rResults: null,
     rContext: null,
+    rSort: { by: null, dir: 'asc' },            // client-side (already fully loaded)
     // log tab
     logRows: null,
+    logSort: { by: null, dir: 'asc' },          // client-side (already fully loaded)
   };
 
   var TABS = [
@@ -71,6 +74,42 @@
     return b;
   }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+  // A clickable <th> that toggles forward/reverse sort on `key` in `sortState`
+  // ({by, dir}) and re-renders via `onSort`. Shared by every sortable table
+  // (Pages/Search/Activity) so the click-to-sort/arrow-indicator behavior is
+  // identical everywhere.
+  function sortTh(label, key, sortState, onSort) {
+    var th = el('th', 'ka-th-sort', null);
+    th.appendChild(el('span', null, label));
+    if (sortState.by === key) {
+      th.appendChild(el('span', 'ka-sort-arrow', sortState.dir === 'asc' ? ' ↑' : ' ↓'));
+      th.className += ' active';
+    }
+    th.addEventListener('click', function () {
+      if (sortState.by === key) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+      else { sortState.by = key; sortState.dir = 'asc'; }
+      onSort();
+    });
+    return th;
+  }
+
+  // Client-side sort for tables whose rows are already fully loaded (Search
+  // results, Activity log) -- type-aware (numeric vs. string) so score/date
+  // columns sort correctly, not lexicographically.
+  function sortedRows(rows, sortState, keyFn) {
+    if (!sortState.by) return rows;
+    var copy = rows.slice();
+    copy.sort(function (a, b) {
+      var va = keyFn(a, sortState.by);
+      var vb = keyFn(b, sortState.by);
+      var cmp;
+      if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+      else cmp = String(va == null ? '' : va).localeCompare(String(vb == null ? '' : vb));
+      return sortState.dir === 'asc' ? cmp : -cmp;
+    });
+    return copy;
+  }
 
   var toastTimer = null;
   function toast(kind, msg) {
@@ -179,6 +218,7 @@
     if (f.q) qs.set('q', f.q);
     qs.set('limit', '50');
     qs.set('offset', String(f.offset));
+    if (S.pSort.by) { qs.set('sort', S.pSort.by); qs.set('dir', S.pSort.dir); }
     return window.KNKB.api('/api/pages?' + qs).then(function (r) { S.pData = r; render(); });
   }
 
@@ -387,9 +427,16 @@
     var table = el('table', 'ka-table');
     var thead = el('thead');
     var trh = el('tr');
-    ['#', t({ en: 'lang', zh: '語言' }), t({ en: 'title', zh: '標題' }), t({ en: 'kind', zh: '類型' }),
-      'QID', t({ en: 'source', zh: '來源' }), t({ en: 'chunks', zh: '區塊' }),
-      t({ en: 'updated', zh: '更新時間' }), ''].forEach(function (h) { trh.appendChild(el('th', null, h)); });
+    function pagesSort() { loadPages().catch(errToast); }
+    trh.appendChild(sortTh('#', 'id', S.pSort, pagesSort));
+    trh.appendChild(sortTh(t({ en: 'lang', zh: '語言' }), 'lang', S.pSort, pagesSort));
+    trh.appendChild(sortTh(t({ en: 'title', zh: '標題' }), 'title', S.pSort, pagesSort));
+    trh.appendChild(sortTh(t({ en: 'kind', zh: '類型' }), 'kind', S.pSort, pagesSort));
+    trh.appendChild(sortTh('QID', 'qid', S.pSort, pagesSort));
+    trh.appendChild(sortTh(t({ en: 'source', zh: '來源' }), 'source', S.pSort, pagesSort));
+    trh.appendChild(sortTh(t({ en: 'chunks', zh: '區塊' }), 'chunks', S.pSort, pagesSort));
+    trh.appendChild(sortTh(t({ en: 'updated', zh: '更新時間' }), 'updated_at', S.pSort, pagesSort));
+    trh.appendChild(el('th', null, ''));
     thead.appendChild(trh);
     table.appendChild(thead);
     var tbody = el('tbody');
@@ -719,11 +766,16 @@
       var wrap = el('div', 'ka-tablewrap');
       var table = el('table', 'ka-table');
       var trh = el('tr');
-      ['score', t({ en: 'lang', zh: '語言' }), t({ en: 'page', zh: '頁面' }), t({ en: 'section', zh: '章節' }), t({ en: 'snippet', zh: '內容片段' })]
-        .forEach(function (h) { trh.appendChild(el('th', null, h)); });
+      function ragSort() { render(); }
+      trh.appendChild(sortTh('score', 'score', S.rSort, ragSort));
+      trh.appendChild(sortTh(t({ en: 'lang', zh: '語言' }), 'lang', S.rSort, ragSort));
+      trh.appendChild(sortTh(t({ en: 'page', zh: '頁面' }), 'title', S.rSort, ragSort));
+      trh.appendChild(sortTh(t({ en: 'section', zh: '章節' }), 'section', S.rSort, ragSort));
+      trh.appendChild(el('th', null, t({ en: 'snippet', zh: '內容片段' })));
       var thead = el('thead'); thead.appendChild(trh); table.appendChild(thead);
       var tbody = el('tbody');
-      (S.rResults.results || []).forEach(function (r) {
+      var rRows = sortedRows(S.rResults.results || [], S.rSort, function (r, key) { return r[key]; });
+      rRows.forEach(function (r) {
         var tr = el('tr');
         tr.appendChild(el('td', 'mono', String(r.score)));
         tr.appendChild(el('td', 'mono', r.lang));
@@ -768,11 +820,16 @@
     var wrap = el('div', 'ka-tablewrap');
     var table = el('table', 'ka-table');
     var trh = el('tr');
-    [t({ en: 'time', zh: '時間' }), t({ en: 'action', zh: '動作' }), t({ en: 'lang', zh: '語言' }), t({ en: 'title', zh: '標題' }), t({ en: 'detail', zh: '細節' })]
-      .forEach(function (h) { trh.appendChild(el('th', null, h)); });
+    function logSortFn() { render(); }
+    trh.appendChild(sortTh(t({ en: 'time', zh: '時間' }), 'ts', S.logSort, logSortFn));
+    trh.appendChild(sortTh(t({ en: 'action', zh: '動作' }), 'kind', S.logSort, logSortFn));
+    trh.appendChild(sortTh(t({ en: 'lang', zh: '語言' }), 'lang', S.logSort, logSortFn));
+    trh.appendChild(sortTh(t({ en: 'title', zh: '標題' }), 'title', S.logSort, logSortFn));
+    trh.appendChild(el('th', null, t({ en: 'detail', zh: '細節' })));
     var thead = el('thead'); thead.appendChild(trh); table.appendChild(thead);
     var tbody = el('tbody');
-    S.logRows.forEach(function (r) {
+    var logRowsSorted = sortedRows(S.logRows, S.logSort, function (r, key) { return r[key]; });
+    logRowsSorted.forEach(function (r) {
       var tr = el('tr');
       tr.appendChild(el('td', 'mono', (r.ts || '').replace('T', ' ').slice(0, 19)));
       tr.appendChild(el('td', 'mono', r.kind));

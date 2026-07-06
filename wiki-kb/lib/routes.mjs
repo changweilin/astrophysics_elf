@@ -13,8 +13,8 @@
 //   DELETE /api/page?id= [&hard=1]                     soft (default) or hard delete
 //   GET    /api/entity?qid=Q937                       entity + edges + corpus pages
 //   GET    /api/graph?qid=Q937&depth=1                 subgraph for visualization
-//   GET    /api/pages?lang=&kind=&status=&q=&limit=&offset=   browse pages (admin)
-//   GET    /api/entities?q=&kind=&limit=               browse/search graph entities
+//   GET    /api/pages?lang=&kind=&status=&q=&limit=&offset=&sort=&dir=   browse pages (admin)
+//   GET    /api/entities?q=&kind=&limit=&sort=&dir=     browse/search graph entities
 //   GET    /api/log?limit=                             recent sync/CRUD activity
 //   POST   /api/embed {limit?}                         embed pending chunks now
 //   POST   /api/contribute {lang,title,content,...}    add a manual page (note/translation)
@@ -184,6 +184,8 @@ export function createKbRouter(db) {
           q: url.searchParams.get('q') || undefined,
           limit: Number(url.searchParams.get('limit')) || 50,
           offset: Number(url.searchParams.get('offset')) || 0,
+          sort: url.searchParams.get('sort') || undefined,
+          dir: url.searchParams.get('dir') || undefined,
         }),
       });
       return true;
@@ -195,6 +197,8 @@ export function createKbRouter(db) {
           q: url.searchParams.get('q') || undefined,
           kind: url.searchParams.get('kind') || undefined,
           limit: Number(url.searchParams.get('limit')) || 50,
+          sort: url.searchParams.get('sort') || undefined,
+          dir: url.searchParams.get('dir') || undefined,
         }),
       });
       return true;

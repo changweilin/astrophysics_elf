@@ -58,6 +58,50 @@ const BUILTIN_SEEDS = {
   ],
 };
 
+// Curated "List of X" / index articles to ingest as their own KG node (kind
+// 'list') with child edges to whichever listed items resolve to a Wikidata
+// item -- see lib/list-ingest.mjs. Deliberately hand-picked and capped per
+// list: some astronomy lists are enormous (List of minor planets runs past a
+// million rows; List of exoplanets runs to thousands), so this is NOT "crawl
+// every list Wikipedia has" -- only a bounded, curated starter set, each
+// entry [title, itemCap]. Extend the same way as BUILTIN_SEEDS, by editing
+// this array (or WKB_EXTRA_LIST_SEEDS, same "lang|title|cap" shape).
+const BUILTIN_LIST_SEEDS = {
+  en: [
+    ['List of black holes', 150],
+    ['List of nearest stars and brown dwarfs', 150],
+    ['List of brightest stars', 150],
+    ['List of largest stars', 150],
+    ['List of largest galaxies', 150],
+    ['List of nearest galaxies', 150],
+    ['List of natural satellites', 200],
+    ['List of Solar System objects by size', 150],
+    ['List of space telescopes', 150],
+    ['List of gravitational wave observations', 100],
+    ['List of potentially habitable exoplanets', 100],
+  ],
+  zh: [
+    ['黑洞列表', 150],
+    ['太阳系天然卫星列表', 200],
+    ['最亮恒星列表', 150],
+    ['系外行星列表', 150],
+  ],
+};
+
+function extraListSeeds(lang) {
+  const raw = process.env.WKB_EXTRA_LIST_SEEDS || '';
+  const out = [];
+  for (const part of raw.split(';')) {
+    const [l, title, cap] = part.split('|').map((s) => (s || '').trim());
+    if (l === lang && title) out.push([title, Number(cap) || 150]);
+  }
+  return out;
+}
+
+export function getListSeeds(lang) {
+  return [...(BUILTIN_LIST_SEEDS[lang] ?? []), ...extraListSeeds(lang)];
+}
+
 function extraSeeds(lang) {
   const raw = process.env.WKB_EXTRA_SEEDS || '';
   const out = [];

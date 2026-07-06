@@ -1271,7 +1271,7 @@ export function buildSystemPrompt(scientist, { wikiContext = '', summary = '' } 
 
 // System prompt for one scientist's turn inside a multi-scientist roundtable.
 // `colleagues` is the list of the other participants' display names.
-export function buildPanelPrompt(scientist, { colleagues = [], lang = 'en', summary = '' } = {}) {
+export function buildPanelPrompt(scientist, { colleagues = [], lang = 'en', summary = '', wikiContext = '' } = {}) {
   const others = colleagues.length ? colleagues.join(', ') : 'no one else yet';
   const lines = [
     ...personaHeader(scientist),
@@ -1295,13 +1295,20 @@ export function buildPanelPrompt(scientist, { colleagues = [], lang = 'en', summ
       summary,
     );
   }
+  if (wikiContext) {
+    lines.push(
+      '',
+      'Reference material retrieved for this question (use it if relevant; do not cite verbatim, integrate it in your own voice):',
+      wikiContext,
+    );
+  }
   return lines.join('\n');
 }
 
 // System prompt for the closing synthesis, delivered by the lead scientist.
-export function buildConclusionPrompt(scientist, { colleagues = [], lang = 'en' } = {}) {
+export function buildConclusionPrompt(scientist, { colleagues = [], lang = 'en', wikiContext = '' } = {}) {
   const others = colleagues.length ? colleagues.join(', ') : 'your colleagues';
-  return [
+  const lines = [
     ...personaHeader(scientist),
     '',
     `The roundtable with ${others} is concluding. As the one summing up, synthesize the discussion into a single clear, `
@@ -1310,7 +1317,15 @@ export function buildConclusionPrompt(scientist, { colleagues = [], lang = 'en' 
     '- Resolve any disagreement and state the takeaway plainly, in your own voice.',
     '- This is the conclusion, so it may be a little fuller than a single turn, but stay focused.',
     ...commonRules({ concise: false }).slice(1),
-  ].join('\n');
+  ];
+  if (wikiContext) {
+    lines.push(
+      '',
+      'Reference material retrieved for this question (use it if relevant; do not cite verbatim, integrate it in your own voice):',
+      wikiContext,
+    );
+  }
+  return lines.join('\n');
 }
 
 export default SCIENTISTS;

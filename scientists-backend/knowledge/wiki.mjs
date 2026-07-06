@@ -22,22 +22,30 @@ const UA = 'KN-Scientists-Lab/1.0 (local educational app; contact: local user)';
 // server's own handle and any standalone wiki-kb/server.mjs instance).
 const kbDb = openDb();
 
-// Public interface: given a user question, return a short reference string (or
-// '' if disabled / nothing useful / any error). Never throws -- RAG is additive.
-export async function retrieveContext(query, lang) {
-  if (!config.wiki.enabled || !query || !query.trim()) return '';
-  const fromKb = await retrieveFromKb(query, lang);
-  if (fromKb) return fromKb;
+// Public interface: given a user question, return { context, sources } (context
+// is '' if disabled / nothing useful / any error). Never throws -- RAG is
+// additive. `force` bypasses the config.wiki.enabled kill switch -- it is how
+// the chat's per-message reply-mode selector (direct/RAG/compare) asks for
+// retrieval regardless of the server's default-off env setting.
+export async function retrieveContext(query, lang, { force = false, signal } = {}) {
+  if ((!force && !config.wiki.enabled) || !query || !query.trim()) return { context: '', sources: [] };
+  if (signal && signal.aborted) return { context: '', sources: [] };
+  const fromKb = await retrieveFromKb(query, lang, signal);
+  if (fromKb.context) return fromKb;
+  if (signal && signal.aborted) return { context: '', sources: [] };
   try {
     const site = wikiSite(lang);
-    const title = await searchTitle(site, query, lang);
-    if (!title) return '';
-    const extract = await fetchIntro(site, title, lang);
-    if (!extract) return '';
+    const title = await searchTitle(site, query, lang, signal);
+    if (!title) return { context: '', sources: [] };
+    const extract = await fetchIntro(site, title, lang, signal);
+    if (!extract) return { context: '', sources: [] };
     const clipped = extract.slice(0, config.wiki.maxChars);
-    return `[Wikipedia: ${title}]\n${clipped}`;
+    return {
+      context: `[Wikipedia: ${title}]\n${clipped}`,
+      sources: [{ title, lang: lang === 'en' ? 'en' : config.wiki.lang, url: `https://${site}/wiki/${encodeURIComponent(title)}` }],
+    };
   } catch {
-    return '';
+    return { context: '', sources: [] };
   }
 }
 
@@ -46,15 +54,14 @@ export async function retrieveContext(query, lang) {
 // in this same process (see server.mjs), so retrieval is a direct in-process
 // call, not an HTTP round-trip. Any error falls back to the live Wikipedia
 // path below, so this can never break the chat.
-async function retrieveFromKb(query, lang) {
+async function retrieveFromKb(query, lang, signal) {
   try {
     const kbLang = lang === 'en' ? 'en' : config.wiki.lang;
     const langs = kbLang === 'en' ? ['en'] : [kbLang, 'en'];
-    const results = await search(kbDb, { q: query, langs });
-    const ctx = buildContext(results, config.wiki.maxChars);
-    return ctx.context || '';
+    const results = await search(kbDb, { q: query, langs, signal });
+    return buildContext(results, config.wiki.maxChars);
   } catch {
-    return '';
+    return { context: '', sources: [] };
   }
 }
 
@@ -72,7 +79,17 @@ function headers(lang) {
   return h;
 }
 
-async function searchTitle(site, query, lang) {
+// Combine the per-call timeout with an optional caller signal (e.g. the
+// chat/discuss request's own AbortController) so an explicit Stop cancels an
+// in-flight live-Wikipedia lookup immediately instead of waiting out the
+// timeout.
+function withTimeout(signal) {
+  const timeout = AbortSignal.timeout(config.wiki.timeoutMs);
+  if (!signal) return timeout;
+  return typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+async function searchTitle(site, query, lang, signal) {
   const url = new URL(`https://${site}/w/api.php`);
   url.search = new URLSearchParams({
     action: 'query',
@@ -84,7 +101,7 @@ async function searchTitle(site, query, lang) {
   }).toString();
   const res = await fetch(url, {
     headers: headers(lang),
-    signal: AbortSignal.timeout(config.wiki.timeoutMs),
+    signal: withTimeout(signal),
   });
   if (!res.ok) return null;
   const data = await res.json();
@@ -92,7 +109,7 @@ async function searchTitle(site, query, lang) {
   return hit ? hit.title : null;
 }
 
-async function fetchIntro(site, title, lang) {
+async function fetchIntro(site, title, lang, signal) {
   const url = new URL(`https://${site}/w/api.php`);
   url.search = new URLSearchParams({
     action: 'query',
@@ -108,7 +125,7 @@ async function fetchIntro(site, title, lang) {
   }).toString();
   const res = await fetch(url, {
     headers: headers(lang),
-    signal: AbortSignal.timeout(config.wiki.timeoutMs),
+    signal: withTimeout(signal),
   });
   if (!res.ok) return null;
   const data = await res.json();

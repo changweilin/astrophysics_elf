@@ -21,12 +21,14 @@ export async function embedAvailable() {
   }
 }
 
-export async function embedTexts(texts) {
+export async function embedTexts(texts, signal) {
+  const timeout = AbortSignal.timeout(config.embed.timeoutMs);
+  const composite = signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout]) : timeout;
   const res = await fetch(`${config.embed.baseUrl}/api/embed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: config.embed.model, input: texts }),
-    signal: AbortSignal.timeout(config.embed.timeoutMs),
+    signal: composite,
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -37,8 +39,8 @@ export async function embedTexts(texts) {
   return data.embeddings.map((v) => normalize(Float32Array.from(v)));
 }
 
-export async function embedQuery(text) {
-  const [v] = await embedTexts([text]);
+export async function embedQuery(text, signal) {
+  const [v] = await embedTexts([text], signal);
   return v ?? null;
 }
 

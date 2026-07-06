@@ -4,6 +4,7 @@
 // commit it with POST /api/contribute, so nothing lands in the KB untouched.
 
 import { config } from '../config.mjs';
+import { toTaiwan } from './zh-convert.mjs';
 
 const LANG_NAMES = {
   en: 'English',
@@ -93,6 +94,9 @@ export async function translatePage(page, target, { maxChars = 3500 } = {}) {
   };
   if (!parsed.content) parsed.content = parsed.summary || raw;
   if (!parsed.summary) parsed.summary = parsed.content.slice(0, 400);
+  // Local models drift into Simplified even when told the target is Taiwan --
+  // normalize before this ever reaches the preview/contribute flow.
+  const fix = target === 'zh' ? toTaiwan : (s) => s;
   return {
     model,
     target,
@@ -100,8 +104,8 @@ export async function translatePage(page, target, { maxChars = 3500 } = {}) {
     sourceLang: page.lang,
     qid: page.qid || null,
     kind: page.kind,
-    title: parsed.title || page.title,
-    summary: parsed.summary,
-    content: parsed.content,
+    title: fix(parsed.title || page.title),
+    summary: fix(parsed.summary),
+    content: fix(parsed.content),
   };
 }

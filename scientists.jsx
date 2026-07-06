@@ -50,6 +50,9 @@ const T = {
     autoPlaceholder: '描述你的問題,系統會指派最合適的科學家回答...(Enter 送出,Shift+Enter 換行)',
     followupsLabel: '接著可以問',
     ctx: '脈絡',
+    replyModeBadgeDirect: '直接回覆',
+    replyModeBadgeRag: '知識庫檢索',
+    sourcesLabel: '參考來源:',
     suggestions: [
       '用思想實驗解釋時間膨脹',
       '黑洞的事件視界是什麼?',
@@ -164,6 +167,9 @@ const T = {
     autoPlaceholder: 'Describe your question; the best-matched scientist will answer... (Enter to send, Shift+Enter for newline)',
     followupsLabel: 'You might also ask',
     ctx: 'Context',
+    replyModeBadgeDirect: 'Direct',
+    replyModeBadgeRag: 'KB-searched',
+    sourcesLabel: 'Sources:',
     suggestions: [
       'Explain time dilation with a thought experiment',
       "What is a black hole's event horizon?",
@@ -630,6 +636,27 @@ function ModelChip({ activeModel, installedModels, modelOverride, setModelOverri
   );
 }
 
+// Reply-mode selector for the single chat: direct / KB-RAG-forced / compare
+// both. Styled to match ModelChip so it sits naturally in the same toolbar row.
+function ReplyModeChip({ replyMode, setReplyMode, lang, allowCompare = true }) {
+  const title = lang === 'zh' ? '回覆模式' : 'Reply mode';
+  return (
+    <span className="sci-modelchip-wrap">
+      <select
+        className="sci-modelchip sci-model-select"
+        value={replyMode}
+        onChange={(e) => setReplyMode(e.target.value)}
+        title={title}
+        aria-label={title}
+      >
+        <option value="direct">{lang === 'zh' ? '直接回覆' : 'Direct reply'}</option>
+        <option value="rag">{lang === 'zh' ? '知識庫檢索後回覆' : 'KB-searched reply'}</option>
+        {allowCompare && <option value="compare">{lang === 'zh' ? '比較直接與知識庫回覆' : 'Compare direct vs. KB'}</option>}
+      </select>
+    </span>
+  );
+}
+
 // ---- local persistence ----
 // The live conversation and the saved-thread collection both survive a page
 // reload (and let you continue talking later) by living in localStorage.
@@ -728,6 +755,28 @@ function SciAppRoot() {
       localStorage.setItem('kn_sci_sort_order', sortOrder);
     } catch (e) {}
   }, [sortBy, sortOrder]);
+
+  // Reply mode for the single chat: 'direct' (no retrieval), 'rag' (force
+  // knowledge-base retrieval regardless of the backend's default-off env
+  // switch), or 'compare' (run both and show them side by side). Defaults to
+  // 'direct' so behavior is unchanged for anyone who never touches this.
+  const [replyMode, setReplyMode] = useState(() => {
+    try { return localStorage.getItem('kn_sci_reply_mode') || 'direct'; } catch (e) { return 'direct'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('kn_sci_reply_mode', replyMode); } catch (e) {}
+  }, [replyMode]);
+
+  // Same idea for the Science Dialogue tab, but without 'compare': running a
+  // full multi-round, multi-scientist roundtable twice per question (once
+  // direct, once RAG) is expensive and would need its own parallel-transcript
+  // UI, so the panel only toggles retrieval on/off for now.
+  const [discussReplyMode, setDiscussReplyMode] = useState(() => {
+    try { return localStorage.getItem('kn_sci_discuss_reply_mode') || 'direct'; } catch (e) { return 'direct'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('kn_sci_discuss_reply_mode', discussReplyMode); } catch (e) {}
+  }, [discussReplyMode]);
 
   const [sessions, setSessions] = useState(() => persisted.sessions || {});
 
@@ -1299,7 +1348,23 @@ function SciAppRoot() {
   }
 
   function stopStreaming() {
-    if (abortRef.current) abortRef.current.abort();
+    // abortRef.current is an array (compare mode can have more than one call
+    // registered, even though item 3 now runs them sequentially rather than
+    // concurrently). Abort locally right away for instant UI feedback, AND
+    // tell the backend explicitly (fire-and-forget) so the Ollama-bound
+    // generation actually stops now -- waiting for the browser's fetch-abort
+    // to close the underlying connection can be delayed indefinitely by a
+    // reverse proxy (e.g. tailscale serve on mobile), leaving the backend
+    // generating (and reporting busy) long after the user tapped Stop.
+    for (const { ac, requestId } of abortRef.current || []) {
+      ac.abort();
+      if (requestId) {
+        fetch(backendUrl + '/api/chat/stop', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId }),
+        }).catch(() => {});
+      }
+    }
   }
 
   function undoMessage(index) {
@@ -1340,43 +1405,74 @@ function SciAppRoot() {
     restoredDiscussFollowupRef.current = false;
   }
 
-  const sendMessage = useCallback(async (text) => {
-    const msg = (text != null ? text : input).trim();
-    if (!msg || streaming || !selected) return;
-    // Replay the prior visible history once after a reload / resume so the backend
-    // can rebuild context for a session it no longer (or never) held.
-    const replayHistory = needHistoryRef.current ? messagesRef.current.slice() : null;
-    setInput('');
-    clearFollowups();
-    setMessages((m) => [...m, { role: 'user', text: msg }, { role: 'sci', text: '' }]);
-    setStreaming(true);
-
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    // append streamed deltas to the last (sci) message
-    const appendDelta = (delta) => {
-      setMessages((m) => {
-        const copy = m.slice();
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === 'sci') { copy[i] = { ...copy[i], text: copy[i].text + delta }; break; }
+  // Apply an update to exactly one message, matched by client id (cid) rather
+  // than "the last sci message" -- compare mode has two sci bubbles streaming
+  // concurrently, so a positional match would corrupt the wrong one.
+  const patchMessageByCid = useCallback((cid, patch) => {
+    setMessages((m) => {
+      const copy = m.slice();
+      for (let i = copy.length - 1; i >= 0; i--) {
+        if (copy[i].cid === cid) {
+          copy[i] = { ...copy[i], ...(typeof patch === 'function' ? patch(copy[i]) : patch) };
+          break;
         }
-        return copy;
-      });
-    };
+      }
+      return copy;
+    });
+  }, []);
+
+  // isolated calls (compare mode's "direct" companion) never hold a real
+  // session server-side, so their meta/done events must not clobber the real
+  // session's sessionId/usage/model chip.
+  function handleEvent(ev, cid, isolated) {
+    if (ev.type === 'meta') {
+      if (ev.sessionId && !isolated) sessionId.current = ev.sessionId;
+      if (ev.model && !isolated) setActiveModel(ev.model);
+      if (typeof ev.usage === 'number' && !isolated) setUsage(ev.usage);
+      patchMessageByCid(cid, { ragUsed: !!ev.ragUsed, sources: ev.sources || [] });
+    } else if (ev.type === 'assigned') {
+      // Auto-assign mode: tag the in-progress bubble with the chosen expert so it
+      // shows that scientist's avatar and name.
+      patchMessageByCid(cid, { id: ev.id, name: ev.name, accent: ev.accent });
+    } else if (ev.type === 'token') {
+      patchMessageByCid(cid, (mm) => ({ text: mm.text + (ev.text || '') }));
+    } else if (ev.type === 'summary') {
+      if (isolated) { /* isolated calls never summarize */ }
+      else if (ev.state === 'start') pushNotice('summary', tr.summarizing);
+      else if (ev.state === 'done') pushNotice('summary', tr.summarized.replace('{n}', ev.summaryCount || 1));
+      else if (ev.state === 'error') pushNotice('summary', tr.summaryErr);
+    } else if (ev.type === 'done') {
+      if (typeof ev.usage === 'number' && !isolated) setUsage(ev.usage);
+    } else if (ev.type === 'error') {
+      pushNotice('err', tr.errPrefix + ev.error);
+    }
+  }
+
+  // One /api/chat SSE call, streaming into the message identified by `cid`.
+  // `isolated` calls (compare mode's direct-reply companion) send their own
+  // history snapshot and never touch the real session (mirrors the existing
+  // auto-assign/follow-ups isolated-call pattern already used server-side).
+  const runChatCall = useCallback(async (msg, { mode, isolated, cid, history }) => {
+    const ac = new AbortController();
+    const requestId = uid();
+    abortRef.current = [...(abortRef.current || []), { ac, requestId }];
 
     let ok = false;
+    let gotToken = false;
     try {
       const res = await fetch(backendUrl + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: sessionId.current || undefined,
+          sessionId: isolated ? undefined : (sessionId.current || undefined),
+          requestId,
           scientistId: selected.id,
           lang,
           message: msg,
-          history: replayHistory && replayHistory.length ? replayHistory : undefined,
+          history: history && history.length ? history : undefined,
           model: modelParam,
+          replyMode: mode,
+          isolated: isolated || undefined,
         }),
         signal: ac.signal,
       });
@@ -1397,52 +1493,147 @@ function SciAppRoot() {
           if (!line) continue;
           let ev;
           try { ev = JSON.parse(line); } catch (e) { continue; }
-          handleEvent(ev, appendDelta);
+          if (ev && ev.type === 'token' && ev.text) gotToken = true;
+          handleEvent(ev, cid, isolated);
         }
       }
       ok = true;
     } catch (e) {
       if (!ac.signal.aborted) pushNotice('err', tr.errPrefix + (e && e.message || e));
     } finally {
+      abortRef.current = (abortRef.current || []).filter((x) => x.ac !== ac);
+      patchMessageByCid(cid, { done: true });
+    }
+    // `gotToken` covers the case where the reply visibly finished (tokens
+    // rendered) but the stream's own tail (e.g. the final SSE frame, or the
+    // connection itself on a flaky mobile link) didn't cleanly resolve --
+    // the caller still treats that as "got a reply" for follow-up purposes.
+    return { ok, gotToken };
+  }, [backendUrl, selected, lang, modelParam, tr, patchMessageByCid]);
+
+  // Build one mode's own conversation lineage from a message-list snapshot:
+  // user turns plus only the sci turns that belong to that mode. A
+  // compare-mode turn pushes one bubble per mode (tagged `m.mode`); a plain
+  // (non-compare) turn has no mode conflict and belongs to both lineages. This
+  // is what keeps the direct and RAG threads from contaminating each other's
+  // context in compare mode -- each side only ever sees its own prior answers.
+  function lineageHistory(snapshot, mode) {
+    const out = [];
+    for (const m of snapshot) {
+      if (m.role === 'user') out.push(m);
+      else if (m.role === 'sci' && (!m.compare || m.mode === mode)) out.push(m);
+    }
+    return out;
+  }
+
+  const sendMessage = useCallback(async (text) => {
+    const msg = (text != null ? text : input).trim();
+    if (!msg || streaming || !selected) return;
+    // Snapshot BEFORE this turn's own (still-empty) placeholder bubbles are
+    // pushed below, so neither lineage ever includes its own in-flight turn.
+    const priorMessages = messagesRef.current.slice();
+    setInput('');
+    clearFollowups();
+
+    const isCompare = replyMode === 'compare';
+    const cidRag = uid();
+    const cidDirect = isCompare ? uid() : null;
+    const primaryMode = isCompare ? 'rag' : replyMode;
+
+    setMessages((m) => {
+      const next = [...m, { role: 'user', text: msg }];
+      if (isCompare) {
+        next.push({ role: 'sci', text: '', cid: cidRag, done: false, mode: 'rag', compare: true });
+        next.push({ role: 'sci', text: '', cid: cidDirect, done: false, mode: 'direct', compare: true });
+      } else {
+        next.push({ role: 'sci', text: '', cid: cidRag, done: false, mode: primaryMode });
+      }
+      return next;
+    });
+    setStreaming(true);
+
+    let primaryResult = { ok: false, gotToken: false };
+    try {
+      if (isCompare) {
+        // Direct first, then RAG -- both isolated in their own lineage so
+        // neither side's history includes the other's replies (see
+        // lineageHistory above). Sequential (not Promise.all) so the two
+        // don't contend for the single Ollama generation slot at once, and so
+        // "which one is the primary/session-backed call" stays unambiguous.
+        await runChatCall(msg, { mode: 'direct', isolated: true, cid: cidDirect, history: lineageHistory(priorMessages, 'direct') });
+        primaryResult = await runChatCall(msg, {
+          mode: 'rag', isolated: false, cid: cidRag,
+          history: needHistoryRef.current ? lineageHistory(priorMessages, 'rag') : null,
+        });
+      } else {
+        primaryResult = await runChatCall(msg, {
+          mode: primaryMode, isolated: false, cid: cidRag,
+          history: needHistoryRef.current ? priorMessages : null,
+        });
+      }
+    } finally {
       setStreaming(false);
-      abortRef.current = null;
     }
 
     // A completed turn means the backend now holds this dialogue, so stop
-    // replaying history; then suggest a few follow-ups (isolated -> no context).
-    if (ok) {
+    // replaying history; then suggest a few follow-ups (isolated -> no
+    // context). Gate on `gotToken` too, not just `ok`: a reply that fully
+    // rendered but whose stream tail didn't cleanly resolve (a flaky mobile
+    // connection, or a long RAG turn getting cut off right at the end) should
+    // still offer follow-ups instead of silently skipping them.
+    if (primaryResult.ok || primaryResult.gotToken) {
       needHistoryRef.current = false;
       restoredFollowupRef.current = true; // live flow owns follow-ups from here
       fetchFollowups();
     }
-  }, [input, streaming, selected, backendUrl, lang, tr, clearFollowups, fetchFollowups, modelOverride]);
+  }, [input, streaming, selected, replyMode, runChatCall, clearFollowups, fetchFollowups]);
 
-  function handleEvent(ev, appendDelta) {
-    if (ev.type === 'meta') {
-      if (ev.sessionId) sessionId.current = ev.sessionId;
-      if (ev.model) setActiveModel(ev.model);
-      if (typeof ev.usage === 'number') setUsage(ev.usage);
-    } else if (ev.type === 'assigned') {
-      // Auto-assign mode: tag the in-progress bubble with the chosen expert so it
-      // shows that scientist's avatar and name.
-      setMessages((m) => {
-        const c = m.slice();
-        for (let i = c.length - 1; i >= 0; i--) {
-          if (c[i].role === 'sci') { c[i] = { ...c[i], id: ev.id, name: ev.name, accent: ev.accent }; break; }
-        }
-        return c;
-      });
-    } else if (ev.type === 'token') {
-      appendDelta(ev.text || '');
-    } else if (ev.type === 'summary') {
-      if (ev.state === 'start') pushNotice('summary', tr.summarizing);
-      else if (ev.state === 'done') pushNotice('summary', tr.summarized.replace('{n}', ev.summaryCount || 1));
-      else if (ev.state === 'error') pushNotice('summary', tr.summaryErr);
-    } else if (ev.type === 'done') {
-      if (typeof ev.usage === 'number') setUsage(ev.usage);
-    } else if (ev.type === 'error') {
-      pushNotice('err', tr.errPrefix + ev.error);
-    }
+  // Renders one sci-turn bubble. Shared by the normal single-bubble path and
+  // the compare-mode side-by-side pair (see the messages.map below) --
+  // `m.done === false` (not "is this the last message") now drives the typing
+  // cursor / copy-button visibility, since compare mode streams two bubbles
+  // that aren't both last.
+  function renderSciBubble(m, i) {
+    const sciId = m.id || (selected && selected.id);
+    const sciAccent = m.accent || (selected && selected.accent);
+    const showCopy = m.done !== false;
+    return (
+      <div key={i} className="sci-msg sci">
+        <SciAvatar id={sciId} accent={sciAccent} name={m.name || (selected && (selected.name && selected.name.en))} size={30} onClick={sciId !== AUTO_ID ? () => setBioId(sciId) : undefined} />
+        <div className="sci-bubble-wrap">
+          {(m.name || m.compare) && (
+            <div className="sci-speaker">
+              {m.name}
+              {m.compare && (
+                <span className="sci-mode-badge">
+                  {m.mode === 'direct' ? tr.replyModeBadgeDirect : tr.replyModeBadgeRag}
+                </span>
+              )}
+            </div>
+          )}
+          <div className="sci-bubble">
+            {renderText(m.text)}
+            {m.done === false && <span className="sci-typing" />}
+          </div>
+          {m.sources && m.sources.length > 0 && (
+            <div className="sci-sources">
+              {tr.sourcesLabel}{' '}
+              {m.sources.map((s, si) => (
+                <span key={si} className="sci-source">
+                  {s.url ? <a href={s.url} target="_blank" rel="noreferrer">{s.title}</a> : s.title}
+                  {si < m.sources.length - 1 ? '、' : ''}
+                </span>
+              ))}
+            </div>
+          )}
+          {showCopy && (
+            <div className="sci-msg-actions">
+              <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+            </div>
+          )}
+        </div>
+      </div>
+    );
   }
 
   function onKeyDown(e) {
@@ -1543,7 +1734,8 @@ function SciAppRoot() {
     setDiscussStreaming(true);
 
     const ac = new AbortController();
-    discussAbortRef.current = ac;
+    const requestId = uid();
+    discussAbortRef.current = { ac, requestId };
     let ok = false;
     try {
       const res = await fetch(backendUrl + '/api/discuss', {
@@ -1551,11 +1743,13 @@ function SciAppRoot() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId: discussSessionId.current || undefined,
+          requestId,
           scientistIds: panel,
           lang,
           message: msg,
           rounds: replayRounds && replayRounds.length ? replayRounds : undefined,
           model: modelParam,
+          replyMode: discussReplyMode,
         }),
         signal: ac.signal,
       });
@@ -1595,7 +1789,15 @@ function SciAppRoot() {
   }
 
   function stopDiscuss() {
-    if (discussAbortRef.current) discussAbortRef.current.abort();
+    const cur = discussAbortRef.current;
+    if (!cur) return;
+    cur.ac.abort();
+    if (cur.requestId) {
+      fetch(backendUrl + '/api/discuss/stop', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: cur.requestId }),
+      }).catch(() => {});
+    }
   }
 
   async function clearDiscuss() {
@@ -1769,6 +1971,8 @@ function SciAppRoot() {
           modelOverride={modelOverride}
           setModelOverride={setModelOverride}
           busy={backendBusy}
+          replyMode={discussReplyMode}
+          setReplyMode={setDiscussReplyMode}
         />
       ) : (
       <div className="sci-body">
@@ -1860,10 +2064,17 @@ function SciAppRoot() {
               </div>
             )}
             <div className="spacer" />
+            {/* Mobile-only row breaks (see .sci-chathead-break-a/-b in
+                scientists.css) -- invisible on desktop; on mobile, CSS `order`
+                reflows this whole row into 3 stacked rows using these as the
+                forced line breaks between them. */}
+            <span className="sci-chathead-break-a" aria-hidden="true" />
             <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}>
               <span className={'sci-dot ' + statusClass} />
             </span>
             <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={backendBusy} />
+            <ReplyModeChip replyMode={replyMode} setReplyMode={setReplyMode} lang={lang} />
+            <span className="sci-chathead-break-b" aria-hidden="true" />
             <div className="sci-meter" title={tr.ctx}>
               <span>{tr.ctx}</span>
               <span className="bar"><span className={'fill' + (usage >= 0.7 ? ' warn' : '')} style={{ width: Math.round(usage * 100) + '%' }} /></span>
@@ -1931,28 +2142,24 @@ function SciAppRoot() {
               }
               // sci turn. In auto-assign mode each answer carries its own scientist
               // (id/name/accent set by the 'assigned' event); otherwise it's the
-              // selected persona.
-              const isLastSci = i === messages.length - 1;
-              const sciId = m.id || (selected && selected.id);
-              const sciAccent = m.accent || (selected && selected.accent);
-              const showCopy = !(isLastSci && streaming);
-              return (
-                <div key={i} className="sci-msg sci">
-                  <SciAvatar id={sciId} accent={sciAccent} name={m.name || (selected && (selected.name && selected.name.en))} size={30} onClick={sciId !== AUTO_ID ? () => setBioId(sciId) : undefined} />
-                  <div className="sci-bubble-wrap">
-                    {m.name && <div className="sci-speaker">{m.name}</div>}
-                    <div className="sci-bubble">
-                      {renderText(m.text)}
-                      {isLastSci && streaming && <span className="sci-typing" />}
-                    </div>
-                    {showCopy && (
-                      <div className="sci-msg-actions">
-                        <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
-                      </div>
-                    )}
+              // selected persona. Compare mode's pair (rag then direct, pushed
+              // together in sendMessage) renders as one side-by-side row; the
+              // second bubble of the pair is skipped here since the first
+              // already rendered it.
+              if (m.compare && m.mode === 'direct'
+                && messages[i - 1] && messages[i - 1].compare && messages[i - 1].mode === 'rag') {
+                return null;
+              }
+              if (m.compare && m.mode === 'rag'
+                && messages[i + 1] && messages[i + 1].compare && messages[i + 1].mode === 'direct') {
+                return (
+                  <div key={i} className="sci-compare-row">
+                    {renderSciBubble(m, i)}
+                    {renderSciBubble(messages[i + 1], i + 1)}
                   </div>
-                </div>
-              );
+                );
+              }
+              return renderSciBubble(m, i);
             })}
 
             {/* On-topic follow-up suggestions from the conversation so far. */}
@@ -2317,6 +2524,7 @@ function DiscussView({
   headRef,
   autoScrollLockRef,
   installedModels, modelOverride, setModelOverride, busy,
+  replyMode, setReplyMode,
 }) {
   const scrollRef = useRef(null);
   useEffect(() => {
@@ -2388,8 +2596,11 @@ function DiscussView({
             <div className="meta">{panel.length} {tr.members}</div>
           </div>
           <div className="spacer" />
+          <span className="sci-chathead-break-a" aria-hidden="true" />
           <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}><span className={'sci-dot ' + statusClass} /></span>
           <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={busy} />
+          <ReplyModeChip replyMode={replyMode} setReplyMode={setReplyMode} lang={lang} allowCompare={false} />
+          <span className="sci-chathead-break-b" aria-hidden="true" />
           <div className="sci-meter" title={tr.ctx}>
             <span>{tr.ctx}</span>
             <span className="bar"><span className={'fill' + (usage >= 0.45 ? ' warn' : '')} style={{ width: Math.round(usage * 100) + '%' }} /></span>

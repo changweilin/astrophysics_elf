@@ -68,6 +68,30 @@ async function apiGetAll(host, params, lang, collect) {
 
 // --- discovery -----------------------------------------------------------------
 
+// Outgoing mainspace wikilinks from a page, in article order -- used to read
+// the entries out of a "List of X" article (namespace 0 only, so File:/
+// Category:/Template: links etc. never show up as list items). Stops paging
+// once `max` is reached instead of always walking the full continuation
+// chain, so a cap actually bounds the request count for huge lists (e.g.
+// "List of exoplanets" has thousands of links).
+export async function fetchPageLinks(lang, title, { max = 500 } = {}) {
+  const titles = [];
+  let cont = {};
+  for (;;) {
+    const data = await apiGet(
+      wikiHost(lang),
+      { action: 'query', titles: title, prop: 'links', plnamespace: '0', pllimit: 'max', ...cont },
+      lang
+    );
+    for (const p of data?.query?.pages ?? []) {
+      for (const l of p.links ?? []) titles.push(l.title);
+    }
+    if (titles.length >= max || !data.continue) break;
+    cont = data.continue;
+  }
+  return titles.slice(0, max);
+}
+
 export async function categoryMembers(lang, category) {
   const pages = [];
   const subcats = [];
@@ -142,6 +166,21 @@ export function resolveTitle(meta, original) {
   // follow at most a short redirect chain
   for (let i = 0; i < 3 && meta.redirects[t]; i++) t = meta.redirects[t];
   return t;
+}
+
+// --- zh-TW display title -------------------------------------------------------
+// action=query's `title` field is NOT run through the LanguageConverter even
+// with variant=zh-tw+converttitles=1 (only content props like `extract` are
+// converted) -- zh.wikipedia stores each page's title in whichever variant its
+// creator used, often Simplified. action=parse&prop=displaytitle IS variant-
+// aware, so it is the one reliable way to get a page's title in zh-tw.
+export async function fetchDisplayTitle(lang, title) {
+  if (lang !== 'zh') return null;
+  const data = await apiGet(wikiHost(lang), { action: 'parse', page: title, prop: 'displaytitle' }, lang);
+  const html = data?.parse?.displaytitle;
+  if (!html) return null;
+  const text = html.replace(/<[^>]+>/g, '').trim();
+  return text || null;
 }
 
 // --- full page bundle (single title) ------------------------------------------
