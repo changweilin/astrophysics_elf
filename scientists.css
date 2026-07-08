@@ -22,7 +22,7 @@
   --ok: #6fcf97;
   --warn: #f2c14e;
   --err: #ef6f6f;
-  --radius: 12px;
+  --radius: 10px;   /* capped to the library's large-card radius (family scale) */
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: 'Inter', system-ui, -apple-system, 'Noto Sans TC', sans-serif;
 
@@ -39,6 +39,9 @@
 html, body {
   margin: 0;
   height: 100%;
+  /* Base 15px matches the library (圖書館) reading scale so the rem type ladder
+     across all three pages resolves to the same sizes. */
+  font-size: 15px;
   background: radial-gradient(1200px 800px at 70% -10%, #121a30 0%, var(--bg) 55%);
   color: var(--ink);
   font-family: var(--sans);
@@ -90,14 +93,14 @@ html, body {
 .sci-tab {
   display: inline-flex; align-items: center; gap: 7px;
   background: transparent; color: var(--ink-dim); border: 1px solid transparent;
-  border-radius: 9px; padding: 6px 14px; cursor: pointer;
+  border-radius: 8px; padding: 6px 14px; cursor: pointer;
   font-family: var(--sans); font-size: 0.85rem; font-weight: 500;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 .sci-tab:hover { color: var(--ink); }
 .sci-tab.active { color: var(--ink); background: var(--panel-2); border-color: var(--line); }
 .sci-tab-badge {
-  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 8px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--accent); color: #0b0d12; font-size: 0.7rem; font-weight: 600;
 }
@@ -122,10 +125,10 @@ html, body {
 
 /* scientist picker */
 .sci-roster { border-right: 1px solid var(--line); overflow-y: auto; padding: 10px; }
-.sci-roster-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1.5px; color: var(--gold); padding: 6px 8px; }
+.sci-roster-label { font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.16em; color: var(--gold); padding: 6px 8px; }
 .sci-card {
   display: flex; gap: 10px; align-items: center; width: 100%; text-align: left;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   padding: 10px; margin-bottom: 8px; cursor: pointer; color: var(--ink);
   font-family: var(--sans); transition: border-color 0.15s, background 0.15s;
 }
@@ -258,10 +261,10 @@ html, body {
 /* key-points card produced by the manual "摘要 / Summarize" action */
 .sci-keypoints {
   align-self: stretch; background: var(--panel); border: 1px solid var(--line);
-  border-left: 3px solid var(--accent); border-radius: 12px; padding: 12px 14px;
+  border-left: 3px solid var(--accent); border-radius: 10px; padding: 12px 14px;
 }
 .sci-keypoints .kp-title {
-  display: flex; align-items: center; gap: 8px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px;
+  display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.16em;
   color: var(--accent); font-weight: 600; margin-bottom: 6px;
 }
 .sci-keypoints .kp-body { font-size: 0.86rem; color: var(--ink-dim); line-height: 1.6; white-space: pre-wrap; }
@@ -293,12 +296,12 @@ html, body {
 .sci-composer { border-top: 1px solid var(--line); padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; background: rgba(9, 13, 23, 0.6); }
 .sci-composer textarea {
   flex: 1; resize: none; background: var(--panel); color: var(--ink);
-  border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px;
+  border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px;
   font-family: var(--sans); font-size: 0.93rem; line-height: 1.5; max-height: 160px;
 }
 .sci-composer textarea:focus { outline: none; border-color: #3b4a70; }
 .sci-send {
-  background: var(--accent); color: #0b0d12; border: 0; border-radius: 12px;
+  background: var(--accent); color: #0b0d12; border: 0; border-radius: 10px;
   padding: 11px 18px; font-weight: 600; cursor: pointer; font-size: 0.9rem;
 }
 .sci-send:disabled { opacity: 0.45; cursor: default; }
@@ -306,10 +309,14 @@ html, body {
 
 /* settings dialog */
 .sci-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: grid; place-items: center; z-index: 50; }
-.sci-modal { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; width: min(440px, 92vw); }
+.sci-modal { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(440px, 92vw); }
 .sci-modal h3 { margin: 0 0 12px; font-size: 1rem; }
 .sci-modal label { display: block; font-size: 0.78rem; color: var(--ink-dim); margin: 12px 0 5px; }
 .sci-modal input { width: 100%; background: var(--bg-2); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-family: var(--mono); font-size: 0.82rem; }
+/* Model switch inside Settings -- matches the modal's URL input geometry. */
+.sci-model-fullselect { width: 100%; background: var(--bg-2); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-family: var(--mono); font-size: 0.82rem; cursor: pointer; }
+.sci-model-fullselect:focus { outline: none; border-color: var(--accent); }
+.sci-model-fullselect option { background: var(--panel-2); color: var(--ink); }
 .sci-modal .hint { font-size: 0.72rem; color: var(--ink-faint); margin-top: 6px; line-height: 1.5; }
 .sci-modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
 .sci-save-choice-opts { display: flex; flex-direction: column; gap: 8px; }
@@ -322,7 +329,7 @@ html, body {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
 .sci-fav-card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   padding: 14px; cursor: pointer; display: flex; flex-direction: column; gap: 10px;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -441,7 +448,7 @@ html, body {
     touch-action: pan-x;
     gap: 10px;
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--panel-2);
     padding: 10px;
   }
@@ -465,11 +472,11 @@ html, body {
 /* closing synthesis card */
 .sci-conclusion {
   align-self: stretch; background: var(--panel); border: 1px solid var(--line);
-  border-left: 3px solid var(--accent); border-radius: 12px; padding: 12px 14px;
+  border-left: 3px solid var(--accent); border-radius: 10px; padding: 12px 14px;
 }
 .sci-conclusion .cc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .sci-conclusion .cc-title {
-  font-size: 0.74rem; text-transform: uppercase; letter-spacing: 1px;
+  font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.16em;
   color: var(--accent); font-weight: 600;
 }
 .sci-conclusion .cc-body {
@@ -486,7 +493,7 @@ html, body {
 .sci-panel-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; margin-top: 8px; }
 .sci-panel-item {
   display: flex; align-items: center; gap: 10px; text-align: left;
-  background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
   padding: 8px 10px; cursor: pointer; color: var(--ink); font-family: var(--sans);
 }
 .sci-panel-item:hover { border-color: #3b4a70; }
@@ -693,7 +700,7 @@ html, body {
   flex: 0 0 110px;
   width: 110px;
   height: 110px;
-  border-radius: 16px;
+  border-radius: 10px;
   overflow: hidden;
   display: flex;
   justify-content: center;

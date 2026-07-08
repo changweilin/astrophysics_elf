@@ -32,6 +32,8 @@ const T = {
     send: '送出',
     stop: '停止',
     settings: '設定',
+    modelLabel: '模型',
+    modelHint: '所有裝置共用同一個選擇;「自動」交由後端依語言挑最合適的本地模型。',
     backendUrl: '後端位址 (本地 / Tailscale)',
     backendHint: '手機請填你的 Tailscale 主機,例如 https://your-host.ts.net:5188',
     save: '儲存',
@@ -154,6 +156,8 @@ const T = {
     send: 'Send',
     stop: 'Stop',
     settings: 'Settings',
+    modelLabel: 'Model',
+    modelHint: 'Shared across every device; "Auto" lets the backend pick the strongest local model for your language.',
     backendUrl: 'Backend URL (local / Tailscale)',
     backendHint: 'On mobile, use your Tailscale host, e.g. https://your-host.ts.net:5188',
     save: 'Save',
@@ -743,13 +747,16 @@ function UndoButton({ onUndo, title, disabled, lang }) {
 // language default. Falls back to the old plain chip when the list hasn't
 // loaded yet. `busy` shows a small dot when the backend can't answer right
 // away (it's already generating for this device or another one).
-function ModelChip({ activeModel, installedModels, modelOverride, setModelOverride, lang, busy }) {
+function ModelChip({ activeModel, installedModels, modelOverride, setModelOverride, lang, busy, readOnly }) {
   const busyTitle = lang === 'zh' ? '後端忙碌中(可能有其他裝置正在使用)' : 'Backend busy (another device may be using it)';
   const busyDot = busy ? <span className={'sci-dot warn'} title={busyTitle} aria-label={busyTitle} /> : null;
-  if (!installedModels || !installedModels.length) {
-    return activeModel || busy ? (
+  // `readOnly`: the chat head keeps the status indicator + active-model label
+  // only -- the actual model switch lives in Settings now (see ModelPicker).
+  if (readOnly || !installedModels || !installedModels.length) {
+    const shown = readOnly ? (modelOverride || activeModel) : activeModel;
+    return shown || busy ? (
       <span className="sci-modelchip-wrap">
-        {activeModel && <span className="sci-modelchip">{activeModel}</span>}
+        {shown && <span className="sci-modelchip">{shown}</span>}
         {busyDot}
       </span>
     ) : null;
@@ -771,6 +778,31 @@ function ModelChip({ activeModel, installedModels, modelOverride, setModelOverri
       </select>
       {busyDot}
     </span>
+  );
+}
+
+// Model switch for the Settings dialog. The pin is shared backend-side (see
+// model-resolver.mjs), so this override converges every device on one model;
+// "Auto" hands the pick back to the backend's per-language default. Renders
+// nothing until /api/health has reported the installed Ollama tags.
+function ModelPicker({ tr, activeModel, installedModels, modelOverride, setModelOverride, lang }) {
+  if (!installedModels || !installedModels.length) return null;
+  return (
+    <React.Fragment>
+      <label>{tr.modelLabel}</label>
+      <select
+        className="sci-model-fullselect"
+        value={modelOverride || ''}
+        onChange={(e) => setModelOverride(e.target.value)}
+        aria-label={tr.modelLabel}
+      >
+        <option value="">{(lang === 'zh' ? '自動:' : 'Auto:') + ' ' + (activeModel || '...')}</option>
+        {installedModels.map((m) => (
+          <option key={m} value={m}>{m}</option>
+        ))}
+      </select>
+      <div className="hint">{tr.modelHint}</div>
+    </React.Fragment>
   );
 }
 
@@ -2551,7 +2583,7 @@ function SciAppRoot() {
             <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}>
               <span className={'sci-dot ' + statusClass} />
             </span>
-            <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={backendBusy} />
+            <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={backendBusy} readOnly />
             <ReplyModeChip replyMode={replyMode} setReplyMode={setReplyMode} lang={lang} />
             <span className="sci-chathead-break-b" aria-hidden="true" />
             <div className="sci-meter" title={tr.ctx}>
@@ -2688,6 +2720,11 @@ function SciAppRoot() {
       {showSettings && (
         <SettingsModal
           tr={tr}
+          lang={lang}
+          activeModel={activeModel}
+          installedModels={installedModels}
+          modelOverride={modelOverride}
+          setModelOverride={setModelOverride}
           initial={backendUrl}
           onClose={() => setShowSettings(false)}
           onSave={(url) => {
@@ -3143,7 +3180,7 @@ function DiscussView({
           <div className="spacer" />
           <span className="sci-chathead-break-a" aria-hidden="true" />
           <span className="sci-statusdot" title={statusLabel} aria-label={statusLabel}><span className={'sci-dot ' + statusClass} /></span>
-          <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={busy} />
+          <ModelChip activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} lang={lang} busy={busy} readOnly />
           <ReplyModeChip replyMode={replyMode} setReplyMode={setReplyMode} lang={lang} />
           <span className="sci-chathead-break-b" aria-hidden="true" />
           <div className="sci-meter" title={tr.ctx}>
@@ -3409,12 +3446,13 @@ function SaveCompareModal({ tr, onPick, onClose }) {
   );
 }
 
-function SettingsModal({ tr, initial, onClose, onSave }) {
+function SettingsModal({ tr, initial, onClose, onSave, lang, activeModel, installedModels, modelOverride, setModelOverride }) {
   const [url, setUrl] = useState(initial);
   return (
     <div className="sci-modal-backdrop" onClick={onClose}>
       <div className="sci-modal" onClick={(e) => e.stopPropagation()}>
         <h3>{tr.settings}</h3>
+        <ModelPicker tr={tr} lang={lang} activeModel={activeModel} installedModels={installedModels} modelOverride={modelOverride} setModelOverride={setModelOverride} />
         <label>{tr.backendUrl}</label>
         <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={window.SCI.defaultBackendUrl()} />
         <div className="hint">{tr.backendHint}</div>

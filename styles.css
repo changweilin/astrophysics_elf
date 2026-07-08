@@ -51,7 +51,7 @@ html, body {
 .app {
   display: grid;
   grid-template-columns: 320px 1fr 340px;
-  grid-template-rows: 44px 1fr 132px;
+  grid-template-rows: 48px 1fr 132px;
   grid-template-areas:
     "top    top     top"
     "left   center  right"
@@ -170,7 +170,7 @@ html, body {
   cursor: text;
   padding: 1px 5px;
   margin: -1px -5px;
-  border-radius: 3px;
+  border-radius: 6px;
   border-bottom: 1px dotted oklch(0.65 0.02 80 / 0.35);
   transition: background 0.12s ease, border-color 0.12s ease, color 0.18s ease;
 }
@@ -191,7 +191,7 @@ html, body {
   color: var(--amber);
   background: oklch(0.22 0.015 80 / 0.85);
   border: 1px solid var(--amber);
-  border-radius: 3px;
+  border-radius: 6px;
   padding: 1px 5px;
   margin: -2px -5px;
   outline: none;
@@ -384,7 +384,7 @@ html, body {
 }
 .remnant-stage .rs-chip {
   display: inline-flex; align-items: center; gap: 4px;
-  border: 1px solid var(--line); border-radius: 3px;
+  border: 1px solid var(--line); border-radius: 6px;
   padding: 2px 6px; font-size: 9px; color: var(--fg-2);
 }
 .remnant-stage .rs-chip .g { font-family: var(--sans); color: var(--fg-3); }
@@ -830,7 +830,7 @@ html, body {
 .lens-scale .ls-row sub { font-size: 7px; }
 .lens-scale .ls-eht {
   margin-left: auto;
-  border: 1px solid var(--line); border-radius: 3px;
+  border: 1px solid var(--line); border-radius: 6px;
   padding: 0 5px; font-size: 8px; color: var(--fg-3);
 }
 .lens-scale .ls-eht.on {
@@ -1306,7 +1306,7 @@ html, body {
   letter-spacing: 0.06em;
   padding: 1px 5px;
   border: 1px solid var(--line-soft);
-  border-radius: 3px;
+  border-radius: 6px;
   background: var(--bg-1);
   color: var(--fg-3);
   cursor: pointer;
@@ -1503,7 +1503,7 @@ html, body {
 .inspiral-track .bar {
   height: 6px;
   background: var(--bg-3);
-  border-radius: 3px;
+  border-radius: 6px;
   overflow: hidden;
   position: relative;
 }
