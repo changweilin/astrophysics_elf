@@ -98,6 +98,46 @@ CREATE TABLE IF NOT EXISTS sync_log(
   title TEXT,
   detail TEXT
 );
+CREATE TABLE IF NOT EXISTS traces(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT,
+  model TEXT,
+  input TEXT,
+  output TEXT,
+  ms INTEGER,
+  tokens_in INTEGER,
+  tokens_out INTEGER,
+  ok INTEGER NOT NULL DEFAULT 1,
+  error TEXT,
+  meta TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_traces_kind_ts ON traces(kind, ts);
+CREATE TABLE IF NOT EXISTS eval_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  judge_model TEXT,
+  answer_model TEXT,
+  k INTEGER,
+  graph INTEGER NOT NULL DEFAULT 1,
+  cases INTEGER NOT NULL DEFAULT 0,
+  metrics TEXT
+);
+CREATE TABLE IF NOT EXISTS eval_cases(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL,
+  case_id TEXT,
+  lang TEXT,
+  question TEXT,
+  ground_truth TEXT,
+  answer TEXT,
+  contexts TEXT,
+  metrics TEXT,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_eval_cases_run ON eval_cases(run_id);
 `;
 
 export function openDb(dbPath = config.dbPath) {

@@ -10,8 +10,41 @@
 
 import { config } from '../config.mjs';
 import { isBusy as gateIsBusy, withBusy } from '../../wiki-kb/lib/ollama-gate.mjs';
+import { openDb } from '../../wiki-kb/lib/db.mjs';
+import { recordTrace } from '../../wiki-kb/lib/trace.mjs';
 
 const CHAT_URL = () => `${config.ollama.baseUrl.replace(/\/+$/, '')}/api/chat`;
+
+// Own lazy handle to the shared kb.sqlite for call tracing (WAL mode makes a
+// second writer safe). Lazy + fail-open: chat must work even if the KB file
+// is unavailable.
+let traceDb = null;
+function getTraceDb() {
+  if (traceDb === null) {
+    try { traceDb = openDb(); } catch { traceDb = false; }
+  }
+  return traceDb || null;
+}
+
+// One trace row per Ollama round-trip. Only the last user turn is kept as
+// input (the full transcript would blow the trace field cap anyway).
+function traceChat(kind, { model, messages, t0, stats, error }) {
+  const db = getTraceDb();
+  if (!db) return;
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  recordTrace(db, {
+    kind,
+    model: model.name,
+    input: lastUser ? lastUser.content : null,
+    output: stats ? stats.content : null,
+    ms: Date.now() - t0,
+    tokensIn: stats ? stats.promptTokens : null,
+    tokensOut: stats ? stats.completionTokens : null,
+    ok: !error,
+    error,
+    meta: stats ? { doneReason: stats.doneReason } : null,
+  });
+}
 
 // Build the Ollama "options" block from resolved per-language model settings.
 function buildOptions(model, overrides = {}) {
@@ -68,6 +101,7 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
   const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
   const composite = signal ? anySignal([signal, timeout]) : timeout;
 
+  const t0 = Date.now();
   return withBusy(async () => {
     const res = await fetch(CHAT_URL(), {
       method: 'POST',
@@ -114,6 +148,12 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
     });
 
     return { content: full, ...stats };
+  }).then((r) => {
+    traceChat('chat-stream', { model, messages, t0, stats: r });
+    return r;
+  }, (e) => {
+    traceChat('chat-stream', { model, messages, t0, error: e && e.message || e });
+    throw e;
   });
 }
 
@@ -123,6 +163,7 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
 export async function chat({ model, messages, optionOverrides, signal }) {
   const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
   const composite = signal ? anySignal([signal, timeout]) : timeout;
+  const t0 = Date.now();
   return withBusy(async () => {
     const res = await fetch(CHAT_URL(), {
       method: 'POST',
@@ -157,6 +198,12 @@ export async function chat({ model, messages, optionOverrides, signal }) {
       promptTokens: data.prompt_eval_count || 0,
       completionTokens: data.eval_count || 0,
     };
+  }).then((r) => {
+    traceChat('chat-blocking', { model, messages, t0, stats: r });
+    return r;
+  }, (e) => {
+    traceChat('chat-blocking', { model, messages, t0, error: e && e.message || e });
+    throw e;
   });
 }
 

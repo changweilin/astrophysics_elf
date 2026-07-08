@@ -2,9 +2,16 @@
 // weighted min-max-normalized scores, then multiplied by a time-decay factor
 // derived from the article's last-revision age. Falls back to BM25-only when
 // the embedding model is unreachable.
+//
+// A third, graph channel (HippoRAG-style PPR over the Wikidata KG, see
+// graph-rank.mjs) multiplicatively boosts candidates whose pages are
+// graph-connected to the query's entities and can pull in a couple of
+// multi-hop pages the lexical/vector channels missed. It is additive and
+// fail-open: wGraph=0 or any error reproduces the plain hybrid ranking.
 
 import { ftsQuery } from './db.mjs';
 import { embedQuery, fromBlob, dot } from './embed.mjs';
+import { graphChannel } from './graph-rank.mjs';
 import { config } from '../config.mjs';
 
 function decayFactor(revTime, nowMs = Date.now()) {
@@ -139,6 +146,54 @@ export async function search(db, opts = {}) {
     return { ...r, bm25, cos, decay, score: score * decay };
   });
   scored.sort((a, b) => b.score - a.score);
+
+  // 4b) graph channel: PPR seeded by the top hybrid hits' qids + entities the
+  // query mentions by name. Boost is multiplicative (base * (1 + wGraph*g))
+  // so rows without a qid (manual notes) keep their ordering untouched, and
+  // a couple of high-PPR pages outside the candidate set are pulled in.
+  const { wGraph, graphSeedPages, graphExpandScore } = config.retrieve;
+  if (wGraph > 0 && scored.length && !opts.noGraph) {
+    try {
+      const seedQids = [];
+      const seenPages = new Set();
+      for (const r of scored) {
+        if (seenPages.has(r.pageId)) continue;
+        seenPages.add(r.pageId);
+        if (r.qid) seedQids.push(r.qid);
+        if (seedQids.length >= graphSeedPages) break;
+      }
+      const graph = graphChannel(db, {
+        q,
+        seedQids,
+        excludePageIds: new Set(scored.map((r) => r.pageId)),
+        langs: opts.langs,
+        qv,
+        fromBlob,
+        dot,
+      });
+      if (graph) {
+        for (const r of scored) {
+          if (!r.qid) continue;
+          r.g = graph.score(r.qid);
+          r.score *= 1 + wGraph * r.g;
+        }
+        for (const e of graph.expand) {
+          const decay = decayFactor(e.revTime);
+          scored.push({
+            ...e,
+            bm25: null,
+            cos: null,
+            decay,
+            graphExpanded: true,
+            score: e.g * graphExpandScore * decay,
+          });
+        }
+        scored.sort((a, b) => b.score - a.score);
+      }
+    } catch {
+      // graph channel is best-effort; hybrid ranking stands on its own
+    }
+  }
 
   // 5) cap chunks per page, take k
   const perPage = new Map();

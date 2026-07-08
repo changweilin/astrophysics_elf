@@ -20,7 +20,9 @@
     "update": "node check-updates.mjs --discover",
     "serve": "node server.mjs",
     "stats": "node kb-admin.mjs stats",
-    "check": "node --check config.mjs && node --check lib/db.mjs && node --check lib/wiki-api.mjs && node --check lib/seeds.mjs && node --check lib/chunk.mjs && node --check lib/embed.mjs && node --check lib/graph.mjs && node --check lib/retrieve.mjs && node --check lib/ingest.mjs && node --check lib/discover.mjs && node --check crawl.mjs && node --check check-updates.mjs && node --check kb-admin.mjs && node --check server.mjs"
+    "eval": "node eval/run-eval.mjs",
+    "eval:retrieval": "node eval/run-eval.mjs --retrieval-only",
+    "check": "node --check config.mjs && node --check lib/db.mjs && node --check lib/wiki-api.mjs && node --check lib/seeds.mjs && node --check lib/chunk.mjs && node --check lib/embed.mjs && node --check lib/graph.mjs && node --check lib/graph-rank.mjs && node --check lib/retrieve.mjs && node --check lib/trace.mjs && node --check lib/ingest.mjs && node --check lib/discover.mjs && node --check eval/judge.mjs && node --check eval/metrics.mjs && node --check eval/run-eval.mjs && node --check crawl.mjs && node --check check-updates.mjs && node --check kb-admin.mjs && node --check server.mjs"
   },
   "dependencies": {
     "opencc-js": "^1.4.0"

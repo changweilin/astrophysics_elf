@@ -42,6 +42,13 @@
     // log tab
     logRows: null,
     logSort: { by: null, dir: 'asc' },          // client-side (already fully loaded)
+    // monitor tab
+    mSummary: null,
+    mTraces: null,
+    mKind: '',
+    // eval tab
+    eRuns: null,
+    eBusy: false,
   };
 
   var TABS = [
@@ -49,6 +56,8 @@
     { id: 'pages', label: { en: 'Pages (RAG corpus)', zh: '頁面(RAG 語料)' } },
     { id: 'graph', label: { en: 'Knowledge graph', zh: '知識圖譜' } },
     { id: 'rag', label: { en: 'RAG test', zh: 'RAG 檢索測試' } },
+    { id: 'monitor', label: { en: 'Monitoring', zh: 'LLM 監測' } },
+    { id: 'eval', label: { en: 'Evaluation', zh: 'RAG 評估' } },
     { id: 'log', label: { en: 'Activity', zh: '協作紀錄' } },
   ];
 
@@ -843,6 +852,235 @@
     main.appendChild(wrap);
   }
 
+  // ---- LLM monitoring tab ----------------------------------------------------
+  var TRACE_KINDS = ['', 'search', 'context', 'chat-rag', 'chat-stream', 'chat-blocking',
+    'translate', 'generate', 'embed', 'eval-answer', 'eval-judge'];
+
+  function renderMonitor(main) {
+    main.appendChild(el('p', 'ka-note', t({
+      en: 'Every retrieval and LLM call (chat, translate, generate, eval) is traced to the KB — latency, tokens, errors. Langfuse-style observability without an external server.',
+      zh: '所有檢索與 LLM 呼叫(聊天、翻譯、生成、評估)都會留下追蹤紀錄——延遲、token 數、錯誤。等同 Langfuse 式監測,但不需外部伺服器。',
+    })));
+    var bar = el('div', 'ka-row');
+    var sel = el('select');
+    TRACE_KINDS.forEach(function (k) {
+      var o = el('option', null, k || t({ en: 'all kinds', zh: '全部類型' }));
+      o.value = k;
+      sel.appendChild(o);
+    });
+    sel.value = S.mKind;
+    sel.addEventListener('change', function () { S.mKind = sel.value; S.mTraces = null; render(); });
+    bar.appendChild(sel);
+    bar.appendChild(btn('ka-btn', t({ en: 'Refresh', zh: '重新整理' }), function () {
+      S.mSummary = null; S.mTraces = null; render();
+    }));
+    main.appendChild(bar);
+
+    var cards = el('div', 'ka-cards');
+    main.appendChild(cards);
+    if (!S.mSummary) {
+      window.KNKB.api('/api/traces/summary?hours=24').then(function (r) { S.mSummary = r; render(); })
+        .catch(function (e) { cards.appendChild(el('div', 'ka-empty', (e.message || e))); });
+    } else {
+      (S.mSummary.byKind || []).forEach(function (k) {
+        var c = el('div', 'ka-card');
+        c.appendChild(el('div', 'k', k.kind));
+        c.appendChild(el('div', 'v', String(k.calls)));
+        c.appendChild(el('div', 'sub',
+          t({ en: 'avg ', zh: '平均 ' }) + (k.avgMs || 0) + ' ms · ' +
+          t({ en: 'err ', zh: '錯誤 ' }) + k.errors +
+          (k.tokensOut ? ' · ' + k.tokensOut + t({ en: ' tok out', zh: ' 輸出token' }) : '')));
+        cards.appendChild(c);
+      });
+      if (!(S.mSummary.byKind || []).length) {
+        cards.appendChild(el('div', 'ka-empty', t({ en: 'No traces in the last 24h.', zh: '過去 24 小時沒有追蹤紀錄。' })));
+      }
+      if ((S.mSummary.byModel || []).length) {
+        main.appendChild(el('h3', null, t({ en: 'By model (24h)', zh: '依模型(24 小時)' })));
+        var mw = el('div', 'ka-tablewrap');
+        var mt = el('table', 'ka-table');
+        var mh = el('tr');
+        [t({ en: 'model', zh: '模型' }), t({ en: 'calls', zh: '呼叫數' }), t({ en: 'errors', zh: '錯誤' }),
+          t({ en: 'avg ms', zh: '平均毫秒' }), t({ en: 'tokens out', zh: '輸出 token' })]
+          .forEach(function (h) { mh.appendChild(el('th', null, h)); });
+        var mth = el('thead'); mth.appendChild(mh); mt.appendChild(mth);
+        var mtb = el('tbody');
+        S.mSummary.byModel.forEach(function (m) {
+          var tr = el('tr');
+          tr.appendChild(el('td', 'mono', m.model));
+          tr.appendChild(el('td', 'mono', String(m.calls)));
+          tr.appendChild(el('td', 'mono', String(m.errors)));
+          tr.appendChild(el('td', 'mono', String(m.avgMs || 0)));
+          tr.appendChild(el('td', 'mono', String(m.tokensOut || 0)));
+          mtb.appendChild(tr);
+        });
+        mt.appendChild(mtb); mw.appendChild(mt); main.appendChild(mw);
+      }
+    }
+
+    main.appendChild(el('h3', null, t({ en: 'Recent traces', zh: '最近呼叫' })));
+    if (!S.mTraces) {
+      main.appendChild(el('div', 'ka-empty', t({ en: 'Loading…', zh: '載入中…' })));
+      var qs = new URLSearchParams({ limit: '100' });
+      if (S.mKind) qs.set('kind', S.mKind);
+      window.KNKB.api('/api/traces?' + qs).then(function (r) { S.mTraces = r; render(); })
+        .catch(function (e) { clear(main); main.appendChild(el('div', 'ka-empty', (e.message || e))); });
+      return;
+    }
+    var wrap = el('div', 'ka-tablewrap');
+    var table = el('table', 'ka-table');
+    var trh = el('tr');
+    [t({ en: 'time', zh: '時間' }), t({ en: 'kind', zh: '類型' }), t({ en: 'model', zh: '模型' }),
+      'ms', 'tok in/out', t({ en: 'input', zh: '輸入' }), t({ en: 'output / error', zh: '輸出 / 錯誤' })]
+      .forEach(function (h) { trh.appendChild(el('th', null, h)); });
+    var thead = el('thead'); thead.appendChild(trh); table.appendChild(thead);
+    var tbody = el('tbody');
+    (S.mTraces.rows || []).forEach(function (r) {
+      var tr = el('tr');
+      if (!r.ok) tr.style.background = 'rgba(200,60,60,0.10)';
+      tr.appendChild(el('td', 'mono', (r.ts || '').replace('T', ' ').slice(0, 19)));
+      tr.appendChild(el('td', 'mono', r.kind));
+      tr.appendChild(el('td', 'mono', r.model || '—'));
+      tr.appendChild(el('td', 'mono', r.ms == null ? '—' : String(r.ms)));
+      tr.appendChild(el('td', 'mono', (r.tokensIn || 0) + '/' + (r.tokensOut || 0)));
+      tr.appendChild(el('td', 'ka-snippet', String(r.input || '').slice(0, 120)));
+      tr.appendChild(el('td', 'ka-snippet', r.ok ? String(r.output || '').slice(0, 160) : ('✗ ' + (r.error || ''))));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    main.appendChild(wrap);
+    if (!(S.mTraces.rows || []).length) {
+      main.appendChild(el('div', 'ka-empty', t({ en: 'No traces yet.', zh: '尚無追蹤紀錄。' })));
+    }
+  }
+
+  // ---- RAG evaluation tab ------------------------------------------------------
+  function evalRunDetailModal(id) {
+    window.KNKB.api('/api/eval/run?id=' + id).then(function (r) {
+      modal(function (box, close) {
+        box.appendChild(el('h3', null, t({ en: 'Eval run #', zh: '評估回合 #' }) + r.run.id +
+          ' · ' + r.run.mode + ' · graph=' + r.run.graph));
+        var wrap = el('div', 'ka-tablewrap');
+        var table = el('table', 'ka-table');
+        var trh = el('tr');
+        ['case', t({ en: 'question', zh: '問題' }), 'hit', 'MRR', 'P', 'R', 'Faith', 'Halluc',
+          t({ en: 'answer', zh: '回答' })]
+          .forEach(function (h) { trh.appendChild(el('th', null, h)); });
+        var thead = el('thead'); thead.appendChild(trh); table.appendChild(thead);
+        var tbody = el('tbody');
+        (r.cases || []).forEach(function (c) {
+          var m = c.metrics || {};
+          var tr = el('tr');
+          tr.appendChild(el('td', 'mono', c.case_id));
+          tr.appendChild(el('td', 'ka-snippet', c.question));
+          tr.appendChild(el('td', 'mono', String(m.hit != null ? m.hit : '—')));
+          tr.appendChild(el('td', 'mono', m.mrr != null ? m.mrr.toFixed(2) : '—'));
+          tr.appendChild(el('td', 'mono', m.contextPrecision != null ? String(m.contextPrecision) : '—'));
+          tr.appendChild(el('td', 'mono', m.contextRecall != null ? String(m.contextRecall) : '—'));
+          tr.appendChild(el('td', 'mono', m.faithfulness != null ? String(m.faithfulness) : '—'));
+          tr.appendChild(el('td', 'mono', m.hallucination != null ? String(m.hallucination) : '—'));
+          tr.appendChild(el('td', 'ka-snippet', String(c.answer || '').slice(0, 160)));
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        box.appendChild(wrap);
+        var row = el('div', 'ka-row');
+        row.appendChild(btn('ka-btn', t({ en: 'Close', zh: '關閉' }), close));
+        box.appendChild(row);
+      });
+    }).catch(errToast);
+  }
+
+  function startEvalRun(mode, graph) {
+    if (S.eBusy) return;
+    S.eBusy = true;
+    render();
+    window.KNKB.api('/api/eval/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: mode, graph: graph }),
+    }).then(function (r) {
+      toast('ok', t({ en: 'Eval run #', zh: '評估完成 #' }) + r.runId);
+      S.eRuns = null;
+    }).catch(errToast).finally(function () {
+      S.eBusy = false;
+      render();
+    });
+  }
+
+  function renderEval(main) {
+    main.appendChild(el('p', 'ka-note', t({
+      en: 'RAGAS-style pipeline over the golden set (wiki-kb/eval/golden.jsonl): retrieval hit rate + MRR are free; Context Precision/Recall, Faithfulness and Hallucination are judged by the local LLM. Full runs occupy the LLM for minutes — prefer the CLI: node wiki-kb/eval/run-eval.mjs',
+      zh: 'RAGAS 式評估管線,跑黃金測試集(wiki-kb/eval/golden.jsonl):檢索命中率與 MRR 免費計算;Context Precision/Recall、Faithfulness、Hallucination 由本地 LLM 擔任評審。完整評估會佔用 LLM 數分鐘,建議用 CLI:node wiki-kb/eval/run-eval.mjs',
+    })));
+    var bar = el('div', 'ka-row');
+    var b1 = btn('ka-btn primary', t({ en: 'Quick retrieval eval', zh: '快速檢索評估(不用 LLM)' }), function () {
+      startEvalRun('retrieval', true);
+    });
+    var b2 = btn('ka-btn', t({ en: 'Retrieval eval, graph OFF (A/B)', zh: '檢索評估:停用圖譜通道(A/B)' }), function () {
+      startEvalRun('retrieval', false);
+    });
+    var b3 = btn('ka-btn', t({ en: 'Full eval (LLM judge, slow)', zh: '完整評估(LLM 評審,慢)' }), function () {
+      if (window.confirm(t({
+        en: 'Full eval keeps the local LLM busy for several minutes and blocks chat/translate. Continue?',
+        zh: '完整評估會佔用本地 LLM 數分鐘,期間聊天/翻譯會被擋下。確定要執行?',
+      }))) startEvalRun('full', true);
+    });
+    if (S.eBusy) { b1.disabled = true; b2.disabled = true; b3.disabled = true; }
+    bar.appendChild(b1); bar.appendChild(b2); bar.appendChild(b3);
+    bar.appendChild(btn('ka-btn', t({ en: 'Refresh', zh: '重新整理' }), function () { S.eRuns = null; render(); }));
+    main.appendChild(bar);
+    if (S.eBusy) {
+      main.appendChild(el('div', 'ka-empty', t({ en: 'Running… this page will update when done.', zh: '評估執行中……完成後會自動更新。' })));
+    }
+
+    if (!S.eRuns) {
+      main.appendChild(el('div', 'ka-empty', t({ en: 'Loading…', zh: '載入中…' })));
+      window.KNKB.api('/api/eval/runs?limit=30').then(function (r) { S.eRuns = r.runs; render(); })
+        .catch(function (e) { clear(main); main.appendChild(el('div', 'ka-empty', (e.message || e))); });
+      return;
+    }
+    var wrap = el('div', 'ka-tablewrap');
+    var table = el('table', 'ka-table');
+    var trh = el('tr');
+    ['#', t({ en: 'time', zh: '時間' }), t({ en: 'mode', zh: '模式' }), 'graph', 'k',
+      t({ en: 'cases', zh: '題數' }), 'hit', 'MRR', 'P', 'R', 'Faith', 'Halluc', t({ en: 'ms', zh: '檢索毫秒' })]
+      .forEach(function (h) { trh.appendChild(el('th', null, h)); });
+    var thead = el('thead'); thead.appendChild(trh); table.appendChild(thead);
+    var tbody = el('tbody');
+    S.eRuns.forEach(function (r) {
+      var m = r.metrics || {};
+      var tr = el('tr');
+      tr.style.cursor = 'pointer';
+      tr.addEventListener('click', function () { evalRunDetailModal(r.id); });
+      tr.appendChild(el('td', 'mono', String(r.id)));
+      tr.appendChild(el('td', 'mono', (r.ts || '').replace('T', ' ').slice(0, 16)));
+      tr.appendChild(el('td', 'mono', r.mode));
+      tr.appendChild(el('td', 'mono', r.graph ? 'on' : 'off'));
+      tr.appendChild(el('td', 'mono', String(r.k)));
+      tr.appendChild(el('td', 'mono', String(r.cases)));
+      tr.appendChild(el('td', 'mono', m.hitRate != null ? String(m.hitRate) : '—'));
+      tr.appendChild(el('td', 'mono', m.mrr != null ? String(m.mrr) : '—'));
+      tr.appendChild(el('td', 'mono', m.contextPrecision != null ? String(m.contextPrecision) : '—'));
+      tr.appendChild(el('td', 'mono', m.contextRecall != null ? String(m.contextRecall) : '—'));
+      tr.appendChild(el('td', 'mono', m.faithfulness != null ? String(m.faithfulness) : '—'));
+      tr.appendChild(el('td', 'mono', m.hallucination != null ? String(m.hallucination) : '—'));
+      tr.appendChild(el('td', 'mono', m.avgRetrieveMs != null ? String(m.avgRetrieveMs) : '—'));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    main.appendChild(wrap);
+    if (!S.eRuns.length) {
+      main.appendChild(el('div', 'ka-empty', t({
+        en: 'No eval runs yet — run one above or via the CLI.',
+        zh: '尚無評估紀錄——請按上方按鈕,或用 CLI 執行。',
+      })));
+    }
+  }
+
   // ---- shell ----------------------------------------------------------------
   function render() {
     document.documentElement.lang = (lang === 'zh') ? 'zh-Hant' : 'en';
@@ -853,6 +1091,7 @@
       b.addEventListener('click', function () {
         S.tab = tb.id;
         if (tb.id === 'log') S.logRows = null;   // always fresh — it is the collab feed
+        if (tb.id === 'monitor') { S.mSummary = null; S.mTraces = null; } // live telemetry
         render();
       });
       tabs.appendChild(b);
@@ -863,6 +1102,8 @@
     else if (S.tab === 'pages') renderPages(main);
     else if (S.tab === 'graph') renderGraph(main);
     else if (S.tab === 'rag') renderRag(main);
+    else if (S.tab === 'monitor') renderMonitor(main);
+    else if (S.tab === 'eval') renderEval(main);
     else if (S.tab === 'log') renderLog(main);
   }
 

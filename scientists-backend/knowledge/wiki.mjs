@@ -16,6 +16,7 @@
 import { config } from '../config.mjs';
 import { openDb } from '../../wiki-kb/lib/db.mjs';
 import { search, buildContext } from '../../wiki-kb/lib/retrieve.mjs';
+import { recordTrace } from '../../wiki-kb/lib/trace.mjs';
 
 const UA = 'KN-Scientists-Lab/1.0 (local educational app; contact: local user)';
 // Own connection to the shared kb.sqlite (WAL mode; safe alongside the
@@ -55,12 +56,20 @@ export async function retrieveContext(query, lang, { force = false, signal } = {
 // call, not an HTTP round-trip. Any error falls back to the live Wikipedia
 // path below, so this can never break the chat.
 async function retrieveFromKb(query, lang, signal) {
+  const t0 = Date.now();
   try {
     const kbLang = lang === 'en' ? 'en' : config.wiki.lang;
     const langs = kbLang === 'en' ? ['en'] : [kbLang, 'en'];
     const results = await search(kbDb, { q: query, langs, signal });
-    return buildContext(results, config.wiki.maxChars);
-  } catch {
+    const ctx = buildContext(results, config.wiki.maxChars);
+    recordTrace(kbDb, {
+      kind: 'chat-rag', input: query, ms: Date.now() - t0,
+      output: ctx.sources.map((s) => s.title).join(' | '),
+      meta: { lang, sources: ctx.sources.length, graphBoosted: results.filter((r) => r.g > 0).length },
+    });
+    return ctx;
+  } catch (e) {
+    recordTrace(kbDb, { kind: 'chat-rag', input: query, ms: Date.now() - t0, ok: false, error: e && e.message || e });
     return { context: '', sources: [] };
   }
 }

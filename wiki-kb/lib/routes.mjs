@@ -24,6 +24,12 @@
 //   DELETE /api/edge?src=&rel=&dst=                     remove a graph edge
 //   POST   /api/translate {pageId, target}              LLM-translate a page (preview only)
 //   POST   /api/entity/generate {qid, target}            LLM-generate an unsourced stub article (preview only)
+//   GET    /api/traces?kind=&limit=&offset=              LLM/retrieval call log (lib/trace.mjs)
+//   GET    /api/traces/summary?hours=24                  monitoring aggregates by kind/model
+//   GET    /api/eval/runs?limit=20                       past evaluation runs + averaged metrics
+//   GET    /api/eval/run?id=N                            one run with per-case results
+//   POST   /api/eval/run {mode?,k?,graph?,limit?}        run the eval pipeline (eval/run-eval.mjs);
+//                                                        mode 'full' is LLM-gated like translate
 //
 // GET /api/health is intentionally NOT handled here -- each host reports
 // health in its own response shape; use kbHealthPayload() for the shared bits.
@@ -47,6 +53,8 @@ import { embedAvailable } from './embed.mjs';
 import { translatePage, generateEntityArticle } from './translate.mjs';
 import { isBusy as llmBusy } from './ollama-gate.mjs';
 import { CATEGORY_TREE, categoryCounts, classifyEntity, buildClassifyStmts } from './classify.mjs';
+import { recordTrace, listTraces, traceSummary } from './trace.mjs';
+import { runEval } from '../eval/run-eval.mjs';
 import { config } from '../config.mjs';
 
 function json(res, status, body) {
@@ -107,11 +115,17 @@ export function createKbRouter(db) {
       const q = url.searchParams.get('q') ?? '';
       if (!q.trim()) { json(res, 400, { ok: false, error: 'q required' }); return true; }
       const kind = url.searchParams.get('kind');
+      const t0 = Date.now();
       const results = await search(db, {
         q,
         langs: langsParam(url),
         kinds: kind ? [kind] : undefined,
         k: Number(url.searchParams.get('k')) || undefined,
+      });
+      recordTrace(db, {
+        kind: 'search', input: q, ms: Date.now() - t0,
+        output: results.map((r) => r.title).join(' | '),
+        meta: { hits: results.length, graphBoosted: results.filter((r) => r.g > 0).length },
       });
       json(res, 200, {
         ok: true,
@@ -127,9 +141,15 @@ export function createKbRouter(db) {
     if (req.method === 'GET' && url.pathname === '/api/context') {
       const q = url.searchParams.get('q') ?? '';
       if (!q.trim()) { json(res, 400, { ok: false, error: 'q required' }); return true; }
+      const t0 = Date.now();
       const results = await search(db, { q, langs: langsParam(url) });
       const maxChars = Number(url.searchParams.get('maxChars')) || undefined;
       const ctx = buildContext(results, maxChars);
+      recordTrace(db, {
+        kind: 'context', input: q, ms: Date.now() - t0,
+        output: ctx.sources.map((s) => s.title).join(' | '),
+        meta: { sources: ctx.sources.length, chars: ctx.context.length },
+      });
       json(res, 200, { ok: true, query: q, ...ctx });
       return true;
     }
@@ -241,7 +261,12 @@ export function createKbRouter(db) {
     if (req.method === 'POST' && url.pathname === '/api/embed') {
       if (llmBusy()) { json(res, 409, { ok: false, error: 'busy', busy: true }); return true; }
       const body = await readBody(req);
+      const t0 = Date.now();
       const r = await embedPending(db, { limit: Number(body.limit) || Infinity });
+      recordTrace(db, {
+        kind: 'embed', model: config.embed.model, ms: Date.now() - t0,
+        meta: r,
+      });
       json(res, 200, { ok: true, ...r });
       return true;
     }
@@ -341,11 +366,22 @@ export function createKbRouter(db) {
       // otherwise the GPU keeps grinding on a translation nobody is waiting for.
       const ac = new AbortController();
       req.on('close', () => ac.abort());
+      const t0 = Date.now();
       try {
         const r = await translatePage(page, String(body.target), { signal: ac.signal });
         logSync(db, 'translate', r.target, page.title, `model=${r.model} from=${page.lang}`);
+        recordTrace(db, {
+          kind: 'translate', name: page.title, model: r.model, ms: Date.now() - t0,
+          input: `${page.lang} -> ${r.target}`, output: r.title,
+          meta: { pageId: page.id, chars: r.content.length },
+        });
         if (!res.writableEnded) json(res, 200, { ok: true, ...r });
       } catch (e) {
+        recordTrace(db, {
+          kind: 'translate', name: page.title, ms: Date.now() - t0,
+          input: `${page.lang} -> ${body.target}`, ok: false,
+          error: ac.signal.aborted ? 'cancelled' : e && e.message || e,
+        });
         if (!res.writableEnded) json(res, ac.signal.aborted ? 499 : 500, { ok: false, error: String(e && e.message || e) });
       }
       return true;
@@ -389,11 +425,87 @@ export function createKbRouter(db) {
           if (h.qid && !connected.has(h.qid) && !candMap.has(h.qid)) candMap.set(h.qid, h.title);
         }
         const candidates = [...candMap].slice(0, 20).map(([qid, clabel]) => ({ qid, label: clabel }));
+        const t0 = Date.now();
         const r = await generateEntityArticle(entityForPrompt, String(body.target), { relations, candidates, signal: ac.signal });
         logSync(db, 'generate', r.target, found.entity.label_en || found.entity.label_zh || found.entity.qid, `model=${r.model}`);
+        recordTrace(db, {
+          kind: 'generate', name: label, model: r.model, ms: Date.now() - t0,
+          input: `${found.entity.qid} -> ${r.target}`, output: r.title,
+          meta: { suggestedLinks: r.suggestedLinks.length },
+        });
         if (!res.writableEnded) json(res, 200, { ok: true, ...r });
       } catch (e) {
+        recordTrace(db, {
+          kind: 'generate', name: String(body.qid), ok: false,
+          error: ac.signal.aborted ? 'cancelled' : e && e.message || e,
+        });
         if (!res.writableEnded) json(res, ac.signal.aborted ? 499 : 500, { ok: false, error: String(e && e.message || e) });
+      }
+      return true;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/traces') {
+      json(res, 200, {
+        ok: true,
+        ...listTraces(db, {
+          kind: url.searchParams.get('kind') || undefined,
+          limit: Number(url.searchParams.get('limit')) || 100,
+          offset: Number(url.searchParams.get('offset')) || 0,
+        }),
+      });
+      return true;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/traces/summary') {
+      json(res, 200, {
+        ok: true,
+        ...traceSummary(db, { sinceHours: Number(url.searchParams.get('hours')) || 24 }),
+      });
+      return true;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/eval/runs') {
+      const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 20));
+      const runs = db.prepare(
+        `SELECT id, ts, mode, judge_model AS judgeModel, answer_model AS answerModel,
+                k, graph, cases, metrics FROM eval_runs ORDER BY id DESC LIMIT ?`
+      ).all(limit).map((r) => ({ ...r, metrics: r.metrics ? JSON.parse(r.metrics) : null }));
+      json(res, 200, { ok: true, runs });
+      return true;
+    }
+    if (req.method === 'GET' && url.pathname === '/api/eval/run') {
+      const id = Number(url.searchParams.get('id'));
+      const run = db.prepare('SELECT * FROM eval_runs WHERE id=?').get(id);
+      if (!run) { json(res, 404, { ok: false, error: 'not found' }); return true; }
+      const cases = db.prepare('SELECT * FROM eval_cases WHERE run_id=? ORDER BY id').all(id)
+        .map((c) => ({
+          ...c,
+          contexts: c.contexts ? JSON.parse(c.contexts) : [],
+          metrics: c.metrics ? JSON.parse(c.metrics) : {},
+          detail: c.detail ? JSON.parse(c.detail) : {},
+        }));
+      json(res, 200, {
+        ok: true,
+        run: { ...run, metrics: run.metrics ? JSON.parse(run.metrics) : null },
+        cases,
+      });
+      return true;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/eval/run') {
+      const body = await readBody(req);
+      const mode = body.mode === 'full' ? 'full' : 'retrieval';
+      // Full runs hold the LLM for many minutes; same fast-refusal contract
+      // as translate/generate. Retrieval-only runs never touch Ollama's chat
+      // model (only the embedder) and stay quick enough for a UI button.
+      if (mode === 'full' && llmBusy()) { json(res, 409, { ok: false, error: 'busy', busy: true }); return true; }
+      try {
+        const r = await runEval(db, {
+          mode,
+          k: Number(body.k) || 8,
+          graph: body.graph !== false,
+          limit: Number(body.limit) || Infinity,
+        });
+        logSync(db, 'eval-run', null, `run#${r.runId}`, `mode=${mode} graph=${r.graph} cases=${r.cases}`);
+        json(res, 200, { ok: true, ...r });
+      } catch (e) {
+        json(res, 500, { ok: false, error: String(e && e.message || e) });
       }
       return true;
     }

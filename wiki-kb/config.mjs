@@ -94,6 +94,30 @@ export const config = {
     decayFloor: envNum('WKB_DECAY_FLOOR', 0.6),
     maxPerPage: envNum('WKB_MAX_PER_PAGE', 2),
     maxContextChars: envNum('WKB_CONTEXT_MAX_CHARS', 2200),
+    // Graph-augmented retrieval (HippoRAG-style Personalized PageRank over
+    // the existing Wikidata knowledge graph; see lib/graph-rank.mjs and
+    // docs/rag-architecture-decision.md). wGraph=0 disables the channel.
+    wGraph: envNum('WKB_W_GRAPH', 0.35),
+    graphSeedPages: envNum('WKB_GRAPH_SEED_PAGES', 5),
+    graphExpandPages: envNum('WKB_GRAPH_EXPAND_PAGES', 2),
+    graphExpandScore: envNum('WKB_GRAPH_EXPAND_SCORE', 0.5),
+    pprAlpha: envNum('WKB_PPR_ALPHA', 0.5),
+    pprIters: envNum('WKB_PPR_ITERS', 15),
+  },
+
+  // RAG evaluation pipeline (eval/run-eval.mjs): RAGAS-style metrics judged
+  // by the local Ollama chat model. Empty model = same auto-pick as translate.
+  eval: {
+    judgeModel: envStr('WKB_EVAL_JUDGE_MODEL', ''),
+    answerModel: envStr('WKB_EVAL_ANSWER_MODEL', ''),
+    timeoutMs: envNum('WKB_EVAL_TIMEOUT_MS', 300000),
+  },
+
+  // LLM observability (lib/trace.mjs): every retrieve/translate/generate/chat
+  // call is logged to the traces table, viewable in kb-admin.html (監測 tab).
+  trace: {
+    keep: envNum('WKB_TRACE_KEEP', 5000),
+    maxField: envNum('WKB_TRACE_MAX_FIELD', 2000),
   },
 
   translate: {
