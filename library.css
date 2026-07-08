@@ -45,6 +45,7 @@
   --knv-line-hi: oklch(0.48 0.06 85);
   --knv-chip-bg: oklch(0.17 0.016 75 / 0.85);
   --knv-chip-bg-hi: oklch(0.22 0.018 75 / 0.92);
+  --knv-menu-bg: oklch(0.16 0.016 75);
 }
 
 * { box-sizing: border-box; }
@@ -96,26 +97,12 @@ a:hover { color: var(--cyan-dim); text-decoration: underline; }
   }
   .lp-top .spacer { order: 1; flex: 1 1 auto; margin-left: 0; }
   .lp-top .kn-pagenav { order: 2; }
-  .lp-top .lp-lang { order: 3; }
+  .lp-top .kn-langsel { order: 3; }
   .lp-viewtoggle { order: 4; flex: 1 1 100%; display: flex; justify-content: center; }
 }
 
-/* Language selector — all eight locales; the choice persists to the same
-   'kn-lang' key the lab uses, so it carries across both pages. */
-.lp-lang {
-  background: var(--bg-0);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--fg-1);
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  padding: 5px 9px;
-  cursor: pointer;
-}
-.lp-lang:hover { border-color: var(--amber-dim); color: var(--fg-0); }
-.lp-lang:focus { outline: none; border-color: var(--cyan); }
-.lp-lang option { background: var(--bg-1); color: var(--fg-0); }
+/* Language selector (#lp-lang): shared cross-page control (.kn-langsel,
+   page-nav.css); the choice persists to the same 'kn-lang' key the lab uses. */
 
 /* ---------- Layout: reading column + sticky TOC ---------- */
 .lp-shell {

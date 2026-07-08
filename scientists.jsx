@@ -737,8 +737,8 @@ function UndoButton({ onUndo, title, disabled, lang }) {
 }
 
 // The model-picker "dropdown": once /api/health has reported the installed
-// Ollama tags, the model chip becomes a real <select> (matching the existing
-// .sci-lang-select pattern) so clicking it lists every installed model plus an
+// Ollama tags, the model chip becomes a real <select> (matching the shared
+// .kn-langsel pattern) so clicking it lists every installed model plus an
 // "Auto" entry that hands the pick back to the backend's shared pin / per-
 // language default. Falls back to the old plain chip when the list hasn't
 // loaded yet. `busy` shows a small dot when the backend can't answer right
@@ -2370,15 +2370,18 @@ function SciAppRoot() {
           <span className="kn-brand-name"><strong>ASTRO ELF</strong><span className="kn-brand-suffix">{lang === 'zh' ? '黑洞實驗室' : 'Black Hole Lab'}</span></span>
         </div>
         <div className="spacer" />
+        {/* Chrome order matches the other two pages: page-specific control
+            (here the settings gear; the library has its view toggle) ->
+            page nav -> language select at the far right. */}
+        <button className="kn-navbtn" onClick={() => setShowSettings(true)} title={tr.settings} aria-label={tr.settings}><IconGear /></button>
         <nav className="kn-pagenav" aria-label="頁面導覽">
           <a className="kn-navbtn" href="index.html" title="實驗室 · Lab" aria-label="實驗室"><IconLab /></a>
           <a className="kn-navbtn" href="library.html" title="圖書館 · Library" aria-label="圖書館"><IconBook /></a>
         </nav>
-        <select className="sci-lang-select" aria-label="language" value={lang} onChange={(e) => setLang(e.target.value)}>
+        <select className="kn-langsel" aria-label="language" value={lang} onChange={(e) => setLang(e.target.value)}>
           <option value="zh">繁中</option>
           <option value="en">English</option>
         </select>
-        <button className="sci-iconbtn sci-gear" onClick={() => setShowSettings(true)} title={tr.settings} aria-label={tr.settings}><IconGear /></button>
       </header>
 
       <div className="sci-tabs" role="tablist">

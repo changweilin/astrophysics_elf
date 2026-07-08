@@ -80,10 +80,43 @@
   display: block;
   flex: 0 0 auto;
 }
+/* .kn-navbtn also dresses page-specific <button>s (e.g. the scientists
+   settings gear) so every icon button in the chrome shares one shape. */
+button.kn-navbtn { padding: 0; font: inherit; appearance: none; }
+
+/* ---- Language selector: identical control on all three pages ----
+   Same geometry as .kn-navbtn (height / radius / border), colors through the
+   same --knv-* tokens so it carries each page's palette automatically. */
+.kn-langsel {
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 9px;
+  background: var(--knv-chip-bg, rgba(21, 25, 38, 0.82));
+  color: var(--knv-ink, #cdd6e6);
+  border: 1px solid var(--knv-line, #2a3346);
+  font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.kn-langsel:hover {
+  color: var(--knv-ink-strong, #e6e9ef);
+  border-color: var(--knv-line-hi, #41557d);
+  background: var(--knv-chip-bg-hi, rgba(30, 36, 54, 0.92));
+}
+.kn-langsel:focus { outline: none; border-color: var(--knv-line-hi, #41557d); }
+.kn-langsel option {
+  background: var(--knv-menu-bg, #151a26);
+  color: var(--knv-ink-strong, #e6e9ef);
+}
 
 @media (max-width: 760px) {
   .kn-brand-name .kn-brand-suffix { display: none; }
   .kn-navbtn { width: 30px; height: 30px; }
   .kn-navbtn svg { width: 16px; height: 16px; }
   .kn-pagenav { gap: 6px; }
+  .kn-langsel { height: 30px; padding: 0 7px; font-size: 10px; }
 }

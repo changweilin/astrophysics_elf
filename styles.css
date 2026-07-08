@@ -84,21 +84,7 @@ html, body {
   gap: 14px;
 }
 
-/* ---------- Language selector ---------- */
-.lang-select {
-  background: var(--bg-0, #0b0d12);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  color: var(--fg-1);
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  padding: 3px 6px;
-  cursor: pointer;
-}
-.lang-select:hover { border-color: var(--cyan-dim); color: var(--fg-0); }
-.lang-select:focus { outline: none; border-color: var(--cyan); }
-.lang-select option { background: var(--bg-1); color: var(--fg-0); }
+/* Language selector: shared cross-page control (.kn-langsel, page-nav.css). */
 
 /* ---------- Panels (left + right) ---------- */
 .panel {

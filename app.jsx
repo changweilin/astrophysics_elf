@@ -616,12 +616,12 @@ const KNIconScientist = () => (
   </svg>
 );
 
-// Language dropdown (8 locales). Shared style (.lang-select) lives in the
-// stylesheets. Defined once here and reused by the mobile root too.
+// Language dropdown (8 locales). Shared cross-page style (.kn-langsel) lives
+// in page-nav.css. Defined once here and reused by the mobile root too.
 function LangToggle({ force }) {
   const lang = window.KNi18n.lang;
   return (
-    <select className="lang-select" aria-label="language" value={lang}
+    <select className="kn-langsel" aria-label="language" value={lang}
       onChange={(e) => { window.KNi18n.setLang(e.target.value); force(); }}>
       {window.KNi18n.LANGS.map((l) => (
         <option key={l.code} value={l.code}>{l.name}</option>
