@@ -69,7 +69,10 @@
     const r = disc.outerR + (Math.random() - 0.5) * 3;
     const ang = Math.random() * Math.PI * 2;
     const sign = host.a >= 0 ? 1 : -1;
-    const vCirc = Math.sqrt(host.M / r);
+    // Relativistic circular speed of the pseudo-GR field the particles actually
+    // feel (phys.acceleration) — the pure-Newtonian √(M/r) under-speeds in the
+    // well, launching inner particles on an immediate unphysical plunge.
+    const vCirc = phys.circularSpeed(r, host.M, host.Q || 0) || Math.sqrt(host.M / r);
     // Orbit is built about the host: position offset from the star, velocity is
     // the star's bulk motion plus the local circular speed (keeps the swarm
     // gravitationally bound to a moving primary instead of drifting to origin).

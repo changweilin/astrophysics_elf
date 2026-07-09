@@ -194,7 +194,7 @@ function App() {
             // Drop straight onto a stable circular orbit (no pickup/aim step);
             // drag from the body to fling it, or double-click to re-stabilise.
             const rr = Math.max(0.5, Math.hypot(wx, wy));
-            const vc = window.KNphysics.circularSpeed(rr, SIM.params.M) || Math.sqrt(SIM.params.M / rr);
+            const vc = window.KNphysics.circularSpeed(rr, SIM.params.M, SIM.params.Q) || Math.sqrt(SIM.params.M / rr);
             const dir = Math.sign(SIM.params.a || 1);
             const id = window.KNSim.addBody(SIM, {
               name: `${prefix}-${suffix} ${it.name.split(' ')[0]}`,

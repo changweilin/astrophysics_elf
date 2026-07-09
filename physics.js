@@ -609,6 +609,20 @@
         const inv1 = 1 / (r1 * r1sq);
         ax += -G * M1 * d1x * inv1;
         ay += -G * M1 * d1y * inv1;
+        // Pseudo-GR + RN corrections about the primary — the same effective
+        // -3ML²/r⁴ + Q² terms as the single-BH path (which the binary path
+        // previously dropped, losing the ISCO and photon sphere entirely).
+        // L is measured in the hole's rest frame so its own bulk orbital
+        // motion does not pollute the body's angular momentum about it.
+        {
+          const rvx = vx - (binary.vx1 || 0), rvy = vy - (binary.vy1 || 0);
+          const tang = (d1x * rvy - d1y * rvx) / r1;
+          const L2 = tang * tang * r1sq;
+          const corr = (3 * G * M1 * L2) / (r1sq * r1sq)
+                     - (Q * Q) * (1 + 2 * L2 / r1sq) * inv1;
+          ax -= corr * d1x / r1;
+          ay -= corr * d1y / r1;
+        }
         // Frame dragging on primary (gravitomagnetic, perpendicular to v → no work)
         if (Math.abs(a) > 1e-6) {
           const Bg = (2 * a * M1) / (r1 * r1sq);
@@ -630,6 +644,16 @@
         const inv2 = 1 / (r2 * r2sq);
         ax += -G * M2 * d2x * inv2;
         ay += -G * M2 * d2y * inv2;
+        // Pseudo-GR + RN corrections about the companion (see primary above).
+        {
+          const rvx = vx - (binary.vx2 || 0), rvy = vy - (binary.vy2 || 0);
+          const tang = (d2x * rvy - d2y * rvx) / r2;
+          const L2 = tang * tang * r2sq;
+          const corr = (3 * G * M2 * L2) / (r2sq * r2sq)
+                     - (Q2 * Q2) * (1 + 2 * L2 / r2sq) * inv2;
+          ax -= corr * d2x / r2;
+          ay -= corr * d2y / r2;
+        }
         // Frame dragging from companion (gravitomagnetic, perpendicular to v → no work)
         if (Math.abs(a2) > 1e-6) {
           const Bg2 = (2 * a2 * M2) / (r2 * r2sq);
@@ -656,14 +680,19 @@
     let ax = -G * M * px * inv_r3;
     let ay = -G * M * py * inv_r3;
 
-    // Schwarzschild pseudo-GR correction ~ -3 M L^2 / r^4 — the extra radial
-    // term of the exact geodesic equation d²r/dτ² = -M/r² + L²/r³ - 3ML²/r⁴
-    // (the centrifugal L²/r³ arises naturally from the 2D integration). This
-    // reproduces the exact circular-orbit angular momentum L² = Mr²/(r-3M),
-    // the photon-sphere instability at r = 3M and the true ISCO at r = 6M.
+    // Pseudo-GR correction — the extra radial terms of the exact equatorial
+    // Reissner-Nordström geodesic equation
+    //   d²r/dτ² = -M/r² + Q²/r³ + L²/r³ - 3ML²/r⁴ + 2Q²L²/r⁵
+    // (the centrifugal L²/r³ arises naturally from the 2D integration). The
+    // -3ML²/r⁴ term reproduces the exact circular-orbit angular momentum
+    // L² = Mr²/(r-3M), the photon-sphere instability at r = 3M and the true
+    // ISCO at r = 6M. The Q² terms are GEOMETRIC (charge curves spacetime for
+    // every body, neutral included — distinct from the Coulomb force below):
+    // mildly repulsive, they pull the ISCO inward as |Q| grows.
     const tangential = (px * vy - py * vx) / r;
     const L2 = tangential * tangential * r2;
-    const corr = (3 * G * M * L2) / (r2 * r2);
+    const corr = (3 * G * M * L2) / (r2 * r2)
+               - (Q * Q) * (1 + 2 * L2 / r2) * inv_r3;
     ax -= corr * px / r;
     ay -= corr * py / r;
 
@@ -1030,16 +1059,20 @@
   }
 
   // Circular-orbit speed for the single-BH effective potential (see acceleration).
-  // Balancing v²/r against the radial pull M/r² + 3ML²/r⁴ (L = v·r) for a circular
-  // orbit gives  v_circ² = (M/r) / (1 − 3M/r) — equivalent to the exact
-  // Schwarzschild L² = Mr²/(r − 3M), with the ISCO at r = 6M where dL/dr = 0.
-  // Pure-Newtonian √(M/r) ignores the denominator, so it is too slow for the well
-  // and a body set to it spirals in and merges. Returns 0 where no circular orbit
-  // exists (r ≤ 3M, at or inside the photon sphere); callers fall back.
-  function circularSpeed(r, M) {
-    const denom = 1 - (3 * G * M) / r;
-    if (denom <= 1e-6) return 0;
-    return Math.sqrt((G * M / r) / denom);
+  // Balancing v²/r against the radial pull M/r² − Q²/r³ + 3ML²/r⁴ − 2Q²L²/r⁵
+  // (L = v·r) for a circular orbit gives
+  //   v_circ² = (M/r − Q²/r²) / (1 − 3M/r + 2Q²/r²)
+  // — the exact equatorial Reissner-Nordström value; Q = 0 recovers the
+  // Schwarzschild (M/r)/(1 − 3M/r) with L² = Mr²/(r − 3M) and the ISCO at
+  // r = 6M. Pure-Newtonian √(M/r) ignores the denominator, so it is too slow
+  // for the well and a body set to it spirals in and merges. Returns 0 where
+  // no circular orbit exists (at/inside the photon sphere); callers fall back.
+  function circularSpeed(r, M, Q = 0) {
+    const q2 = Q * Q;
+    const num = G * M / r - q2 / (r * r);
+    const denom = 1 - (3 * G * M) / r + (2 * q2) / (r * r);
+    if (denom <= 1e-6 || num <= 0) return 0;
+    return Math.sqrt(num / denom);
   }
 
   // ── Galactic-structure smooth fields & dynamical friction ─────────────

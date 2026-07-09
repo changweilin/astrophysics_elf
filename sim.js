@@ -244,8 +244,11 @@
       // opts are the companion's lab velocity v₂ = (M1/Mt)·V  ⇒  V = v₂·Mt/M1
       Vx = opts.vx * Mt / M1; Vy = opts.vy * Mt / M1;
     } else {
-      // Stable two-body circular orbit: relative speed √(Mt / r), tangential.
-      const vrel = Math.sqrt(Mt / Math.max(0.5, r));
+      // Stable two-body circular orbit, tangential: the relativistic circular
+      // speed of the GR-augmented relative orbit (see stepBinary's precession
+      // term); falls back to Newtonian √(Mt/r) where no circular orbit exists.
+      const rc = Math.max(0.5, r);
+      const vrel = phys.circularSpeed(rc, Mt) || Math.sqrt(Mt / rc);
       const dir = Math.sign(sim.params.a || 1);
       Vx = -dy0 / r * vrel * dir;
       Vy =  dx0 / r * vrel * dir;
@@ -401,16 +404,31 @@
     let arx = -Mt * Dx * inv;
     let ary = -Mt * Dy * inv;
 
+    // Pseudo-GR periapsis precession — the same conservative −3ML²/r⁴ effective
+    // term the test-body field carries (see phys.acceleration), applied to the
+    // relative orbit with the total mass. Exact in the test-mass limit; a
+    // comparable-mass pair gets the right scale of Schwarzschild-like apsidal
+    // advance (the pulsar-binary signature) without full 1PN machinery. Does no
+    // net work over an orbit, so the Peters energy bookkeeping below is untouched;
+    // negligible for wide structure (galaxy/cluster) pairs where r ≫ Mt.
+    {
+      const tang = (Dx * Vy - Dy * Vx) / r;
+      const gr = (3 * Mt * tang * tang) / r2;   // 3·Mt·L²/r⁴ with L = tang·r
+      arx -= gr * Dx / r;
+      ary -= gr * Dy / r;
+    }
+
     const vrel = Math.hypot(Vx, Vy);
 
     // Peters readout (used for UI + the GW radiation reaction below)
     const pet = phys.peters(M1, M2, r);
     bin.lastPeters = pet;
 
-    // ── Conservative (classical) two-body step ──
-    // The orbital *curvature* is purely Newtonian/Keplerian — same equations the
-    // trajectory preview uses — so the path stays a clean ellipse/circle between
-    // GW losses. Radiation reaction is layered on top as an adiabatic contraction.
+    // ── Conservative two-body step ──
+    // The orbital *curvature* is Newtonian/Keplerian plus the conservative GR
+    // precession term above — same equations the trajectory preview uses — so
+    // the path stays a clean (slowly precessing) ellipse/circle between GW
+    // losses. Radiation reaction is layered on top as an adiabatic contraction.
     Vx += arx * dt; Vy += ary * dt;
     Dx += Vx * dt;  Dy += Vy * dt;
 
@@ -1964,10 +1982,11 @@
     return { pts, fate: 'bound' };
   }
 
-  // Classical two-body prediction for a companion drag-launch — NO GW reaction,
-  // so the previewed curvature is pure Newtonian (same convention as the single
-  // body preview). Forward-integrates the separation D = x2 - x1 under the
-  // two-body law D̈ = -(M1+M2)/r³ · D and returns the companion's path about the
+  // Conservative two-body prediction for a companion drag-launch — NO GW
+  // reaction (same convention as the single-body preview). Forward-integrates
+  // the separation D = x2 - x1 under the two-body law D̈ = -(M1+M2)/r³ · D plus
+  // the same pseudo-GR precession term stepBinary applies, so the previewed
+  // curvature matches the live orbit; returns the companion's path about the
   // conserved barycentre, plus its fate (contact / escape / bound).
   function predictBinaryTrajectory(sim, vx2, vy2, steps = 240, dt = 0.05) {
     const bin = sim.binary;
@@ -1990,7 +2009,11 @@
       const inv = 1 / (r * r2);
       const mx = Dx + Vx * dt * 0.5, my = Dy + Vy * dt * 0.5;   // midpoint position
       const mr2 = mx * mx + my * my, mr = Math.sqrt(mr2), minv = 1 / (mr * mr2);
-      Vx += -Mt * mx * minv * dt; Vy += -Mt * my * minv * dt;
+      // Same pseudo-GR precession term as stepBinary (L about the midpoint).
+      const tang = (mx * Vy - my * Vx) / mr;
+      const gr = (3 * Mt * tang * tang) / mr2;
+      Vx += (-Mt * mx * minv - gr * mx / mr) * dt;
+      Vy += (-Mt * my * minv - gr * my / mr) * dt;
       Dx += Vx * dt; Dy += Vy * dt;
       pts.push(cx + f2 * Dx, cy + f2 * Dy);
       const rr = Math.hypot(Dx, Dy);
@@ -2253,7 +2276,7 @@
     const p = sim.primary;
     const dx = b.x - p.x, dy = b.y - p.y;
     const r = Math.max(0.5, Math.hypot(dx, dy));
-    const vc = window.KNphysics.circularSpeed(r, sim.params.M) || Math.sqrt(sim.params.M / r);
+    const vc = window.KNphysics.circularSpeed(r, sim.params.M, sim.params.Q) || Math.sqrt(sim.params.M / r);
     const sp = Math.hypot(b.vx, b.vy);
     if (sp > 1e-6) {
       b.vx = b.vx / sp * vc;
@@ -2344,7 +2367,10 @@
         if (Math.hypot(b.x - hx, b.y - hy) < d) Mt2 += b._m || 0;
       }
     }
-    const vrel = Math.sqrt(Mt2 / d);
+    // Relativistic circular speed of the GR-augmented relative orbit (falls back
+    // to Newtonian where no circular orbit exists, e.g. heavy structure pairs
+    // circularised inside 3·Mt — the precession term is negligible there anyway).
+    const vrel = phys.circularSpeed(d, Mt2) || Math.sqrt(Mt2 / d);
     const dir = Math.sign(sim.params.a || 1);
     const Vx = -dy / d * vrel * dir;
     const Vy =  dx / d * vrel * dir;

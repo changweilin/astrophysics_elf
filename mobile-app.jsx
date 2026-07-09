@@ -414,7 +414,7 @@ function MobileApp() {
             // Drop straight onto a stable circular orbit (no pickup/aim step);
             // drag from the body to fling it, or double-tap to re-stabilise.
             const rr = Math.max(0.5, Math.hypot(wx, wy));
-            const vc = window.KNphysics.circularSpeed(rr, MSIM.params.M) || Math.sqrt(MSIM.params.M / rr);
+            const vc = window.KNphysics.circularSpeed(rr, MSIM.params.M, MSIM.params.Q) || Math.sqrt(MSIM.params.M / rr);
             const dir = Math.sign(MSIM.params.a || 1);
             const id = window.KNSim.addBody(MSIM, {
               name: `${prefix}-${suffix} ${it.name.split(' ')[0]}`,
