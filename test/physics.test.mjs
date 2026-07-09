@@ -93,10 +93,15 @@ console.log('ergosphereEq / ergospherePole');
 // ── circular speed ─────────────────────────────────────────────────────────────
 console.log('circularSpeed(r,M)');
 {
-  const v = P.circularSpeed(10, 1);          // sqrt((M/r)/(1-3M/r^2))
-  near('v_circ at r=10,M=1', v, Math.sqrt((1 / 10) / (1 - 3 / 100)), 1e-12);
+  const v = P.circularSpeed(10, 1);          // sqrt((M/r)/(1 - 3M/r))
+  near('v_circ at r=10,M=1', v, Math.sqrt((1 / 10) / (1 - 3 / 10)), 1e-12);
   check('v_circ exceeds Newtonian sqrt(M/r)', v > Math.sqrt(1 / 10));
-  check('no circular orbit inside sqrt(3M) -> 0', P.circularSpeed(1, 1) === 0);
+  check('no circular orbit at/inside photon sphere (r <= 3M) -> 0', P.circularSpeed(1, 1) === 0);
+  // Reissner-Nordström: v_circ² = (M/r − Q²/r²) / (1 − 3M/r + 2Q²/r²)
+  const vq = P.circularSpeed(10, 1, 0.6);
+  near('RN v_circ at r=10,M=1,Q=0.6', vq,
+    Math.sqrt((1 / 10 - 0.36 / 100) / (1 - 3 / 10 + 2 * 0.36 / 100)), 1e-12);
+  check('charge is mildly repulsive: v_circ(Q) < v_circ(0)', vq < v);
 }
 
 // ── Peters inspiral ────────────────────────────────────────────────────────────

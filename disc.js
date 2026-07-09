@@ -107,7 +107,14 @@
     }
 
     disc.mDotInst = 0;
+    // α-viscosity is a macroscopic transport RATE (angular momentum per unit
+    // sim-time), so the per-step damping fraction must scale with dt: 1−e^(−k·dt).
+    // A fixed per-call fraction made the inspiral speed depend on the caller's
+    // step size (dt is 0.016..0.05 depending on timescale/frame rate — up to ~3×
+    // more viscous at low timescale). k is calibrated so the reference macro-step
+    // dt = 0.05 keeps the previous tuning.
     const dragCoef = disc.alpha * (0.05 + B * B * 0.7);
+    const damp = Math.min(0.6, 1 - Math.exp(-dragCoef * dt / 0.05));
     const mriKick = B * 0.05 * Math.sqrt(dt);
 
     for (let i = disc.particles.length - 1; i >= 0; i--) {
@@ -126,7 +133,6 @@
         // damp the tangential component of velocity *relative to the host*
         const rvx = p.vx - host.vx, rvy = p.vy - host.vy;
         const vt = rvx * tx + rvy * ty;
-        const damp = Math.min(0.6, dragCoef);
         p.vx -= tx * vt * damp;
         p.vy -= ty * vt * damp;
       }

@@ -1527,7 +1527,9 @@ import * as THREE from './vendor/three.module.js';
       R.pools.label.add(isCompanion ? tr('release → place companion', '放開 → 放置伴星') : tr('release → place', '放開 → 放置'),
         isCompanion ? 'oklch(0.82 0.14 295)' : 'oklch(0.80 0.16 75)', 10, p.wx, p.wy, 0, [24, -6]);
       const r = Math.hypot(p.wx, p.wy);
-      const vc = Math.sqrt(sim.params.M / Math.max(0.5, r));
+      // Same relativistic circular speed the drop itself uses (see sim.js initBinary).
+      const vc = window.KNphysics.circularSpeed(r, sim.params.M, sim.params.Q)
+              || Math.sqrt(sim.params.M / Math.max(0.5, r));
       R.pools.label.add(`r = ${r.toFixed(2)} M${isCompanion ? `  ·  v_circ ≈ ${vc.toFixed(3)} c` : ''}`,
         'oklch(0.58 0.012 255)', 9, p.wx, p.wy, 0, [24, 8]);
     }

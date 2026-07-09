@@ -924,7 +924,7 @@
 
   // Re-seat the pair on a CLEAN circular orbit at separation aTarget about the
   // barycentre, along the current orbital phase, with the exact circular relative
-  // speed √(Mt/a). Used after a discrete orbit change (e.g. common-envelope
+  // speed of the GR-augmented field. Used after a discrete orbit change (e.g. common-envelope
   // ejection) so the system lands on a proper bound orbit instead of an eccentric
   // state that would spuriously pump energy and drift the cores apart.
   function setCircularOrbit(sim, bin, aTarget) {
@@ -934,7 +934,11 @@
     const f1 = M2 / Mt, f2 = M1 / Mt;
     bin.x1 = bin.cx - f1 * aTarget * c; bin.y1 = bin.cy - f1 * aTarget * s;
     bin.x2 = bin.cx + f2 * aTarget * c; bin.y2 = bin.cy + f2 * aTarget * s;
-    const vrel = Math.sqrt(Mt / Math.max(0.5, aTarget));
+    // Relativistic circular speed of the GR-augmented relative orbit (matches
+    // stepBinary's precession term — a post-CE pair lands close-in, where the
+    // Newtonian √(Mt/a) under-speeds and would seed a spurious eccentric orbit).
+    const rc = Math.max(0.5, aTarget);
+    const vrel = phys.circularSpeed(rc, Mt) || Math.sqrt(Mt / rc);
     const vx = -s * vrel * dir, vy = c * vrel * dir;       // perpendicular to the axis
     bin.vx1 = -f1 * vx; bin.vy1 = -f1 * vy;
     bin.vx2 =  f2 * vx; bin.vy2 =  f2 * vy;

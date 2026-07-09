@@ -1330,7 +1330,9 @@
       ctx.fillStyle = 'oklch(0.58 0.012 255)';
       ctx.font = '9px JetBrains Mono, monospace';
       const r = Math.hypot(p.wx, p.wy);
-      const vc = Math.sqrt(sim.params.M / Math.max(0.5, r));
+      // Same relativistic circular speed the drop itself uses (see sim.js initBinary).
+      const vc = window.KNphysics.circularSpeed(r, sim.params.M, sim.params.Q)
+              || Math.sqrt(sim.params.M / Math.max(0.5, r));
       ctx.fillText(`r = ${r.toFixed(2)} M${isCompanion ? `  ·  v_circ ≈ ${vc.toFixed(3)} c` : ''}`, px + 22, py + 8);
     }
 
