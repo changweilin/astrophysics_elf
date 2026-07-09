@@ -41,13 +41,35 @@ function MHDMonitor({ sim, force }) {
   const drag = knUseDragMove('mhd');   // drag-to-move + resize (persisted; CSS spot until moved)
   React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
+  // Draw loop. Prefers the 3D MHD engine view (render3d.mjs): the real oblate
+  // horizon + ergosphere, disc particles at their true flared-height positions,
+  // the poloidal field revolved around the spin axis, and bipolar jet cones
+  // whose length/opening follow the live jet metrics — drag to orbit. Falls
+  // back to the shared 2D renderMHDSide (also used by mobile).
+  const [use3dMHD, setUse3dMHD] = React.useState(false);
   React.useEffect(() => {
     if (collapsed) return;
     const c = canvasRef.current;
     if (!c) return;
-    const ctx = c.getContext('2d');
-    let raf;
+    let raf, view = null, ctx = null, triedView = false, wait = 20;
     function tick() {
+      raf = requestAnimationFrame(tick);
+      if (!triedView) {
+        if (window.KNRender3D) {
+          triedView = true;
+          view = window.KNRender3D.createMHDView(c);
+          if (view) setUse3dMHD(true);
+        } else if (--wait > 0) {
+          return;
+        } else {
+          triedView = true;
+        }
+      }
+      if (view) { view.update(sim, mhdView(sim, active)); return; }
+      if (!ctx) {
+        ctx = c.getContext('2d');
+        if (!ctx) return;
+      }
       const dpr = window.devicePixelRatio || 1;
       const w = c.clientWidth, h = c.clientHeight;
       if (c.width !== w * dpr || c.height !== h * dpr) {
@@ -55,10 +77,9 @@ function MHDMonitor({ sim, force }) {
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       renderMHDSide(ctx, w, h, sim, mhdView(sim, active));
-      raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); if (view) view.dispose(); };
   }, [collapsed, active]);
 
   const m = mhdView(sim, active).m;
@@ -97,7 +118,9 @@ function MHDMonitor({ sim, force }) {
         <div className="microscope-body">
           <div className="kn-win-screen">
             <canvas ref={canvasRef} className="microscope-canvas mhd-canvas" />
-            <div className="microscope-overlay-bl">{tr('SIDE ELEVATION · Ω ↑↓', '側視圖 · Ω ↑↓')}</div>
+            <div className="microscope-overlay-bl">{use3dMHD
+              ? tr('3D · Ω axis ↑↓ · drag to orbit', '3D · Ω 軸 ↑↓ · 拖曳旋轉')
+              : tr('SIDE ELEVATION · Ω ↑↓', '側視圖 · Ω ↑↓')}</div>
           </div>
           {/* Numeric jet readout moved to the right sidebar (panel-right §04d). */}
         </div>

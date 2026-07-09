@@ -62,6 +62,9 @@
 <script src="physics.js"></script>
 <script src="sim.js"></script>
 <script src="render.js"></script>
+<!-- WebGL 3D renderer (defines window.KNRender3D; vendored Three.js). The 2D
+     renderer above stays as the CANVAS2D fallback / mobile path. -->
+<script type="module" src="render3d.mjs"></script>
 <!-- Library-chapter demo configurations (?demo=<id>), consumed by config.js. -->
 <script src="demo-presets.js"></script>
 <script src="config.js"></script>

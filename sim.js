@@ -3700,7 +3700,20 @@
   }
 
   // --- renderer ---
+  // While the desktop root drives the WebGL renderer (sim.view.mode3d), the
+  // world<->screen transforms delegate to the live 3D camera (projection /
+  // equatorial-plane raycast), so hit-testing, placement and aiming stay exact
+  // from any viewing angle. The 2D math is the fallback (mobile root, tests,
+  // CANVAS2D mode).
+  function r3dFor(sim) {
+    if (!sim.view || !sim.view.mode3d) return null;
+    const R3 = (typeof window !== 'undefined') ? window.KNRender3D : null;
+    return (R3 && R3.active && R3.sim === sim) ? R3 : null;
+  }
+
   function worldToScreen(sim, w, h, x, y) {
+    const R3 = r3dFor(sim);
+    if (R3) return R3.worldToScreen(sim, w, h, x, y);
     return [w / 2 + (x + sim.view.ox) * sim.view.scale,
             h / 2 + (y + sim.view.oy) * sim.view.scale];
   }
@@ -3710,6 +3723,8 @@
   // and never held across the next call — never keep two results live at once.
   const _w2s = [0, 0];
   function worldToScreenInto(sim, w, h, x, y) {
+    const R3 = r3dFor(sim);
+    if (R3) return R3.worldToScreenInto(sim, w, h, x, y);
     _w2s[0] = w / 2 + (x + sim.view.ox) * sim.view.scale;
     _w2s[1] = h / 2 + (y + sim.view.oy) * sim.view.scale;
     return _w2s;
@@ -3717,6 +3732,8 @@
 
 
   function screenToWorld(sim, w, h, sx, sy) {
+    const R3 = r3dFor(sim);
+    if (R3) return R3.screenToWorld(sim, w, h, sx, sy);
     const wx = (sx - w / 2) / sim.view.scale - sim.view.ox;
     const wy = (sy - h / 2) / sim.view.scale - sim.view.oy;
     return [wx, wy];

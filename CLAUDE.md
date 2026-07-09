@@ -13,6 +13,12 @@ demo plus an additive high-fidelity physics core.
   `index.html` with in-browser Babel + React 18 UMD. No bundler, no build step.
   - Engine: `physics.js`, `sim.js`, `disc.js` (define `window.KNphysics`,
     `window.KNSim`, `window.KNDisc`).
+  - Renderers: `render.js` (Canvas2D fallback + mobile) and `render3d.mjs`
+    (default desktop WebGL renderer, `window.KNRender3D`, vendored Three.js in
+    `vendor/`). While `sim.view.mode3d` is set, `KNSim.worldToScreen/
+    screenToWorld` delegate to the 3D camera, so pointer interaction is
+    renderer-agnostic. Small windows try `KNRender3D.create*View` first and
+    fall back to the 2D canvas renderers (which mobile still uses).
   - Desktop UI: `panel-*.jsx`, `tidal-scope.jsx`, `mhd-monitor.jsx`,
     `app.jsx` (defines `window.App`).
   - Mobile UI: `mobile-panels.jsx`, `mobile-app.jsx` (defines

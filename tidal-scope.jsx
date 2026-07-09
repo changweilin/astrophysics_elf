@@ -98,13 +98,34 @@ function TidalMicroscope({ sim, force }) {
     if (recent) { setPinnedId(recent.id); setPickCompanion(false); }
   }, [sim.bodies.map((b) => b.state).join(',')]);
 
+  // Draw loop. Prefers the 3D microscope (render3d.mjs): a test sphere deformed
+  // into the true volume-preserving tidal ellipsoid, with 3D stretch/compression
+  // arrows, in the Roche co-rotating frame (BH direction pinned; drag to orbit).
+  // Falls back to the shared 2D renderMicroscope (also used by mobile).
+  const [use3dScope, setUse3dScope] = React.useState(false);
   React.useEffect(() => {
     if (collapsed) return;
     const c = canvasRef.current;
     if (!c) return;
-    const ctx = c.getContext('2d');
-    let raf;
+    let raf, view = null, ctx = null, triedView = false, wait = 20;
     function tick() {
+      raf = requestAnimationFrame(tick);
+      if (!triedView) {
+        if (window.KNRender3D) {
+          triedView = true;
+          view = window.KNRender3D.createTidalView(c);
+          if (view) setUse3dScope(true);
+        } else if (--wait > 0) {
+          return;                          // give the 3D module a moment to load
+        } else {
+          triedView = true;                // module missing → 2D fallback
+        }
+      }
+      if (view) { view.update(sim, bodyRef.current); return; }
+      if (!ctx) {
+        ctx = c.getContext('2d');
+        if (!ctx) return;
+      }
       const dpr = window.devicePixelRatio || 1;
       const w = c.clientWidth, h = c.clientHeight;
       if (c.width !== w * dpr || c.height !== h * dpr) {
@@ -112,10 +133,9 @@ function TidalMicroscope({ sim, force }) {
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       renderMicroscope(ctx, w, h, bodyRef.current, sim);
-      raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); if (view) view.dispose(); };
   }, [collapsed]);
 
   // The full numeric readout (Δg, stretch ratio, integrity, status) renders in
@@ -152,7 +172,9 @@ function TidalMicroscope({ sim, force }) {
         <div className="microscope-body">
           <div className="kn-win-screen">
             <canvas ref={canvasRef} className="microscope-canvas" />
-            <div className="microscope-overlay-bl">×{(60).toFixed(0)} {tr('ZOOM · ROCHE FRAME', '放大 · ROCHE 座標')}</div>
+            <div className="microscope-overlay-bl">{use3dScope
+              ? tr('3D · ROCHE FRAME · drag to orbit', '3D · ROCHE 座標 · 拖曳旋轉')
+              : `×60 ${tr('ZOOM · ROCHE FRAME', '放大 · ROCHE 座標')}`}</div>
           </div>
           {/* Numeric readout (Δg, stretch, integrity, status) moved to the right
               sidebar (panel-right §04c). */}

@@ -218,12 +218,29 @@ function FieldScope({ sim }) {
   // Re-clamp inside the viewport when the collapse toggle changes the height.
   React.useEffect(() => { drag.reclamp(); }, [collapsed]);
 
+  // Draw loop. Prefers the 3D field views (render3d.mjs): the gravity well as a
+  // REAL embedding funnel (the 2D heatmap could only shade its depth) and the GW
+  // strain as a rippling quadrupole sheet — both drag-to-orbit. Falls back to
+  // the shared 2D renderFieldSection (also used by mobile).
   React.useEffect(() => {
     if (collapsed) return undefined;
-    let raf;
+    let raf, triedView = false, wait = 20;
+    const panes = {
+      field: { view: null, ctx: null },
+      gw: { view: null, ctx: null },
+    };
     function draw(c, kind) {
       if (!c) return;
-      const ctx = c.getContext('2d');
+      const pane = panes[kind];
+      if (pane.view) {
+        pane.view.update(sim, { center: knSystemCenter(sim), span: SPAN });
+        return;
+      }
+      if (!pane.ctx) {
+        pane.ctx = c.getContext('2d');
+        if (!pane.ctx) return;
+      }
+      const ctx = pane.ctx;
       const dpr = window.devicePixelRatio || 1;
       const w = c.clientWidth, h = c.clientHeight;
       if (w < 1 || h < 1) return;
@@ -232,12 +249,27 @@ function FieldScope({ sim }) {
       renderFieldSection(ctx, w, h, kind, sim, { center: knSystemCenter(sim), span: SPAN });
     }
     function tick() {
+      raf = requestAnimationFrame(tick);
+      if (!triedView) {
+        if (window.KNRender3D) {
+          triedView = true;
+          if (fieldRef.current) panes.field.view = window.KNRender3D.createFieldView(fieldRef.current, 'field');
+          if (gwRef.current) panes.gw.view = window.KNRender3D.createFieldView(gwRef.current, 'gw');
+        } else if (--wait > 0) {
+          return;
+        } else {
+          triedView = true;
+        }
+      }
       draw(fieldRef.current, 'field');
       draw(gwRef.current, 'gw');
-      raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (panes.field.view) panes.field.view.dispose();
+      if (panes.gw.view) panes.gw.view.dispose();
+    };
   }, [collapsed]);
 
   return (

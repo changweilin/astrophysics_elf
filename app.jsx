@@ -24,7 +24,37 @@ function App() {
   const [playing, setPlaying] = useS(true);
   const [timescale, setTimescale] = useS(() => isFinite(SIM.timescale) ? SIM.timescale : 1);
   const force = () => setTick((t) => t + 1);
-  const canvasRef = useR(null);
+  const canvasRef = useR(null);      // Canvas2D fallback
+  const canvas3dRef = useR(null);    // WebGL 3D (render3d.mjs)
+
+  // 3D render mode: default ON, persisted; falls back to 2D when the module /
+  // WebGL context is unavailable. render3d.mjs is an ES module so it loads
+  // after the Babel scripts — poll until window.KNRender3D appears.
+  const [mode3d, setMode3d] = useS(() => localStorage.getItem('kn_render3d') !== '0');
+  const [r3dReady, setR3dReady] = useS(() => !!window.KNRender3D);
+  useE(() => {
+    if (r3dReady) return;
+    const onReady = () => setR3dReady(true);
+    window.addEventListener('kn3d-ready', onReady);
+    if (window.KNRender3D) setR3dReady(true);
+    return () => window.removeEventListener('kn3d-ready', onReady);
+  }, [r3dReady]);
+  const use3D = mode3d && r3dReady;
+
+  // Attach / detach the WebGL renderer to the 3D canvas.
+  useE(() => {
+    if (!use3D) return;
+    const ok = window.KNRender3D.attach(canvas3dRef.current);
+    if (!ok) { setMode3d(false); return; }
+    return () => { SIM.view.mode3d = false; window.KNRender3D.detach(); };
+  }, [use3D]);
+
+  function toggleMode3d() {
+    const next = !mode3d;
+    localStorage.setItem('kn_render3d', next ? '1' : '0');
+    if (!next) SIM.view.mode3d = false;
+    setMode3d(next);
+  }
 
   // Re-render the whole tree when the UI language changes.
   useE(() => window.KNi18n.subscribe(force), []);
@@ -48,11 +78,15 @@ function App() {
     };
   }, []);
 
-  // Unified pointer interaction (placement / aim / pan / select).
+  // Unified pointer interaction (placement / aim / pan / select). In 3D mode
+  // the same handlers run against the WebGL canvas: screenToWorld raycasts the
+  // camera onto the equatorial plane, so placement/aim/grab stay world-exact
+  // from any angle; right-drag (or Ctrl+drag) orbits the camera.
   useE(() => {
-    const c = canvasRef.current;
+    const c = use3D ? canvas3dRef.current : canvasRef.current;
     if (!c) return;
     let pan = null;
+    let orbit = null;
     let suppressClick = false;
     let downAt = null;
     let lastDown = null;        // first-press hit {kind,bodyId,sx,sy,t}; lets a
@@ -87,6 +121,12 @@ function App() {
 
     function onMove(e) {
       const { sx, sy, w, h, inside } = clientToCanvas(e);
+      // camera orbit (3D)
+      if (orbit) {
+        window.KNRender3D.orbitBy(e.clientX - orbit.x, e.clientY - orbit.y);
+        orbit = { x: e.clientX, y: e.clientY };
+        return;
+      }
       // update placement ghost
       if (SIM.placement) {
         const [wx, wy] = window.KNSim.screenToWorld(SIM, w, h, sx, sy);
@@ -115,17 +155,23 @@ function App() {
         }
         return;
       }
-      // pan
+      // pan — anchored to the world point grabbed at mousedown, so it is exact
+      // both in the flat 2D view and under any tilted 3D camera (plane raycast).
       if (pan) {
-        const dx = (e.clientX - pan.x) / SIM.view.scale;
-        const dy = (e.clientY - pan.y) / SIM.view.scale;
-        SIM.view.ox = pan.ox + dx;
-        SIM.view.oy = pan.oy + dy;
+        const [wxN, wyN] = window.KNSim.screenToWorld(SIM, w, h, sx, sy);
+        SIM.view.ox += wxN - pan.wx0;
+        SIM.view.oy += wyN - pan.wy0;
       }
     }
 
     function onUp(e) {
       const { sx, sy, w, h, inside } = clientToCanvas(e);
+      // 0) End camera orbit
+      if (orbit) {
+        orbit = null;
+        suppressClick = true; setTimeout(() => { suppressClick = false; }, 60);
+        return;
+      }
       // 1) Placement release: commit body + enter aim mode
       if (SIM.placement) {
         if (inside) {
@@ -233,6 +279,14 @@ function App() {
     function onDown(e) {
       const { sx, sy, w, h } = clientToCanvas(e);
       downAt = { sx, sy };
+      // 3D camera orbit: right button (or Ctrl+left). Takes priority over every
+      // scene interaction so the view can be inspected mid-placement too.
+      if (use3D && (e.button === 2 || (e.button === 0 && e.ctrlKey))) {
+        orbit = { x: e.clientX, y: e.clientY };
+        e.preventDefault();
+        return;
+      }
+      if (e.button !== 0) return;
       // Aiming-armed (just-placed body/companion, not yet flung): start the
       // slingshot ONLY when the press begins on that held object. A press
       // elsewhere commits it as-is and falls through to normal interaction, so it
@@ -290,7 +344,8 @@ function App() {
       // a pan, which would otherwise leak past the release and stick the view to
       // the cursor). A locked reference frame drives view.ox/oy itself.
       if (!SIM.placement && !SIM.aiming && (!SIM.view.frame || SIM.view.frame === 'free')) {
-        pan = { x: e.clientX, y: e.clientY, ox: SIM.view.ox, oy: SIM.view.oy };
+        const [wx0, wy0] = window.KNSim.screenToWorld(SIM, w, h, sx, sy);
+        pan = { x: e.clientX, y: e.clientY, wx0, wy0 };
       }
     }
 
@@ -369,10 +424,13 @@ function App() {
       SIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, Math.max(window.KNphysics.VIEW_SCALE_MIN, SIM.view.scale * k));
     }
 
+    function onCtxMenu(e) { if (use3D) e.preventDefault(); }   // right-drag = orbit
+
     c.addEventListener('mousedown', onDown);
     c.addEventListener('click', onClick);
     c.addEventListener('dblclick', onDblClick);
     c.addEventListener('wheel', onWheel, { passive: false });
+    c.addEventListener('contextmenu', onCtxMenu);
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     return () => {
@@ -381,16 +439,16 @@ function App() {
       c.removeEventListener('click', onClick);
       c.removeEventListener('dblclick', onDblClick);
       c.removeEventListener('wheel', onWheel);
+      c.removeEventListener('contextmenu', onCtxMenu);
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, []);
+  }, [use3D]);
 
   // animation loop
   useE(() => {
     const c = canvasRef.current;
     if (!c) return;
-    const ctx = c.getContext('2d');
     let raf, last = performance.now(), frame = 0;
     function loop(now) {
       const dt = Math.min(0.05, (now - last) / 1000);
@@ -406,15 +464,22 @@ function App() {
       SIM.timescale = timescale;
       window.KNSim.step(SIM, dt);
 
-      // resize
-      const dpr = window.devicePixelRatio || 1;
-      const cssW = c.clientWidth, cssH = c.clientHeight;
-      if (c.width !== cssW * dpr || c.height !== cssH * dpr) {
-        c.width = cssW * dpr; c.height = cssH * dpr;
+      // draw — WebGL 3D scene, or the Canvas2D top-down fallback
+      SIM.view.mode3d = use3D;
+      if (use3D && window.KNRender3D.renderer) {
+        const c3 = canvas3dRef.current;
+        if (c3) window.KNRender3D.render(SIM, c3.clientWidth, c3.clientHeight);
+      } else {
+        const ctx = c.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        const cssW = c.clientWidth, cssH = c.clientHeight;
+        if (c.width !== cssW * dpr || c.height !== cssH * dpr) {
+          c.width = cssW * dpr; c.height = cssH * dpr;
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        window.KNSim.render(SIM, ctx, cssW, cssH);
+        window.KNSim.renderInteraction(SIM, ctx, cssW, cssH);
       }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      window.KNSim.render(SIM, ctx, cssW, cssH);
-      window.KNSim.renderInteraction(SIM, ctx, cssW, cssH);
 
       // throttle React re-render to ~15 Hz for telemetry
       frame++;
@@ -423,7 +488,7 @@ function App() {
     }
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [playing, timescale]);
+  }, [playing, timescale, use3D]);
 
   // keyboard
   useE(() => {
@@ -492,10 +557,15 @@ function App() {
       <LeftPanel sim={SIM} force={force} />
 
       <div className="viewport" style={{ cursor: SIM.placement ? 'crosshair' : SIM.moving ? 'move' : (SIM.aiming && !SIM.aiming.isAiming) ? 'grab' : 'default' }}>
-        <canvas ref={canvasRef} />
+        <canvas ref={canvasRef} style={{ display: use3D ? 'none' : 'block' }} />
+        <canvas ref={canvas3dRef} style={{ display: use3D ? 'block' : 'none' }} />
         <div className="overlay-tl">
-          <div className="frame-id">{tr('Equatorial slice · θ = π/2', '赤道切面 · θ = π/2')}</div>
-          <div className="frame-coord">{tr('scale', '比例')}: 1 px = {(1 / SIM.view.scale).toFixed(3)} M · {tr('drag to pan · scroll to zoom', '拖曳平移 · 滾輪縮放')}</div>
+          <div className="frame-id">{use3D
+            ? tr('3D · equatorial plane z = 0 · spin axis +z', '3D · 赤道面 z = 0 · 自轉軸 +z')
+            : tr('Equatorial slice · θ = π/2', '赤道切面 · θ = π/2')}</div>
+          <div className="frame-coord">{tr('scale', '比例')}: 1 px = {(1 / SIM.view.scale).toFixed(3)} M · {use3D
+            ? tr('drag to pan · right-drag to orbit · scroll to zoom', '拖曳平移 · 右鍵拖曳旋轉視角 · 滾輪縮放')
+            : tr('drag to pan · scroll to zoom', '拖曳平移 · 滾輪縮放')}</div>
           {SIM.placement && (
             <div className="frame-coord" style={{color: SIM.placement.item.isCompanion ? 'oklch(0.82 0.14 295)' : 'var(--amber)'}}>
               ● {tr('PLACEMENT', '放置')} · {SIM.placement.item.name} · {tr('ESC to cancel', 'ESC 取消')}
@@ -538,11 +608,23 @@ function App() {
         </div>
         <div className="overlay-br">
           <div className="view-zoom" role="group" aria-label={tr('Zoom', '縮放')}>
+            {use3D && window.KNRender3D.isTilted() && (
+              <button title={tr('Reset to top-down view', '回到垂直俯視')}
+                onClick={() => { window.KNRender3D.resetView(); force(); }}>⊙</button>
+            )}
             <button title={tr('Zoom in', '放大')} onClick={() => { SIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, SIM.view.scale * 1.25); force(); }}>+</button>
             <button title={tr('Fit body to view', '符合天體尺度')} onClick={() => { window.KNSim.fitView(SIM); force(); }}>⤢</button>
             <button title={tr('Zoom out', '縮小')} onClick={() => { SIM.view.scale = Math.max(window.KNphysics.VIEW_SCALE_MIN, SIM.view.scale * 0.8); force(); }}>−</button>
           </div>
-          <div>{tr('RENDER', '繪製')} · CANVAS2D · {Math.round(SIM.view.scale)}px/M</div>
+          <div>
+            <button className="kn-rendermode" title={r3dReady
+                ? tr('Toggle 3D / 2D renderer', '切換 3D / 2D 繪製')
+                : tr('3D renderer not available', '3D 繪製尚未就緒')}
+              onClick={toggleMode3d} disabled={!r3dReady}>
+              {tr('RENDER', '繪製')} · {use3D ? 'WEBGL-3D' : 'CANVAS2D'}
+            </button>
+            {' '}· {Math.round(SIM.view.scale)}px/M
+          </div>
         </div>
 
         <TidalMicroscope sim={SIM} force={force} />
