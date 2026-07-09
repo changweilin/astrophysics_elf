@@ -205,18 +205,28 @@
     if (!bin) return;
     const M1 = sim.params.M, M2 = bin.M2, Mt = M1 + M2;
     bin.x1 = sim.primary.x; bin.y1 = sim.primary.y;
-    // Keep the companion just clear of surface CONTACT (1.25x the summed
-    // photospheres/horizons) so a freshly placed pair doesn't merge on touch — but
-    // do NOT push it out past its Roche lobe: a star placed near contact fills its
-    // lobe and transfers mass, which is exactly the Roche-lobe overflow we want to
-    // show. The transfer / common envelope it triggers evolves gradually (see
-    // stepCommonEnvelope), so the pair does not snap into a compact remnant.
+    // Keep the companion clear of surface CONTACT (1.25x the summed photospheres /
+    // horizons) so a freshly placed pair doesn't merge on touch.
     const surfaceOf = (type, M, Q, a, Rs) => (type || 'bh') === 'bh'
       ? (() => { const h = phys.horizons(M, Q || 0, a || 0); return (isFinite(h.rplus) && !h.naked) ? h.rplus : 2 * M; })()
       : (Rs || 3);
     const surf1 = surfaceOf(sim.params.type, M1, sim.params.Q, sim.params.a, sim.params.R_star);
     const surf2 = surfaceOf(bin.type, M2, bin.Q2, bin.a2, bin.R_star2);
-    const rMin = 1.25 * (surf1 + surf2);
+    // …and clear of the ROCHE LOBE as well. Contact clearance alone is not enough:
+    // an extended star fills its lobe at ~2.6x its own radius (Eggleton f_L ~ 0.38),
+    // well outside the 1.25x contact floor, so a freshly placed stellar pair would
+    // overflow — and form a common envelope that spirals straight to a merger — on
+    // the very first step, before the user can circularise or fling it. The lobe is
+    // linear in the separation, so the smallest lobe-clearing separation solves
+    // directly. Compact remnants (WD/NS/BH) never overflow, so they impose nothing.
+    const M1sun = starMsun(sim, bin, 1), M2sun = starMsun(sim, bin, 2);
+    const extended = (t) => t === 'ms' || t === 'giant';
+    const lobeClear = (Rs, Mself, Mother) =>
+      Rs / Math.max(1e-6, phys.rocheLobeEggleton(Mself, Mother, 1));
+    const lobe1 = extended(sim.params.type) ? lobeClear(sim.params.R_star || 3, M1sun, M2sun) : 0;
+    const lobe2 = extended(bin.type) ? lobeClear(bin.R_star2 || 3, M2sun, M1sun) : 0;
+    // 1.1x margin so the pair starts detached rather than exactly at the lobe.
+    const rMin = Math.max(1.25 * (surf1 + surf2), 1.1 * Math.max(lobe1, lobe2));
     let dx0 = wx - bin.x1, dy0 = wy - bin.y1;
     let r = Math.hypot(dx0, dy0);
     if (r < 1e-6) { dx0 = 1; dy0 = 0; r = 1; }          // degenerate → +x axis
@@ -224,7 +234,7 @@
       const f = rMin / r;
       wx = bin.x1 + dx0 * f; wy = bin.y1 + dy0 * f;
       dx0 *= f; dy0 *= f; r = rMin;
-      logEv(sim, 'amber', trp('separation raised to {r} M to clear stellar contact', { r: r.toFixed(1) }));
+      logEv(sim, 'amber', trp('separation raised to {r} M to clear the Roche lobe', { r: r.toFixed(1) }));
     }
     // Fit the camera so a widely separated (large-star) pair stays on screen.
     // Only ever zoom out, so a deliberately close placement is left framed.
