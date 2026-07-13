@@ -190,9 +190,14 @@
   }
 
   // ---------------------------------------------------------------- component
-  // KNKG.mount(container, { lang }) -> { destroy, setLang }
+  // KNKG.mount(container, { lang, focus }) -> { destroy }
+  //   focus: { qid, q } -- open centered on this entity instead of the
+  //   remembered/busiest one. `qid` centers directly; `q` (a term label, e.g. a
+  //   link from the course text) is resolved to the best-matching entity and
+  //   also seeds the search box, so the reader sees where they landed.
   function mount(container, opts) {
     var lang = (opts && opts.lang) || 'en';
+    var focus = (opts && opts.focus && (opts.focus.qid || opts.focus.q)) ? opts.focus : null;
     var destroyed = false;
     var t = function (pair) { return pair[lang] != null ? pair[lang] : pair.en; };
 
@@ -809,8 +814,9 @@
         });
         // First load: reopen on whatever node the reader last centered on (see
         // CENTER_KEY), falling back to the busiest entity so the stage is
-        // never blank (including when the saved node no longer resolves).
-        if (!q && !focusQid && r.entities[0]) {
+        // never blank (including when the saved node no longer resolves). A
+        // caller-supplied focus (a term link from the course) wins over both.
+        if (!q && !focusQid && !focus && r.entities[0]) {
           var saved = savedCenterQid();
           focusEntity(saved || r.entities[0].qid, { fallbackQid: r.entities[0].qid });
         }
@@ -1237,7 +1243,22 @@
     repaintDepthBtns();
     repaintHistButtons();
     resize();
-    loadList('');
+    if (focus) {
+      if (focus.q) inQ.value = focus.q;
+      loadList(focus.q || '');
+      if (focus.qid) {
+        focusEntity(focus.qid);
+      } else {
+        // Label-only link (the term has no entity id yet): center on the best
+        // match the KB can offer for that label.
+        window.KNKB.api('/api/entities?limit=1&q=' + encodeURIComponent(focus.q)).then(function (r) {
+          if (destroyed) return;
+          if (r.entities && r.entities[0]) focusEntity(r.entities[0].qid);
+        }).catch(function () { /* the browse list already reports the failure */ });
+      }
+    } else {
+      loadList('');
+    }
     detail.appendChild(el('div', 'kg-msg', t(STR.pickNode)));
 
     return {

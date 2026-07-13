@@ -64,10 +64,15 @@
     return 'course';
   })();
   var kgInstance = null; // live KNKG mount (destroyed when leaving graph view)
+  var kgFocus = null;    // {qid, q} the graph opens on (set by a course term link)
 
-  function setView(next) {
+  function setView(next, focus) {
     if (next !== 'course' && next !== 'graph') return;
-    if (next === view) return;
+    kgFocus = focus || null;
+    if (next === view) {
+      if (focus) render(); // already in the graph: re-center it on the new term
+      return;
+    }
     if (view === 'course') saveScroll(); // keep the reading position we leave
     view = next;
     try { localStorage.setItem(VIEW_KEY, next); } catch (e) {}
@@ -150,6 +155,160 @@
     return document.createComment('unknown block');
   }
 
+  // ---- glossary -> knowledge graph ---------------------------------------
+  // Terms are matched on a normalised surface form (see library-terms.js):
+  // lower-cased, parentheticals dropped ("event horizon (事件視界)"), dashes
+  // unified, and a trailing plural 's' retried. Latin matches additionally
+  // require word boundaries so "galaxy" cannot fire inside "galaxies'".
+  function normTerm(s) {
+    return String(s || '')
+      .replace(/[（(][^）)]*[）)]/g, '')
+      .replace(/[‐-―−]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  var termIndex = (function () {
+    var idx = {};
+    (window.KN_LIB_TERMS || []).forEach(function (e) {
+      Object.keys(e).forEach(function (k) {
+        if (k === 'qid' || !Array.isArray(e[k])) return;
+        e[k].forEach(function (form) {
+          var n = normTerm(form);
+          if (n && !idx[n]) idx[n] = e;
+        });
+      });
+    });
+    return idx;
+  })();
+
+  function lookupTerm(text) {
+    var n = normTerm(text);
+    if (!n) return null;
+    if (termIndex[n]) return termIndex[n];
+    if (n.length > 3 && n.charAt(n.length - 1) === 's' && termIndex[n.slice(0, -1)]) return termIndex[n.slice(0, -1)];
+    return null;
+  }
+
+  function isAscii(s) { return /^[\x20-\x7e]+$/.test(s); }
+
+  // Surface forms for the language actually on screen. Non-en/zh locales render
+  // the English text (see t()), so they use the English forms too.
+  function formsFor(entry) {
+    var f = entry[lang] || entry.en || [];
+    return f.slice().sort(function (a, b) { return b.length - a.length; });
+  }
+
+  function termAnchor(entry, text) {
+    var a = el('a', 'lp-term');
+    a.href = 'library.html?kg=' + encodeURIComponent(entry.qid || text);
+    if (entry.qid) a.dataset.qid = entry.qid;
+    a.dataset.q = text;
+    a.title = t({ en: 'Open in the knowledge graph', zh: '在知識圖譜中開啟' });
+    a.appendChild(document.createTextNode(text));
+    return a;
+  }
+
+  // Text nodes we may rewrite: prose only. Equations, figures, headings and
+  // anything already inside a link are left alone.
+  var SKIP_TAGS = { A: 1, VAR: 1, H2: 1, H3: 1, FIGURE: 1, CODE: 1, BUTTON: 1 };
+  function proseTextNodes(root) {
+    var out = [];
+    var walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        for (var p = node.parentNode; p && p !== root; p = p.parentNode) {
+          if (SKIP_TAGS[p.tagName] || (p.classList && (p.classList.contains('lp-eq') || p.classList.contains('lp-games') || p.classList.contains('lp-ask')))) {
+            return NodeFilter.FILTER_REJECT;
+          }
+        }
+        return node.nodeValue && node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    var n;
+    while ((n = walk.nextNode())) out.push(n);
+    return out;
+  }
+
+  function findSurface(hay, needle) {
+    var i = hay.toLowerCase().indexOf(needle.toLowerCase());
+    if (i < 0) return -1;
+    if (!isAscii(needle)) return i;
+    var before = i > 0 ? hay.charAt(i - 1) : ' ';
+    var after = hay.charAt(i + needle.length) || ' ';
+    if (/[A-Za-z0-9]/.test(before) || /[A-Za-z0-9]/.test(after)) return -1;
+    return i;
+  }
+
+  // One chapter, two passes: (1) the <span class="term"> markup the content
+  // already carries becomes a graph link; (2) any glossary term still unlinked
+  // in this chapter is linked on its first prose occurrence. A term links at
+  // most once per chapter -- a page of blue is a page nobody reads.
+  function linkifyTerms(sec) {
+    var used = {};
+    Array.prototype.forEach.call(sec.querySelectorAll('span.term'), function (span) {
+      var entry = lookupTerm(span.textContent);
+      if (!entry) return;
+      var a = termAnchor(entry, span.textContent);
+      a.className = 'lp-term term';
+      span.parentNode.replaceChild(a, span);
+      used[entry.qid || normTerm(span.textContent)] = true;
+    });
+
+    (window.KN_LIB_TERMS || []).forEach(function (entry) {
+      var key = entry.qid || normTerm((entry.en || [''])[0]);
+      if (used[key]) return;
+      var forms = formsFor(entry);
+      var nodes = proseTextNodes(sec);
+      for (var i = 0; i < nodes.length && !used[key]; i++) {
+        var node = nodes[i];
+        for (var j = 0; j < forms.length; j++) {
+          var at = findSurface(node.nodeValue, forms[j]);
+          if (at < 0) continue;
+          var hit = node.nodeValue.substr(at, forms[j].length);
+          var tail = node.splitText(at);
+          tail.nodeValue = tail.nodeValue.slice(hit.length);
+          tail.parentNode.insertBefore(termAnchor(entry, hit), tail);
+          used[key] = true;
+          break;
+        }
+      }
+    });
+  }
+
+  // ---- chapter-closing scientist ------------------------------------------
+  // Each chapter ends with the scientist who owns it offering follow-up
+  // questions; a click hands the question to the Scientists page, which selects
+  // that persona and asks it (see library-asks.js + scientists.jsx deep link).
+  function renderAsk(ask) {
+    var box = el('aside', 'lp-ask');
+    var face = document.createElement('img');
+    face.className = 'ask-face';
+    face.src = '/avatars/' + ask.sci + '.png';
+    face.alt = '';
+    face.loading = 'lazy';
+    box.appendChild(face);
+
+    var body = el('div', 'ask-body');
+    body.appendChild(el('p', 'ask-lead',
+      '<b>' + t(ask.name) + '</b> ' + t({ en: 'is here for your questions', zh: '在這裡回答你的問題' })));
+    var row = el('div', 'ask-qs');
+    (ask.qs || []).forEach(function (q) {
+      var a = el('a', 'lp-askq');
+      a.href = 'scientists.html?sci=' + encodeURIComponent(ask.sci) + '&ask=' + encodeURIComponent(t(q));
+      a.appendChild(el('span', 'qm', '?'));
+      a.appendChild(document.createTextNode(t(q)));
+      row.appendChild(a);
+    });
+    var own = el('a', 'lp-askq own');
+    own.href = 'scientists.html?sci=' + encodeURIComponent(ask.sci);
+    own.appendChild(document.createTextNode(t({ en: 'Ask something else…', zh: '問點別的…' })));
+    row.appendChild(own);
+    body.appendChild(row);
+    box.appendChild(body);
+    return box;
+  }
+
   // ---- chapter demo mini-games -------------------------------------------
   // Launch buttons into the lab with a topic-matched configuration
   // (index.html?demo=<id>; see demo-presets.js + config.js applyDemo).
@@ -229,7 +388,7 @@
       var wrap = el('div', 'lp-kg');
       main.appendChild(wrap);
       if (window.KNKG && window.KNKB) {
-        kgInstance = window.KNKG.mount(wrap, { lang: lang });
+        kgInstance = window.KNKG.mount(wrap, { lang: lang, focus: kgFocus });
       } else {
         wrap.appendChild(el('p', null, 'knowledge-graph module failed to load'));
       }
@@ -248,6 +407,9 @@
     hero.appendChild(el('p', 'lede', t(p.lede)));
     main.appendChild(hero);
     (p.blocks || []).forEach(function (b) { hero.appendChild(renderBlock(b)); });
+    linkifyTerms(hero);
+    var heroAsk = window.KN_LIB_ASKS && window.KN_LIB_ASKS.prologue;
+    if (heroAsk) hero.appendChild(renderAsk(heroAsk));
 
     // chapters
     (data.chapters || []).forEach(function (ch) {
@@ -257,9 +419,13 @@
       sec.appendChild(el('h2', null, t(ch.title)));
       if (ch.sub) sec.appendChild(el('p', 'ch-sub', t(ch.sub)));
       (ch.blocks || []).forEach(function (b) { sec.appendChild(renderBlock(b)); });
+      linkifyTerms(sec);
       // Topic-matched lab demos for this chapter (demo-presets.js).
       var games = window.KN_CHAPTER_GAMES && window.KN_CHAPTER_GAMES[ch.id];
       if (games && games.length) sec.appendChild(renderGames(games));
+      // ...and the scientist who closes the chapter (library-asks.js).
+      var ask = window.KN_LIB_ASKS && window.KN_LIB_ASKS[ch.id];
+      if (ask) sec.appendChild(renderAsk(ask));
       main.appendChild(sec);
 
       // TOC entry
@@ -304,6 +470,16 @@
   }
 
   // ---- boot ------------------------------------------------------------
+  // ?kg=<qid|term> opens the library straight in the graph view, centered on
+  // that entity (what a term link in the course text points at, so the link is
+  // shareable and survives a reload).
+  function focusFromQuery() {
+    var v = '';
+    try { v = (new URLSearchParams(window.location.search).get('kg') || '').trim(); } catch (e) {}
+    if (!v) return null;
+    return /^Q\d+$/.test(v) ? { qid: v, q: '' } : { qid: '', q: v };
+  }
+
   function boot() {
     var sel = document.getElementById('lp-lang');
     if (sel) {
@@ -319,6 +495,29 @@
     var bg = document.getElementById('lp-view-graph');
     if (bc) bc.addEventListener('click', function () { setView('course'); });
     if (bg) bg.addEventListener('click', function () { setView('graph'); });
+
+    // Term links stay in-page (the graph is a view of this same page); a
+    // modified click keeps the browser's own "open in a new tab" behaviour.
+    var main = document.getElementById('lp-main');
+    if (main) {
+      main.addEventListener('click', function (ev) {
+        if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+        var a = ev.target.closest ? ev.target.closest('a.lp-term') : null;
+        if (!a) return;
+        ev.preventDefault();
+        var focus = { qid: a.dataset.qid || '', q: a.dataset.q || '' };
+        try {
+          history.replaceState(null, '', 'library.html?kg=' + encodeURIComponent(focus.qid || focus.q));
+        } catch (e) {}
+        setView('graph', focus);
+      });
+    }
+
+    var booted = focusFromQuery();
+    if (booted) {
+      view = 'graph';
+      kgFocus = booted;
+    }
     render();
   }
   if (document.readyState === 'loading') {

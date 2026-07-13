@@ -2088,6 +2088,47 @@ function SciAppRoot() {
     );
   }
 
+  // ---- deep link from the library: ?sci=<id>&ask=<question> ----
+  // The chapter-closing scientist card (library-asks.js) hands us a persona and
+  // the question the reader picked. Select the persona, then ask for them once
+  // the backend is up; if it never comes up, leave the question in the composer
+  // rather than dropping it. Read once and stripped from the URL immediately so
+  // a reload cannot re-send it.
+  const deepLinkRef = useRef(undefined);
+  if (deepLinkRef.current === undefined) {
+    let dl = null;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const sci = (p.get('sci') || '').trim();
+      const ask = (p.get('ask') || '').trim();
+      if (sci || ask) {
+        dl = { sci, ask };
+        p.delete('sci'); p.delete('ask');
+        const qs = p.toString();
+        window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+      }
+    } catch (e) { dl = null; }
+    deepLinkRef.current = dl;
+  }
+
+  useEffect(() => {
+    const dl = deepLinkRef.current;
+    if (!dl || !scientists.length) return;
+    setView('chat'); // a library question is a one-on-one question
+    if (dl.sci && dl.sci !== selectedId && scientists.some((s) => s.id === dl.sci)) {
+      selectScientist(dl.sci);
+      return; // apply the question on the next pass, once the session has switched
+    }
+    if (!dl.ask) { deepLinkRef.current = null; return; }
+    if (health === 'online' && !streaming) {
+      deepLinkRef.current = null;
+      sendMessage(dl.ask);
+    } else if (health === 'offline') {
+      deepLinkRef.current = null;
+      setInput(dl.ask);
+    }
+  }, [scientists, selectedId, health, streaming, sendMessage]);
+
   function onKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   }
