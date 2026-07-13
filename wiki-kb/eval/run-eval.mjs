@@ -54,13 +54,17 @@ export async function runEval(db, {
 } = {}) {
   const cases = loadGolden(datasetPath).slice(0, limit);
   const full = mode === 'full';
-  const judge = full ? (judgeModel || await resolveJudgeModel()) : null;
-  const answerer = full ? (answerModel || await resolveAnswerModel()) : null;
+  // Judge/answerer are resolved per-case (see resolveJudgeModel/
+  // resolveAnswerModel lang argument) because zh and en cases need different
+  // models -- the generic auto-pick free-writes prose instead of the strict
+  // verdict format for zh once the judge prompt carries several passages. An
+  // explicit --judge/--answer CLI flag overrides this and applies globally.
+  const modelsUsed = new Set();
 
   const runId = Number(db.prepare(
     `INSERT INTO eval_runs(ts,mode,judge_model,answer_model,k,graph,cases)
      VALUES(?,?,?,?,?,?,?)`
-  ).run(now(), mode, judge, answerer, k, graph ? 1 : 0, cases.length).lastInsertRowid);
+  ).run(now(), mode, judgeModel ?? null, answerModel ?? null, k, graph ? 1 : 0, cases.length).lastInsertRowid);
 
   const insCase = db.prepare(
     `INSERT INTO eval_cases(run_id,case_id,lang,question,ground_truth,answer,contexts,metrics,detail)
@@ -84,6 +88,13 @@ export async function runEval(db, {
     let answer = null;
     const detail = {};
     if (full) {
+      const judge = judgeModel || await resolveJudgeModel(c.lang);
+      const answerer = answerModel || await resolveAnswerModel(c.lang);
+      modelsUsed.add(`${c.lang}:judge=${judge}`);
+      modelsUsed.add(`${c.lang}:answer=${answerer}`);
+      detail.judgeModel = judge;
+      detail.answerModel = answerer;
+
       const { context } = buildContext(results);
       const tA = Date.now();
       try {
@@ -145,8 +156,15 @@ export async function runEval(db, {
       hallucination: round3(avg(acc.hallucination)),
     } : {}),
   };
+  if (full && !judgeModel && !answerModel) {
+    // Per-case auto-picked models can differ by lang (see resolveJudgeModel);
+    // record what actually ran instead of leaving the run-level columns
+    // referring to a single global model that was never used as such.
+    const summary = [...modelsUsed].sort().join(', ');
+    db.prepare('UPDATE eval_runs SET judge_model=?, answer_model=? WHERE id=?').run(summary, summary, runId);
+  }
   db.prepare('UPDATE eval_runs SET metrics=? WHERE id=?').run(JSON.stringify(metrics), runId);
-  return { runId, mode, k, graph, cases: cases.length, judge, answerer, metrics };
+  return { runId, mode, k, graph, cases: cases.length, models: [...modelsUsed].sort(), metrics };
 }
 
 // ---- CLI ----------------------------------------------------------------------
@@ -171,5 +189,6 @@ if (isMain) {
     log: console.log,
   });
   console.log(`\nrun #${r.runId} (${r.mode}, graph=${r.graph}, k=${r.k}, ${r.cases} cases)`);
+  if (r.models.length) console.log(`  models: ${r.models.join(', ')}`);
   for (const [key, value] of Object.entries(r.metrics)) console.log(`  ${key}: ${value}`);
 }

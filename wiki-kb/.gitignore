@@ -1,3 +1,6 @@
 # SQLite corpus (rebuildable from Wikipedia via crawl.mjs)
 data/
 *.jsonl
+# ...except the hand-curated eval seed set -- this is checked-in test data,
+# not a rebuildable crawl artifact (see eval/README.md).
+!eval/golden.jsonl

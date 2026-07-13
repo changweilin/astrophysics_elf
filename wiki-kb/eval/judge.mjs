@@ -8,10 +8,34 @@ import { config } from '../config.mjs';
 import { withBusy } from '../lib/ollama-gate.mjs';
 import { resolveTranslateModel } from '../lib/translate.mjs';
 
-export async function resolveJudgeModel() {
+// Best installed zh-instruction-following tag, cached per process (same
+// staleness assumption as resolveTranslateModel: Ollama tags are stable for
+// the life of the server).
+const ZH_PREFERRED_RE = /taiwan|qwen/i;
+let cachedZhModel;
+async function resolveZhModel() {
+  if (cachedZhModel !== undefined) return cachedZhModel;
+  try {
+    const res = await fetch(`${config.embed.baseUrl}/api/tags`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    const data = res.ok ? await res.json() : null;
+    const names = (data?.models ?? [])
+      .map((m) => String(m.name || m.model || ''))
+      .filter((n) => n && !/bge|embed|minilm/i.test(n));
+    cachedZhModel = names.find((n) => ZH_PREFERRED_RE.test(n)) ?? null;
+  } catch {
+    cachedZhModel = null;
+  }
+  return cachedZhModel;
+}
+
+export async function resolveJudgeModel(lang) {
+  if (lang === 'zh') return config.eval.judgeModelZh || (await resolveZhModel()) || resolveTranslateModel();
   return config.eval.judgeModel || resolveTranslateModel();
 }
-export async function resolveAnswerModel() {
+export async function resolveAnswerModel(lang) {
+  if (lang === 'zh') return config.eval.answerModelZh || (await resolveZhModel()) || resolveTranslateModel();
   return config.eval.answerModel || resolveTranslateModel();
 }
 

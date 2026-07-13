@@ -24,6 +24,21 @@ function decayFactor(revTime, nowMs = Date.now()) {
   return decayFloor + (1 - decayFloor) * Math.exp((-Math.LN2 * ageDays) / halfLifeDays);
 }
 
+// Embedded-chunk count only changes on ingest, but `COUNT(*) ... WHERE
+// embedding IS NOT NULL` is a full table scan (~200ms on 293k rows) with no
+// supporting index -- cache it briefly so every query doesn't pay that scan
+// just to pick the full-scan-vs-rerank-only branch below.
+const EMBEDDED_COUNT_TTL_MS = 60 * 1000;
+let embeddedCountCache = null;
+function embeddedCount(db) {
+  const now = Date.now();
+  if (!embeddedCountCache || now - embeddedCountCache.at > EMBEDDED_COUNT_TTL_MS) {
+    const n = db.prepare('SELECT COUNT(*) n FROM chunks WHERE embedding IS NOT NULL').get().n;
+    embeddedCountCache = { n, at: now };
+  }
+  return embeddedCountCache.n;
+}
+
 function minMax(values) {
   let lo = Infinity;
   let hi = -Infinity;
@@ -61,9 +76,7 @@ export async function search(db, opts = {}) {
     qv = null;
   }
   if (qv && !(opts.signal && opts.signal.aborted)) {
-    const embedded = db
-      .prepare('SELECT COUNT(*) n FROM chunks WHERE embedding IS NOT NULL')
-      .get().n;
+    const embedded = embeddedCount(db);
     if (embedded > 0 && embedded <= config.retrieve.scanMaxChunks) {
       const stmt = db.prepare(
         `SELECT c.id, c.embedding FROM chunks c
@@ -102,25 +115,25 @@ export async function search(db, opts = {}) {
   const ids = [...cand.keys()];
   if (!ids.length) return [];
 
-  // 3) fetch rows + apply lang/kind filters
-  const filters = ["p.status='active'"];
-  const args = [...ids];
-  if (opts.langs?.length) {
-    filters.push(`p.lang IN (${opts.langs.map(() => '?').join(',')})`);
-    args.push(...opts.langs);
-  }
-  if (opts.kinds?.length) {
-    filters.push(`p.kind IN (${opts.kinds.map(() => '?').join(',')})`);
-    args.push(...opts.kinds);
-  }
+  // 3) fetch rows for the (small, already-selected) candidate ids, then apply
+  // lang/kind filters in JS. Adding `p.lang IN (...)` to the SQL itself flips
+  // SQLite's join order -- it drives from idx_pages_lang_status (a scan of
+  // every active zh/en page, tens of thousands of rows) instead of the cheap
+  // per-id primary-key lookup, costing ~1.5-2s per query. The candidate set
+  // is already <=800 rows here, so filtering after fetch is free.
   const rows = db
     .prepare(
       `SELECT c.id AS chunkId, c.page_id AS pageId, c.section, c.text,
               p.title, p.lang, p.kind, p.url, p.rev_time AS revTime, p.qid
        FROM chunks c JOIN pages p ON p.id = c.page_id
-       WHERE c.id IN (${ids.map(() => '?').join(',')}) AND ${filters.join(' AND ')}`
+       WHERE c.id IN (${ids.map(() => '?').join(',')}) AND p.status='active'`
     )
-    .all(...args);
+    .all(...ids)
+    .filter(
+      (r) =>
+        (!opts.langs?.length || opts.langs.includes(r.lang)) &&
+        (!opts.kinds?.length || opts.kinds.includes(r.kind))
+    );
 
   // 4) fuse scores
   const bVals = [];

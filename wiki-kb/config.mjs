@@ -110,6 +110,14 @@ export const config = {
   eval: {
     judgeModel: envStr('WKB_EVAL_JUDGE_MODEL', ''),
     answerModel: envStr('WKB_EVAL_ANSWER_MODEL', ''),
+    // zh-language override: the generic auto-pick (resolveTranslateModel)
+    // prefers phi4, which is fine as an answerer but silently free-writes a
+    // prose summary instead of the strict "N: yes/no" verdict format once a
+    // zh judge prompt carries several passages -- every verdict then defaults
+    // to "no" and zh RAGAS scores read as ~0 regardless of actual quality.
+    // Empty = auto-pick an installed taiwan/qwen-family tag (see judge.mjs).
+    judgeModelZh: envStr('WKB_EVAL_JUDGE_MODEL_ZH', ''),
+    answerModelZh: envStr('WKB_EVAL_ANSWER_MODEL_ZH', ''),
     timeoutMs: envNum('WKB_EVAL_TIMEOUT_MS', 300000),
   },
 
