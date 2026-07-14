@@ -404,6 +404,14 @@
     hero.id = 'prologue';
     hero.appendChild(el('div', 'lp-kicker', t(p.kicker)));
     hero.appendChild(el('h1', null, t(p.title)));
+
+    var heroImg = el('img', 'lp-chapter-banner');
+    heroImg.src = 'library-images/prologue.png';
+    heroImg.alt = '';
+    heroImg.loading = 'lazy';
+    heroImg.onerror = function () { heroImg.style.display = 'none'; };
+    hero.appendChild(heroImg);
+
     hero.appendChild(el('p', 'lede', t(p.lede)));
     main.appendChild(hero);
     (p.blocks || []).forEach(function (b) { hero.appendChild(renderBlock(b)); });
@@ -417,6 +425,14 @@
       sec.id = ch.id;
       sec.appendChild(el('div', 'ch-no', (ch.no != null ? ('§ ' + ch.no + '  ') : '') + t(ch.kicker || { en: '', zh: '' })));
       sec.appendChild(el('h2', null, t(ch.title)));
+
+      var chImg = el('img', 'lp-chapter-banner');
+      chImg.src = 'library-images/' + ch.id + '.png';
+      chImg.alt = '';
+      chImg.loading = 'lazy';
+      chImg.onerror = function () { chImg.style.display = 'none'; };
+      sec.appendChild(chImg);
+
       if (ch.sub) sec.appendChild(el('p', 'ch-sub', t(ch.sub)));
       (ch.blocks || []).forEach(function (b) { sec.appendChild(renderBlock(b)); });
       linkifyTerms(sec);
