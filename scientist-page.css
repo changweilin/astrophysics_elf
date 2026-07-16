@@ -1,0 +1,255 @@
+/* Scientist profile page (scientist.html) -- layout only. Palette tokens
+   (--bg/--panel/--ink/--accent/--gold/...) come from scientists.css so this
+   page shares the chat page's summit-navy atmosphere; every class here is
+   sp-* so nothing collides with the chat page's sci-* styles. Effects stay
+   muted -- soft accent washes, hairline borders, no glare. */
+
+.sp-body {
+  height: auto;
+  min-height: 100%;
+  overflow-y: auto;
+}
+
+/* ---- top chrome (48px bar, same family scale as the other pages) ---- */
+.sp-top {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 14px;
+  background: rgba(9, 13, 23, 0.86);
+  border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.sp-top .spacer { flex: 1; }
+
+/* ---- shell ---- */
+#sp-root { display: block; }
+.sp-shell {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 26px 18px 60px;
+}
+.sp-loading { color: var(--ink-faint); padding: 30px 18px; }
+.sp-dim { color: var(--ink-dim); font-size: 0.92rem; line-height: 1.6; }
+
+/* ---- roster grid ---- */
+.sp-list-head h1 {
+  margin: 6px 0 4px;
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.sp-list-head p { margin: 0 0 20px; }
+.sp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.sp-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  text-decoration: none;
+  color: var(--ink);
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.sp-card:hover {
+  border-color: color-mix(in srgb, var(--sp-accent, var(--accent)) 45%, var(--line));
+  background: var(--panel-2);
+  transform: translateY(-1px);
+}
+.sp-card-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sp-accent, var(--accent)) 40%, transparent);
+}
+.sp-card-who { min-width: 0; }
+.sp-card-name { font-weight: 600; font-size: 1rem; }
+.sp-card-meta { color: var(--ink-faint); font-size: 0.78rem; font-family: var(--mono); margin: 2px 0; }
+.sp-card-fields { color: var(--ink-dim); font-size: 0.82rem; }
+
+/* ---- profile: actions row ---- */
+.sp-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.sp-actions .spacer { flex: 1; }
+.sp-back {
+  color: var(--ink-dim);
+  text-decoration: none;
+  font-size: 0.92rem;
+}
+.sp-back:hover { color: var(--ink); }
+.sp-chatbtn {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--sp-accent, var(--accent)) 45%, var(--line));
+  background: color-mix(in srgb, var(--sp-accent, var(--accent)) 14%, var(--panel));
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 0.92rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sp-chatbtn:hover {
+  background: color-mix(in srgb, var(--sp-accent, var(--accent)) 24%, var(--panel));
+  border-color: color-mix(in srgb, var(--sp-accent, var(--accent)) 65%, var(--line));
+}
+
+/* ---- profile: hero ---- */
+.sp-hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 26px;
+  align-items: start;
+}
+.sp-portrait {
+  margin: 0;
+  position: sticky;
+  top: 62px;
+}
+.sp-portrait img {
+  width: 100%;
+  display: block;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(120% 90% at 50% 0%,
+      color-mix(in srgb, var(--sp-accent, var(--accent)) 16%, transparent) 0%,
+      transparent 70%),
+    var(--panel);
+}
+.sp-stages {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.sp-stage {
+  flex: 1;
+  padding: 6px 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.sp-stage:hover { color: var(--ink); border-color: var(--knv-line-hi, #3b4a70); }
+.sp-stage.active {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--sp-accent, var(--accent)) 55%, var(--line));
+  background: color-mix(in srgb, var(--sp-accent, var(--accent)) 16%, var(--panel));
+}
+
+.sp-info { min-width: 0; }
+.sp-name { margin: 0; font-size: 1.7rem; font-weight: 600; letter-spacing: 0.01em; }
+.sp-name-alt { color: var(--ink-faint); font-size: 0.98rem; margin: 2px 0 10px; }
+.sp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.sp-years { font-family: var(--mono); font-size: 0.85rem; color: var(--gold); }
+.sp-fields {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--sp-accent, var(--accent)) 45%, var(--line));
+  background: color-mix(in srgb, var(--sp-accent, var(--accent)) 13%, transparent);
+}
+.sp-blurb { margin: 0 0 6px; line-height: 1.75; color: var(--ink); }
+
+/* ---- bio sections ---- */
+.sp-section { margin-top: 20px; }
+.sp-section h2 {
+  margin: 0 0 8px;
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--ink);
+  padding-left: 9px;
+  border-left: 3px solid color-mix(in srgb, var(--sp-accent, var(--accent)) 70%, transparent);
+}
+.sp-section p { margin: 0; line-height: 1.8; color: var(--ink-dim); }
+.sp-section p .sp-term { font-weight: 500; }
+
+/* glossary term -> knowledge graph (same reading feel as the library's
+   .lp-term: prose first, gold tint, underline firms up on hover) */
+.sp-term {
+  color: var(--gold);
+  text-decoration: none;
+  border-bottom: 1px dotted color-mix(in srgb, var(--gold) 55%, transparent);
+  border-radius: 2px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.sp-term:hover {
+  border-bottom-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
+}
+
+/* ---- starter questions ---- */
+.sp-ask-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.sp-ask-item {
+  display: block;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink-dim);
+  text-decoration: none;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.sp-ask-item:hover {
+  color: var(--ink);
+  background: var(--panel-2);
+  border-color: color-mix(in srgb, var(--sp-accent, var(--accent)) 45%, var(--line));
+}
+
+/* ---- knowledge-graph section ---- */
+.sp-kg-open { margin: 4px 0 6px; }
+.sp-kg-body { margin-top: 10px; }
+.sp-kg-group { margin-top: 12px; }
+.sp-kg-group h3 { margin: 0 0 8px; font-size: 0.9rem; font-weight: 600; color: var(--ink-dim); }
+.sp-kg-chips { display: flex; flex-direction: column; gap: 7px; }
+.sp-kg-rel-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sp-kg-rel {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px dashed var(--line);
+}
+.sp-kg-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  color: var(--ink);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  transition: border-color 0.15s, background 0.15s;
+}
+.sp-kg-chip:hover {
+  background: var(--panel-2);
+  border-color: color-mix(in srgb, var(--sp-accent, var(--accent)) 50%, var(--line));
+}
+.sp-kg-pages { margin-top: 12px; }
+
+/* ---- responsive ---- */
+@media (max-width: 760px) {
+  .sp-shell { padding: 18px 12px 48px; }
+  .sp-hero { grid-template-columns: 1fr; gap: 18px; }
+  .sp-portrait { position: static; max-width: 340px; }
+  .sp-name { font-size: 1.4rem; }
+}

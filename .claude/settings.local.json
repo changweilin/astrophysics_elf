@@ -44,7 +44,9 @@
       "Bash(echo \"check_exit=$?\")",
       "Bash(echo \"exit=$?\")",
       "PowerShell(node --check sim.js; node --check physics.js; node --check disc.js)",
-      "PowerShell(node .\\\\full-physics\\\\run-benchmarks.mjs)"
+      "PowerShell(node .\\\\full-physics\\\\run-benchmarks.mjs)",
+      "Bash(grep -nE '^\\(button|a|input|select|textarea|h[1-6]|p|ul|ol|li|img\\)[ ,{:]' \"C:\\\\Users\\\\user\\\\Documents\\\\app\\\\astrophysics_elf\\\\scientists.css\")",
+      "Bash(find \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@openai\" \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@google\" \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\opencode-ai\" -maxdepth 4 -name \"playwright*\" -o -maxdepth 4 -name \"*playwright*\" 2>/dev/null | head -5)"
     ]
   }
 }

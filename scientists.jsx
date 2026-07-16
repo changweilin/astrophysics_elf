@@ -273,9 +273,6 @@ function nameFor(sci, lang) {
 function fieldsFor(sci, lang) {
   return (sci.fields && (sci.fields[lang] || sci.fields.en)) || '';
 }
-function blurbFor(sci, lang) {
-  return (sci.blurb && (sci.blurb[lang] || sci.blurb.en)) || '';
-}
 // Scientists write formulas as LaTeX ($...$ inline, $$...$$ block -- see the
 // system prompt in scientists-backend/personas/scientists.mjs). Render them
 // with KaTeX (loaded globally via scientists.html) so they show as real math
@@ -1011,7 +1008,10 @@ function SciAppRoot() {
   const [backendUrl, setBackendUrl] = useState(() => window.SCI.getBackendUrl());
   const [health, setHealth] = useState('checking'); // 'checking' | 'online' | 'offline'
   const [models, setModels] = useState({ zh: '', en: '' });
-  const [scientists, setScientists] = useState([]);
+  // Seed the roster from the static copy (scientists-data.mjs) so the list
+  // and profiles browse fine with no backend; /api/scientists overwrites it
+  // with the live payload (same shape) once the backend answers.
+  const [scientists, setScientists] = useState(() => (Array.isArray(window.KN_SCIENTISTS) ? window.KN_SCIENTISTS : []));
 
   // Every Ollama tag actually installed (from /api/health), for the model-picker
   // dropdown. The pin itself is shared backend-side (see model-resolver.mjs's
@@ -1148,7 +1148,13 @@ function SciAppRoot() {
   const [usage, setUsage] = useState(initialSession.usage);
   const [activeModel, setActiveModel] = useState(initialSession.activeModel);
   const [showSettings, setShowSettings] = useState(false);
-  const [bioId, setBioId] = useState(null);
+  // Avatar click -> the standalone profile page (full bio, career portraits,
+  // knowledge-graph links). Opens a new tab so an in-progress chat/discussion
+  // thread (React state only) is not lost.
+  const openProfile = useCallback((id) => {
+    if (!id || id === AUTO_ID) return;
+    window.open('scientist.html?id=' + encodeURIComponent(id), '_blank', 'noopener');
+  }, []);
   const [showSinglePicker, setShowSinglePicker] = useState(false);
   const appRef = useRef(null);
   const translateYRef = useRef(0);
@@ -2051,7 +2057,7 @@ function SciAppRoot() {
     const showCopy = m.done !== false;
     return (
       <div key={i} className="sci-msg sci">
-        <SciAvatar id={sciId} accent={sciAccent} name={m.name || (selected && (selected.name && selected.name.en))} size={30} onClick={sciId !== AUTO_ID ? () => setBioId(sciId) : undefined} />
+        <SciAvatar id={sciId} accent={sciAccent} name={m.name || (selected && (selected.name && selected.name.en))} size={30} onClick={sciId !== AUTO_ID ? () => openProfile(sciId) : undefined} />
         <div className="sci-bubble-wrap">
           {(m.name || m.compare) && (
             <div className="sci-speaker">
@@ -2470,7 +2476,7 @@ function SciAppRoot() {
       {view === 'favorites' ? (
         <div className="sci-favorites">
           {openFav ? (
-            <FavReader fav={openFav} tr={tr} lang={lang} onBack={() => setOpenFav(null)} onResume={() => resumeFavorite(openFav)} onDelete={() => deleteFavorite(openFav.id)} onBio={setBioId} onEdit={updateFavorite} />
+            <FavReader fav={openFav} tr={tr} lang={lang} onBack={() => setOpenFav(null)} onResume={() => resumeFavorite(openFav)} onDelete={() => deleteFavorite(openFav.id)} onBio={openProfile} onEdit={updateFavorite} />
           ) : favorites.length === 0 ? (
             <div className="sci-empty"><h2>{tr.favEmptyTitle}</h2><p>{tr.favEmptyBody}</p></div>
           ) : (
@@ -2510,7 +2516,7 @@ function SciAppRoot() {
           setShowPicker={setShowPanelPicker}
           onRetry={loadBackend}
           onSettings={() => setShowSettings(true)}
-          onBio={setBioId}
+          onBio={openProfile}
           sortBy={sortBy}
           setSortBy={setSortBy}
           sortOrder={sortOrder}
@@ -2575,7 +2581,7 @@ function SciAppRoot() {
                 size={38}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setBioId(s.id);
+                  openProfile(s.id);
                 }}
               />
               <span className="who">
@@ -2606,7 +2612,7 @@ function SciAppRoot() {
                     accent={selected.accent}
                     name={nameFor(selected, lang)}
                     size={32}
-                    onClick={() => setBioId(selected.id)}
+                    onClick={() => openProfile(selected.id)}
                   />
                 )}
                 <div className="who">
@@ -2788,16 +2794,7 @@ function SciAppRoot() {
           setSortBy={setSortBy}
           sortOrder={sortOrder}
           setSortOrder={setSortOrder}
-          onBio={setBioId}
-        />
-      )}
-
-      {bioId && (
-        <BioModal
-          id={bioId}
-          scientists={scientists}
-          lang={lang}
-          onClose={() => setBioId(null)}
+          onBio={openProfile}
         />
       )}
 
@@ -3500,50 +3497,6 @@ function SettingsModal({ tr, initial, onClose, onSave, lang, activeModel, instal
         <div className="row">
           <button className="sci-iconbtn" onClick={onClose}>{tr.cancel}</button>
           <button className="sci-send" onClick={() => onSave(url)}>{tr.save}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function BioModal({ id, scientists, lang, onClose }) {
-  const s = (scientists || []).find((x) => x.id === id);
-  if (!s) return null;
-  const name = nameFor(s, lang);
-  const fields = fieldsFor(s, lang);
-  const blurb = blurbFor(s, lang);
-  return (
-    <div className="sci-modal-backdrop" onClick={onClose}>
-      <div className="sci-modal bio-modal" onClick={(e) => e.stopPropagation()} style={{ borderColor: s.accent || 'var(--accent)' }}>
-        <button className="bio-close" onClick={onClose} aria-label="close">&times;</button>
-        <div className="bio-modal-content">
-          <div className="bio-avatar-container" style={{ background: `linear-gradient(135deg, ${(s.accent || '#7db3ff')}44, ${(s.accent || '#7db3ff')}11)` }}>
-            <SciAvatar id={id} accent={s.accent} name={name} size={110} />
-          </div>
-          <div className="bio-info">
-            <h2 className="bio-name">{name}</h2>
-            <div className="bio-years">{s.years}</div>
-            <div className="bio-fields-badge" style={{ backgroundColor: `${(s.accent || '#7db3ff')}22`, color: s.accent || 'var(--accent)', border: `1px solid ${(s.accent || '#7db3ff')}44` }}>
-              {fields}
-            </div>
-            <p className="bio-blurb">{blurb}</p>
-            {s.details && s.details[lang] && (
-              <div className="bio-details-sections">
-                <div className="bio-detail-section">
-                  <h4>{lang === 'zh' ? '生平背景' : 'Life & Background'}</h4>
-                  <p>{s.details[lang].life}</p>
-                </div>
-                <div className="bio-detail-section">
-                  <h4>{lang === 'zh' ? '研究專長' : 'Areas of Expertise'}</h4>
-                  <p>{s.details[lang].expertise}</p>
-                </div>
-                <div className="bio-detail-section">
-                  <h4>{lang === 'zh' ? '主要成就' : 'Key Achievements'}</h4>
-                  <p>{s.details[lang].achievements}</p>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>

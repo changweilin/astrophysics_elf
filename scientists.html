@@ -37,6 +37,10 @@
 <script src="kb-config.js"></script>
 <!-- Comic-style portrait avatars (plain JS, defines window.knSciAvatar). -->
 <script src="scientist-avatars.js"></script>
+<!-- Static roster (sets window.KN_SCIENTISTS) so the scientist list renders
+     without the backend; module scripts run before DOMContentLoaded, which is
+     when Babel executes scientists.jsx, so the global is ready in time. -->
+<script type="module" src="scientists-data.mjs"></script>
 <script type="text/babel" src="scientists.jsx"></script>
 </body>
 </html>
