@@ -15,7 +15,7 @@
     "kb:serve": "node wiki-kb/server.mjs",
     "kb:stats": "node wiki-kb/kb-admin.mjs stats",
     "start": "node serve.mjs",
-    "test": "node test/physics.test.mjs && node test/interaction.test.mjs && node test/render-smoke.test.mjs && node full-physics/run-benchmarks.mjs"
+    "test": "node test/physics.test.mjs && node test/interaction.test.mjs && node test/pace-fit.test.mjs && node test/render-smoke.test.mjs && node full-physics/run-benchmarks.mjs"
   },
   "dependencies": {
     "@babel/standalone": "^7.29.7"

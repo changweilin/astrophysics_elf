@@ -161,11 +161,11 @@ function renderMHDSide(ctx, w, h, sim, view) {
   const { rplus, naked } = phys.horizons(M, Q, a);
   const rErg = phys.ergosphereEq(M, Q);
   const cx = w / 2, cy = h / 2;
-  // Fixed display scale + extents, referenced to the 200px default canvas height,
-  // so resizing the window reveals more/less of the side view instead of zooming
-  // the same region. 50 M mapped that default height ⇒ 4 px/M.
-  const H0 = 200;
-  const scale = H0 / 50; // px per M (constant; was h/50)
+  // Display scale derives from the LIVE canvas height so the same 50 M side
+  // view auto-fits whatever size this panel gets (desktop window, resized
+  // window, mobile profile canvas). Only the camera scales — jet length,
+  // field-line loft and disc radii stay the real geometric values.
+  const scale = Math.max(1, h) / 50; // px per M (4 px/M at the 200px default)
 
   // ── Disc particles projected as edge-on slab (radius measured from the host)
   const oc = view.center || { x: 0, y: 0 };
@@ -204,15 +204,17 @@ function renderMHDSide(ctx, w, h, sim, view) {
     const lineAlpha = 0.25 + Bvis * 0.45;
     ctx.strokeStyle = `oklch(0.70 0.13 200 / ${lineAlpha})`;
     ctx.lineWidth = 1;
-    const r0List = [10, 22, 36, 52, 70];
+    // Loft radii in world units of M (× scale px) so the field geometry keeps
+    // its real extent at any canvas size.
+    const r0List = [2.5, 5.5, 9, 13, 17.5];
     for (const r0 of r0List) {
       for (const side of [-1, 1]) {
         ctx.beginPath();
         for (let t = 0; t <= 1.0001; t += 0.04) {
           const yFrac = (t - 0.5) * 2;
-          const yPix = cy + yFrac * H0 * 0.55;
+          const yPix = cy + yFrac * h * 0.55;
           const compress = 1 - Math.exp(-(yFrac * yFrac) * 3) * 0.55;
-          const xPix = cx + side * r0 * compress;
+          const xPix = cx + side * r0 * scale * compress;
           if (t === 0) ctx.moveTo(xPix, yPix);
           else ctx.lineTo(xPix, yPix);
         }
@@ -226,8 +228,8 @@ function renderMHDSide(ctx, w, h, sim, view) {
       const dirSign = Math.sign(a);
       for (let k = 0; k < 8; k++) {
         const phase = (sim.t * dirSign * 0.6 + k * Math.PI / 4) % (Math.PI * 2);
-        const yPix = cy + Math.sin(phase) * H0 * 0.4;
-        const xOff = Math.cos(phase) * 18;
+        const yPix = cy + Math.sin(phase) * h * 0.4;
+        const xOff = Math.cos(phase) * 4.5 * scale;
         ctx.beginPath();
         ctx.moveTo(cx + xOff - 5, yPix);
         ctx.lineTo(cx + xOff + 5, yPix);
@@ -240,7 +242,7 @@ function renderMHDSide(ctx, w, h, sim, view) {
   if (m.P > 0.3) {
     const lum = Math.min(1, m.P / 30);
     const opening = m.theta * Math.PI / 180;
-    const len = H0 * 0.45;
+    const len = h * 0.45;
     const baseR = 4 + lum * 3;
     const tipR = baseR + Math.tan(opening) * len * 1.2;
     const flick = 0.85 + 0.15 * Math.sin(sim.t * 9);

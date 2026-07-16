@@ -307,6 +307,7 @@ function MobileApp() {
         const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         const ratio = d / pinch.startDist;
         MSIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, Math.max(window.KNphysics.VIEW_SCALE_MIN, pinch.startScale * ratio));
+        MSIM.view.userZoomed = true;   // manual zoom wins over resize auto-fit
         movedSinceDown = true;
         return;
       }
@@ -350,6 +351,7 @@ function MobileApp() {
         if (Math.hypot(e.clientX - pan.x, e.clientY - pan.y) > 4) movedSinceDown = true;
         MSIM.view.ox = pan.ox + dx;
         MSIM.view.oy = pan.oy + dy;
+        MSIM.view.userZoomed = true;   // manual camera wins over resize auto-fit
       }
     }
 
@@ -542,8 +544,18 @@ function MobileApp() {
       MSIM.timescale = timescale;
       window.KNSim.step(MSIM, dt);
 
+      // Demo pacing: showcased event fired — drop to slow-motion (one-shot).
+      const post = window.KNSim.pacePoll ? window.KNSim.pacePoll(MSIM) : null;
+      if (post != null) setTimescale(post);
+
       const dpr = window.devicePixelRatio || 1;
       const cssW = c.clientWidth, cssH = c.clientHeight;
+      // Viewport resize (rotation / splitter) → re-frame an auto-fitted scene
+      // unless the user has pinched/zoomed manually since the last fit.
+      if (MSIM._fitW !== cssW || MSIM._fitH !== cssH) {
+        if (MSIM._fitW !== undefined && MSIM._autoFit && !MSIM.view.userZoomed) MSIM._pendingFit = true;
+        MSIM._fitW = cssW; MSIM._fitH = cssH;
+      }
       if (c.width !== cssW * dpr || c.height !== cssH * dpr) {
         c.width = cssW * dpr; c.height = cssH * dpr;
       }
@@ -664,9 +676,9 @@ function MobileApp() {
 
         {/* Zoom buttons */}
         <div className="m-zoom">
-          <button onClick={() => { MSIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, MSIM.view.scale * 1.25); force(); }}>+</button>
+          <button onClick={() => { MSIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, MSIM.view.scale * 1.25); MSIM.view.userZoomed = true; force(); }}>+</button>
           <button onClick={() => { window.KNSim.fitView(MSIM); force(); }}>⤢</button>
-          <button onClick={() => { MSIM.view.scale = Math.max(window.KNphysics.VIEW_SCALE_MIN, MSIM.view.scale * 0.8); force(); }}>−</button>
+          <button onClick={() => { MSIM.view.scale = Math.max(window.KNphysics.VIEW_SCALE_MIN, MSIM.view.scale * 0.8); MSIM.view.userZoomed = true; force(); }}>−</button>
         </div>
       </div>
 
@@ -687,6 +699,8 @@ function MobileApp() {
         <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
         <div className="meta">
           <span className="t">T+{MSIM.t.toFixed(1)}</span>
+          {/* real time shown per wall second (geometric clock × Msun) */}
+          <span className="t">1s≈{window.KNphysics.fmtDuration(window.KNphysics.geomSeconds(MSIM.params.Msun || 1) * timescale)}</span>
           <span><b>{orbitCount}</b>/{realBodies.length} {tr('BOD', '天體')}</span>
         </div>
       </div>

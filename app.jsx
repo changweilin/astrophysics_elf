@@ -161,6 +161,7 @@ function App() {
         const [wxN, wyN] = window.KNSim.screenToWorld(SIM, w, h, sx, sy);
         SIM.view.ox += wxN - pan.wx0;
         SIM.view.oy += wyN - pan.wy0;
+        SIM.view.userZoomed = true;   // manual camera wins over resize auto-fit
       }
     }
 
@@ -422,6 +423,7 @@ function App() {
       e.preventDefault();
       const k = e.deltaY < 0 ? 1.1 : 0.9;
       SIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, Math.max(window.KNphysics.VIEW_SCALE_MIN, SIM.view.scale * k));
+      SIM.view.userZoomed = true;   // manual zoom wins over resize auto-fit
     }
 
     function onCtxMenu(e) { if (use3D) e.preventDefault(); }   // right-drag = orbit
@@ -463,6 +465,22 @@ function App() {
       SIM.paused = !playing || !!SIM.placement || !!SIM.moving;
       SIM.timescale = timescale;
       window.KNSim.step(SIM, dt);
+
+      // Demo pacing: the showcased event just fired — drop to slow-motion so
+      // the aftermath (merger transient, tidal debris) plays at watchable speed.
+      const post = window.KNSim.pacePoll ? window.KNSim.pacePoll(SIM) : null;
+      if (post != null) setTimescale(post);
+
+      // Viewport/device resize → re-frame an auto-fitted scene, unless the
+      // user has taken zoom control since the last fit.
+      const live = use3D ? canvas3dRef.current : c;
+      if (live) {
+        const vw = live.clientWidth, vh = live.clientHeight;
+        if (SIM._fitW !== vw || SIM._fitH !== vh) {
+          if (SIM._fitW !== undefined && SIM._autoFit && !SIM.view.userZoomed) SIM._pendingFit = true;
+          SIM._fitW = vw; SIM._fitH = vh;
+        }
+      }
 
       // draw — WebGL 3D scene, or the Canvas2D top-down fallback
       SIM.view.mode3d = use3D;
@@ -612,9 +630,9 @@ function App() {
               <button title={tr('Reset to top-down view', '回到垂直俯視')}
                 onClick={() => { window.KNRender3D.resetView(); force(); }}>⊙</button>
             )}
-            <button title={tr('Zoom in', '放大')} onClick={() => { SIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, SIM.view.scale * 1.25); force(); }}>+</button>
+            <button title={tr('Zoom in', '放大')} onClick={() => { SIM.view.scale = Math.min(window.KNphysics.VIEW_SCALE_MAX, SIM.view.scale * 1.25); SIM.view.userZoomed = true; force(); }}>+</button>
             <button title={tr('Fit body to view', '符合天體尺度')} onClick={() => { window.KNSim.fitView(SIM); force(); }}>⤢</button>
-            <button title={tr('Zoom out', '縮小')} onClick={() => { SIM.view.scale = Math.max(window.KNphysics.VIEW_SCALE_MIN, SIM.view.scale * 0.8); force(); }}>−</button>
+            <button title={tr('Zoom out', '縮小')} onClick={() => { SIM.view.scale = Math.max(window.KNphysics.VIEW_SCALE_MIN, SIM.view.scale * 0.8); SIM.view.userZoomed = true; force(); }}>−</button>
           </div>
           <div>
             <button className="kn-rendermode" title={r3dReady

@@ -392,8 +392,8 @@ function ObserverView({ sim }) {
 }
 
 // Lower-pane renderer: self-contained, lens-centred plot of the bent equatorial
-// geodesics + the critical-impact-parameter circle. Fixed px-per-M scale, so
-// resizing the window widens the field of view rather than zooming the curves.
+// geodesics + the critical-impact-parameter circle. The px-per-M scale tracks
+// the canvas height, so the traced fan auto-fits any panel/device size.
 // Each traced ray is extended with a straight asymptote at both ends (incoming
 // from, and escaping toward, infinity) so the parallel bundle reads as light
 // arriving from and departing to infinity — captured rays only extend inward.
@@ -408,7 +408,9 @@ function renderLensTrace(ctx, w, h, data, opts) {
   if (w < 2 || h < 2) return;
 
   const cx = w / 2, cy = h / 2;
-  const PX_PER_M = 1.5;   // fixed scale (≈ fits the ±42 M ray fan at default size)
+  // Scale derives from the live canvas height so the ±42 M ray fan auto-fits
+  // any panel/device size (1.5 px/M at the 132px default height).
+  const PX_PER_M = Math.max(0.6, h / 88);
 
   ctx.strokeStyle = 'oklch(0.20 0.022 255 / 0.5)';
   ctx.lineWidth = 0.5;

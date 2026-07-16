@@ -1599,6 +1599,8 @@ import * as THREE from './vendor/three.module.js';
     const KN = window.KNSim, phys = window.KNphysics;
     if (KN.syncStellar) KN.syncStellar(sim);
     sim._vw = w; sim._vh = h;
+    // Deferred auto-fit (demo load / resize) — run once real dims are known.
+    if (sim._pendingFit) { sim._pendingFit = false; KN.fitView(sim, w, h); }
     KN.applyFrameLock(sim);
     this.sim = sim;
     this._w = w; this._h = h;

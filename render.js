@@ -15,6 +15,9 @@
   function render(sim, ctx, w, h) {
     if (KN.syncStellar) KN.syncStellar(sim);   // derived R★/T★ stay current even while paused
     sim._vw = w; sim._vh = h;   // last canvas size — used to fit the camera on placement
+    // A demo load / resize queued an auto-fit before the canvas size was
+    // known — apply it on the first frame that has real dimensions.
+    if (sim._pendingFit) { sim._pendingFit = false; KN.fitView(sim, w, h); }
     ctx.clearRect(0, 0, w, h);
     applyFrameLock(sim); // re-centre camera before any worldToScreen calls
     const { M, Q, a } = sim.params;

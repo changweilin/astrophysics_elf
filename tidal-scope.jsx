@@ -252,7 +252,10 @@ function renderMicroscope(ctx, w, h, body, sim) {
     // Stretching: prolate ellipsoid along radial.
     const stretch = 1 + Math.min(3.5, tidal * 2.5);
     const squish = 1 / Math.sqrt(stretch); // volume preservation
-    const baseR = 24;
+    // Test-sphere display radius tracks the live canvas so the microscope
+    // frames the same magnified view on any panel/device size (24 px at the
+    // 196px default height).
+    const baseR = Math.max(10, Math.min(w, h) * 0.12);
     const a = baseR * stretch;
     const b = baseR * squish;
     const angle = Math.atan2(uy, ux); // major axis = radial direction

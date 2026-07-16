@@ -265,6 +265,9 @@
     }
     splitTwoBody(bin, M1, M2, Vx, Vy);
     bin.enabled = true;
+    // A fresh pair is a new scenario: disarm any demo pace watcher still
+    // waiting on the OLD scene's event (a demo placement re-arms right after).
+    sim._pace = null;
     // A freshly placed companion always free-inspirals; never inherit a stale
     // classical-freeze left by a previous double-click circularisation. The
     // stable-circle mode is only ever entered explicitly via circularizeBinary.
@@ -312,6 +315,9 @@
   function removeCompanion(sim) {
     const bin = sim.binary;
     if (!bin) return;
+    // The demo's showcased event can no longer happen — disarm its watcher so
+    // it never fires on an unrelated scene the user builds later.
+    sim._pace = null;
     bin.enabled = false;
     bin.merged = false;
     bin.mergerFlash = 0;
@@ -3705,15 +3711,14 @@
     return true;
   }
 
-  // Frame the central body (and the companion, if placed) so the whole system
-  // fits the viewport. A stellar photosphere draws at R_star·scale and carries a
-  // ~2× corona, so a swollen giant needs the camera pulled back well past its
-  // per-stage default; this picks the largest scale that still keeps both
-  // surfaces on screen, but never zooms IN past the default. Centres on the
-  // single body, or on a binary's midpoint.
-  function fitView(sim) {
+  // World half-extent (units of M) the current scene visually occupies about
+  // `c` = {x, y} (the fit centre). The SIMULATED lengths are always the real
+  // geometric ones — this only measures them so the camera can frame them.
+  // Covers: both surfaces, the binary separation, accretion discs, galaxy/
+  // cluster swarms + DM halos, and live user bodies (capped so one far-flung
+  // probe cannot yank the whole camera out).
+  function sceneRadius(sim, c) {
     const p = sim.params, bin = sim.binary;
-    const fitScale = phys.VIEW_SCALES[phys.uiCategory(p.type || 'bh')];
     // Visible half-extent of a body about its own centre (world units of M).
     const surf = (type, M, Q, a, R) => {
       if ((type || 'bh') === 'bh') {
@@ -3723,20 +3728,154 @@
       return (R || 3) * 1.4;            // photosphere + a margin for the corona
     };
     const binOn = bin && bin.enabled && isFinite(bin.x2) && isFinite(bin.y2);
-    let cx = 0, cy = 0;
-    if (binOn) { cx = (bin.x1 + bin.x2) / 2; cy = (bin.y1 + bin.y2) / 2; }
-    const x1 = binOn ? bin.x1 : 0, y1 = binOn ? bin.y1 : 0;
-    let half = Math.hypot(x1 - cx, y1 - cy) + surf(p.type, p.M, p.Q, p.a, p.R_star);
+    const x1 = binOn ? bin.x1 : (sim.primary ? sim.primary.x : 0);
+    const y1 = binOn ? bin.y1 : (sim.primary ? sim.primary.y : 0);
+    const d1 = Math.hypot(x1 - c.x, y1 - c.y);
+    let half = d1 + surf(p.type, p.M, p.Q, p.a, p.R_star);
     if (binOn) {
-      half = Math.max(half, Math.hypot(bin.x2 - cx, bin.y2 - cy)
+      half = Math.max(half, Math.hypot(bin.x2 - c.x, bin.y2 - c.y)
         + surf(bin.type, bin.M2, bin.Q2, bin.a2, bin.R_star2));
     }
-    half = Math.max(half, 1);
+    // Accretion discs reach well past both surfaces (outerR ≈ 26 M).
+    if (sim.disc && sim.disc.enabled) half = Math.max(half, d1 + (sim.disc.outerR || 26) * 1.05);
+    if (binOn && sim.disc2 && sim.disc2.enabled) {
+      half = Math.max(half, Math.hypot(bin.x2 - c.x, bin.y2 - c.y) + (sim.disc2.outerR || 26) * 1.05);
+    }
+    // Galaxy/cluster star swarms and their dark-matter halo rings.
+    if (sim._Rvis1 > 0) half = Math.max(half, d1 + sim._Rvis1 * 1.1);
+    if (binOn && sim._Rvis2 > 0) half = Math.max(half, Math.hypot(bin.x2 - c.x, bin.y2 - c.y) + sim._Rvis2 * 1.1);
+    if (sim._halo1 && sim._halo1.R > 0) half = Math.max(half, d1 + sim._halo1.R * 1.05);
+    if (binOn && sim._halo2 && sim._halo2.R > 0) {
+      half = Math.max(half, Math.hypot(bin.x2 - c.x, bin.y2 - c.y) + sim._halo2.R * 1.05);
+    }
+    // Live user bodies (cloud members are covered by _Rvis above).
+    for (const b of sim.bodies) {
+      if (b.state !== 'orbit' || b._cloud) continue;
+      half = Math.max(half, Math.min(48, Math.hypot(b.x - c.x, b.y - c.y) + (b.radius || 0.3)));
+    }
+    return Math.max(half, 1);
+  }
+
+  // Frame the whole scene — bodies, binary, discs, swarms — so it fits the
+  // viewport on whatever device/canvas is showing it. Only the CAMERA scales:
+  // the simulated sizes and separations stay the real geometric values. Never
+  // zooms IN past the per-stage default; clamps to the manual-zoom bounds.
+  // Centres on the single body, or on a binary's midpoint. Optional w/h are
+  // the canvas CSS dimensions (falls back to the last rendered frame's size).
+  function fitView(sim, w, h) {
+    const p = sim.params, bin = sim.binary;
+    const fitScale = phys.VIEW_SCALES[phys.uiCategory(p.type || 'bh')];
+    const vw = (isFinite(w) && w > 0) ? w : sim._vw;
+    const vh = (isFinite(h) && h > 0) ? h : sim._vh;
+    const binOn = bin && bin.enabled && isFinite(bin.x2) && isFinite(bin.y2);
+    let cx = 0, cy = 0;
+    if (binOn) { cx = (bin.x1 + bin.x2) / 2; cy = (bin.y1 + bin.y2) / 2; }
+    else if (sim.primary) { cx = sim.primary.x; cy = sim.primary.y; }
+    const half = sceneRadius(sim, { x: cx, y: cy });
     let s = fitScale;
-    if (sim._vw && sim._vh) s = Math.min(fitScale, (Math.min(sim._vw, sim._vh) / 2) * 0.85 / half);
+    if (vw && vh) s = Math.min(fitScale, (Math.min(vw, vh) / 2) * 0.85 / half);
     sim.view.scale = Math.max(phys.VIEW_SCALE_MIN, Math.min(phys.VIEW_SCALE_MAX, s));
-    sim.view.ox = -cx; sim.view.oy = -cy;
+    // Under a frame lock applyFrameLock repins ox/oy every frame — leave them.
+    if (!sim.view.frame || sim.view.frame === 'free') {
+      sim.view.ox = -cx; sim.view.oy = -cy;
+    }
+    sim.view.userZoomed = false;   // resume resize auto-fit until the next manual zoom
     return sim.view.scale;
+  }
+
+  // ── Demo pacing (library mini-games) ───────────────────────────────
+  // A demo names the phenomenon it showcases and a wall-clock window (10-30 s,
+  // default 20). The characteristic sim-time of that event is predicted with
+  // the SAME physics the integrator runs (Peters inspiral, Roche geometry,
+  // radial free-fall, circular periods), then sim.timescale is set so the
+  // event completes inside the window. This is pure clock compression — the
+  // dynamics are untouched, so every physical relation (chirp, Kepler, tides)
+  // is preserved exactly; only the wall-clock mapping changes.
+  const PACE_MIN = 0.25;
+  // Engine-safe ceiling: step() advances at most 12.8 sim-units per frame
+  // (guard 256 × maxStep 0.05), so ×300 stays honest down to ~24 fps.
+  const PACE_MAX = 300;
+
+  // Characteristic sim-time (units of M) of a demo's showcased event.
+  function demoEventTime(sim, spec) {
+    const p = sim.params, bin = sim.binary;
+    const M1 = p.M || 1;
+    if (spec.event === 'merger' && bin && bin.enabled) {
+      // Contact separation mirrors the coalesce trigger in stepBinary.
+      const bothBH = (p.type || 'bh') === 'bh' && (bin.type || 'bh') === 'bh';
+      const rm = starSurface(sim, bin, 1) + starSurface(sim, bin, 2) * (bothBH ? 1.05 : 1);
+      return phys.petersWindow(M1, bin.M2, bin.d, Math.min(rm, bin.d * 0.98), bin.inspiralRate);
+    }
+    if (spec.event === 'rlof' && bin && bin.enabled) {
+      // Separation at which the DONOR (the extended star of the pair) fills
+      // its Roche lobe; the shrink down to it runs on the Peters clock.
+      const ext = (t) => t === 'ms' || t === 'giant';
+      const donor2 = ext(bin.type) || !ext(p.type);
+      const Md = donor2 ? bin.M2 : M1, Ma = donor2 ? M1 : bin.M2;
+      const Rd = donor2 ? (bin.R_star2 || 3) : (p.R_star || 3);
+      const frac = phys.rocheLobeEggleton(Md, Ma, 1);   // lobe radius per unit separation
+      const dRL = Rd / Math.max(1e-6, frac);
+      return phys.petersWindow(M1, bin.M2, bin.d, Math.min(dRL, bin.d * 0.98), bin.inspiralRate);
+    }
+    if (spec.event === 'disrupt') {
+      // Radial free-fall of the demo's dropped body from its start radius to
+      // its tidal radius — the integrator's low-L plunge IS Newtonian (Q=0),
+      // so the classic cycloid time is the exact clock.
+      const b = sim.bodies.find((x) => x.state === 'orbit' && !x._cloud);
+      if (!b) return null;
+      const px = sim.primary ? sim.primary.x : 0, py = sim.primary ? sim.primary.y : 0;
+      const r0 = Math.max(1, Math.hypot(b.x - px, b.y - py));
+      const rt = Math.min(r0 * 0.9,
+        Math.cbrt(300 * M1 * (b.radius || 0.4) / (1.15 * (b.binding || 1))));
+      const u = Math.max(0, Math.min(1, rt / r0));
+      return Math.sqrt(r0 * r0 * r0 / (2 * M1)) *
+        (Math.acos(Math.sqrt(u)) + Math.sqrt(u * (1 - u)));
+    }
+    if (spec.event === 'orbits') {
+      const r = isFinite(spec.r) ? spec.r : 12;
+      const n = (isFinite(spec.orbits) && spec.orbits > 0) ? spec.orbits : 3;
+      const Mt = (bin && bin.enabled) ? M1 + bin.M2 : M1;
+      const v = phys.circularSpeed(r, Mt, p.Q || 0) || Math.sqrt(Mt / Math.max(0.5, r));
+      return n * 2 * Math.PI * r / Math.max(1e-6, v);
+    }
+    return null;
+  }
+
+  // Apply a demo's pace spec {event, window?, orbits?, r?, post?}: compress
+  // the clock and arm the post-event slow-down watcher.
+  function applyDemoPace(sim, spec) {
+    sim._pace = null;
+    if (!spec || typeof spec !== 'object') return;
+    const win = (isFinite(spec.window) && spec.window > 0) ? spec.window : 20;
+    const t = demoEventTime(sim, spec);
+    if (!(t > 0)) return;
+    sim.timescale = Math.round(Math.max(PACE_MIN, Math.min(PACE_MAX, t / win)) * 100) / 100;
+    if (spec.event === 'merger' || spec.event === 'rlof' || spec.event === 'disrupt') {
+      sim._pace = { watch: spec.event, post: isFinite(spec.post) ? spec.post : 1, fired: false };
+    }
+    // Surface the clock mapping: how much real time each wall second shows.
+    const real = phys.fmtDuration(phys.geomSeconds(sim.params.Msun || 1) * sim.timescale);
+    logEv(sim, 'good', trp('demo pace ×{ts} · 1 s shows {real}', {
+      ts: sim.timescale, real,
+    }));
+  }
+
+  // One-shot watcher polled by both render loops: the moment the paced event
+  // fires, hand back the slow-motion timescale so the aftermath (merger
+  // transient, tidal debris, stream + disc) plays at a watchable speed instead
+  // of flashing past inside the compressed clock. Returns null while waiting.
+  function pacePoll(sim) {
+    const pc = sim._pace;
+    if (!pc || pc.fired) return null;
+    const bin = sim.binary;
+    let hit = false;
+    if (pc.watch === 'merger') hit = !!(bin && bin.merged);
+    else if (pc.watch === 'rlof') hit = !!(bin && ((bin.mt && bin.mt.active) || bin.ceActive));
+    else if (pc.watch === 'disrupt') hit = sim.bodies.some((b) => b.state === 'spaghettified');
+    if (!hit) return null;
+    pc.fired = true;
+    logEv(sim, 'amber', trp('slow-motion ×{post} — watching the aftermath', { post: pc.post }));
+    return pc.post;
   }
 
   // --- renderer ---
@@ -3784,6 +3923,7 @@
                    setBHRegime, cycleBHRegime, applySMBHStructure, clearStructure, swapCentralCompanion, setDiscEnabled,
                    reseedStructureClouds, rescaleStructureCloud, setGasFraction,
                    setBHFraction, bhFracFor, structureShares,
-                   fitView, worldToScreen, worldToScreenInto, screenToWorld,
+                   fitView, sceneRadius, applyDemoPace, pacePoll,
+                   worldToScreen, worldToScreenInto, screenToWorld,
                    predictTrajectory, predictBinaryTrajectory, predictGeodesicTrajectory };
 })();

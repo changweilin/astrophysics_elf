@@ -114,11 +114,11 @@ function renderFieldSection(ctx, w, h, kind, sim, opts) {
 
   const cell = 6;
   const cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
-  // Fixed display scale (px per M), referenced to the window's default width, so
-  // resizing the window widens/narrows the visible field of view rather than
-  // zooming the same patch. `span` is the half-FOV (in M) at that default width.
-  const REF_W = 248;                       // .field-section default width (styles.css)
-  const pxPerM = REF_W / (2 * span);
+  // Display scale derives from the LIVE canvas width so the configured half-FOV
+  // `span` (in M) always fits whatever size this panel gets — desktop window,
+  // user-resized window, or the mobile profile canvas. Only the camera scales;
+  // the sampled field geometry stays in real units of M.
+  const pxPerM = Math.max(1, w) / (2 * span);
   const spanX = w / (2 * pxPerM);
   const spanY = h / (2 * pxPerM);
 

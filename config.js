@@ -117,8 +117,34 @@
     const id = urlDemoId();
     const demo = id && window.KN_DEMOS && window.KN_DEMOS[id];
     if (!demo || !sim.params) return false;
+    // Apply once per sim per page load. applyConfig re-runs on every root
+    // mount AND on each desktop<->mobile layout swap, and re-applying a demo
+    // is destructive (replaces the body stage, re-places the companion,
+    // re-arms pacing) — it must not wipe the scene the user built afterwards.
+    if (sim._demoApplied === id) return false;
     const c = demo.config || {};
     const phys = window.KNphysics;
+    // A demo without a companion is a single-body scene — retire a restored
+    // pair before the funnel below reads binary state.
+    if (!c.binary && sim.binary && sim.binary.enabled &&
+        typeof KN.removeCompanion === 'function') {
+      KN.removeCompanion(sim);
+    }
+    // Normalise leftover supermassive structures FIRST (this may force
+    // params.type / discs, which the demo's own fields then override). A
+    // stored galaxy/cluster swarm would otherwise reroute a paced merger onto
+    // the dynamical-friction branch and blow the auto-fit out to the halo.
+    if (typeof KN.applySMBHStructure === 'function') {
+      const declared = (typeof c.smbhStructure === 'string' &&
+        (phys.SMBH_STRUCTURES || []).some((s) => s.key === c.smbhStructure))
+        ? c.smbhStructure : 'smbh';
+      if ((sim.smbhStructure || 'smbh') !== declared) {
+        KN.applySMBHStructure(sim, declared);
+      }
+      if (sim.binary && (sim.binary.smbhStructure || 'smbh') !== 'smbh') {
+        KN.applySMBHStructure(sim, 'smbh', 'companion');
+      }
+    }
     // Same funnel as a §06 preset click (panel-left.jsx): geometry stays in
     // units of M, Msun is the physical label, stellar surfaces are re-derived.
     sim.params.M = 1;
@@ -139,8 +165,12 @@
       if (isNum(c.T_eff)) sim.params.T_eff = c.T_eff;
     }
     if (isNum(c.B)) sim.params.B = c.B;
-    if (typeof c.disc === 'boolean' && typeof KN.setDiscEnabled === 'function') {
-      KN.setDiscEnabled(sim, 'central', c.disc);
+    // A demo defines the complete scene: no `disc` field means discs OFF (the
+    // same default the §06 preset funnel uses), so a stale restored disc can't
+    // leak into a demo's framing or pacing.
+    if (typeof KN.setDiscEnabled === 'function') {
+      KN.setDiscEnabled(sim, 'central', !!c.disc);
+      KN.setDiscEnabled(sim, 'companion', !!c.disc2);
     }
     if (c.flags && sim.flags) {
       for (const k of Object.keys(sim.flags)) {
@@ -148,7 +178,28 @@
       }
     }
     if (isNum(c.timescale)) sim.timescale = c.timescale;
+    // Mass scale: declared, or whatever regime the demo's mass implies —
+    // never a leftover from the stored session.
+    sim.bhRegime = (typeof c.bhRegime === 'string' && phys.BH_REGIMES[c.bhRegime])
+      ? c.bhRegime : phys.bhRegimeForMass(sim.params.Msun);
     sim.view.scale = phys.VIEW_SCALES[phys.uiCategory(sim.params.type)];
+    // Demo-defined stage: replaces any restored bodies so the showcased scene
+    // is clean (same validation as the cfg.bodies restore below).
+    if (Array.isArray(c.bodies)) {
+      sim.bodies = [];
+      sim.selectedId = null;
+      for (const bd of c.bodies) {
+        if (!bd || !isNum(bd.x) || !isNum(bd.y) || !isNum(bd.vx) || !isNum(bd.vy)) continue;
+        sim.selectedId = KN.addBody(sim, {
+          name: typeof bd.name === 'string' ? bd.name : 'body',
+          kind: typeof bd.kind === 'string' ? bd.kind : 'star',
+          radius: isNum(bd.radius) ? bd.radius : 0.5,
+          binding: isNum(bd.binding) ? bd.binding : 1,
+          charge: isNum(bd.charge) ? bd.charge : 0,
+          x: bd.x, y: bd.y, vx: bd.vx, vy: bd.vy,
+        });
+      }
+    }
     // Optional companion (binary demos): placed on a stable circular orbit.
     if (c.binary && sim.binary && typeof KN.placeCompanion === 'function') {
       const b = c.binary;
@@ -157,21 +208,48 @@
         sim.binary.M2sun = b.M2sun;
         sim.binary.M2 = Math.max(0.01, b.M2sun / Math.max(0.01, sim.params.Msun || 1));
       }
-      if (isNum(b.inspiralRate)) sim.binary.inspiralRate = b.inspiralRate;
+      // A demo defines the COMPLETE binary scenario: any knob it leaves out
+      // returns to its physical default, so stale user/restored settings (e.g.
+      // an old ×60 inspiral boost) can't silently distort the paced physics.
+      sim.binary.inspiralRate = isNum(b.inspiralRate) ? b.inspiralRate : 1;
+      sim.binary.a2 = isNum(b.a2) ? b.a2 : 0;
+      sim.binary.Q2 = isNum(b.Q2) ? b.Q2 : 0;
+      sim.binary.mtEnabled = typeof b.mtEnabled === 'boolean' ? b.mtEnabled : true;
+      sim.binary.transferRate = isNum(b.transferRate) ? b.transferRate : 1;
+      // Derive a stellar companion's photosphere BEFORE placement — the Roche
+      // clearance and the demo pace prediction both read R_star2 (mirrors the
+      // applyConfig restore path).
+      const ds2 = phys.deriveStellar(sim.binary.type, sim.binary.M2sun, { age: 0, Z: 0.5 });
+      if (ds2) { sim.binary.R_star2 = ds2.R_star; sim.binary.T_eff2 = ds2.T_eff; }
       const px = sim.primary ? sim.primary.x : 0;
       const py = sim.primary ? sim.primary.y : 0;
       KN.placeCompanion(sim, px + (isNum(b.d) ? b.d : 40), py);
     }
+    // Pace the showcased event into its 10-30 s wall-clock window (must run
+    // AFTER the companion/bodies exist — the prediction reads the live scene),
+    // then queue an auto-fit for the first rendered frame, when the canvas
+    // size for THIS device is known.
+    if (c.pace && typeof KN.applyDemoPace === 'function') KN.applyDemoPace(sim, c.pace);
+    sim._pendingFit = true;
+    sim._autoFit = true;
+    if (sim.view) sim.view.userZoomed = false;
     if (typeof KN.logEv === 'function') {
       const name = demo.label ? (demo.label.en || '') : id;
       KN.logEv(sim, 'good', 'library demo loaded · ' + name);
     }
+    sim._demoApplied = id;   // once per sim per page load (see guard above)
     return true;
   }
 
   // Merge a stored config onto a freshly created sim. Every field is validated
   // so a corrupt/old payload can never throw or poison the running simulation.
   function applyConfig(sim, cfg) {
+    // A demo already staged this sim earlier in this page load (module boot).
+    // Later applyConfig calls — the mount effect, and every desktop<->mobile
+    // layout swap — must neither restore stored state over the demo scene nor
+    // re-stage the demo over edits the user made since. A page reload clears
+    // the flag (and strips ?demo=), returning to the normal restore path.
+    if (sim._demoApplied) return true;
     if (cfg === undefined) cfg = readConfig();
     if (!cfg) {
       // No stored state (first visit) — a demo link must still apply.
@@ -283,7 +361,10 @@
       const phys = window.KNphysics;
       sim.view.scale = Math.min(phys.VIEW_SCALE_MAX, Math.max(phys.VIEW_SCALE_MIN, cfg.view.scale));
     }
-    if (isNum(cfg.timescale)) sim.timescale = cfg.timescale;
+    // Clamp to the speed scrubber's range: a paced demo may legitimately run
+    // far faster (see applyDemoPace), but that compression belongs to the demo
+    // session — a plain reload should come back at a hand-reachable speed.
+    if (isNum(cfg.timescale)) sim.timescale = Math.min(64, cfg.timescale);
     if (isNum(cfg.t)) sim.t = cfg.t;
     if (isNum(cfg.mDrawerH)) sim.mDrawerH = cfg.mDrawerH;
     // Restore the live bodies the user built up (replacing the default seed).

@@ -67,11 +67,16 @@ function BottomStrip({ sim, force, playing, setPlaying, timescale, setTimescale 
                 {playing ? '❚❚' : '▶'}
               </button>
               <button onClick={() => { sim.bodies.forEach(b => b.trail.length = 0); force(); }}>{tr('CLR TRAILS', '清軌跡')}</button>
-              <button onClick={() => { sim.bodies = []; sim._halo1 = null; sim._halo2 = null; sim.selectedId = null; sim.events = []; sim.t = 0; sim.moving = null; if (sim.binary) sim.binary.held = false; force(); }}>{tr('RESET', '重置')}</button>
+              <button onClick={() => { sim.bodies = []; sim._halo1 = null; sim._halo2 = null; sim.selectedId = null; sim.events = []; sim.t = 0; sim.moving = null; sim._pace = null; if (sim.binary) sim.binary.held = false; force(); }}>{tr('RESET', '重置')}</button>
             </div>
             <div className="meta-row">
               <span>T <b>{sim.t.toFixed(1)} M</b></span>
               <span>×<b>{timescale.toFixed(2)}</b></span>
+              {/* Physical clock: geometry runs in units of GM/c³ of the primary,
+                  so each wall second shows timescale × T_unit(Msun) of real time. */}
+              <span title={tr('real time shown per wall-clock second', '每 1 秒鐘展示的真實時間')}>
+                1s ≈ <b>{window.KNphysics.fmtDuration(window.KNphysics.geomSeconds(sim.params.Msun || 1) * timescale)}</b>
+              </span>
               <span>{tr('BODIES', '天體')} <b>{realBodies.filter(b => b.state === 'orbit').length}/{realBodies.length}</b></span>
             </div>
             <SpeedScrubber timescale={timescale} setTimescale={setTimescale} />
@@ -167,7 +172,10 @@ function SpeedScrubber({ timescale, setTimescale }) {
         ))}
         <div className="knob" style={{ left: `${frac * 100}%` }} />
       </div>
-      <div className="val">{speedFmt(SPEED_STEPS[idx])}</div>
+      {/* A paced demo can run past the top tick (up to ×300) — show the LIVE
+          multiplier whenever it sits off the discrete grid. */}
+      <div className="val">{speedFmt(Math.abs(timescale - SPEED_STEPS[idx]) > 0.005
+        ? Math.round(timescale * 100) / 100 : SPEED_STEPS[idx])}</div>
     </div>
   );
 }

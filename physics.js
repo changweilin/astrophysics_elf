@@ -743,6 +743,43 @@
     return { omega, ddot, t_merge, Mc, Mt, mu, Lgw };
   }
 
+  // ── Physical clock mapping ───────────────────────────────────
+  // The whole demo runs in geometric units (G = c = 1) with the primary's mass
+  // frozen at M = 1, so one unit of sim time equals GM/c³ of the primary's
+  // PHYSICAL mass: T_unit = 4.9255 µs × (M/M⊙). Rescaling the demo clock
+  // (sim.timescale) touches no dynamics — every rate compresses together — so
+  // a paced demo stays exactly on the GR/Kepler/Peters clock; only the
+  // absolute wall-time mapping changes (same trick as CEP_SIM_PER_DAY).
+  const T_SUN_SECONDS = 4.925490947e-6;   // GM⊙/c³ in seconds
+  function geomSeconds(Msun) { return T_SUN_SECONDS * Math.max(0, Msun || 0); }
+
+  // Human-readable duration for HUD read-outs: picks the natural unit from
+  // nanoseconds to gigayears, 2 significant figures.
+  const DUR_UNITS = [
+    [1e-9, 'ns'], [1e-6, 'µs'], [1e-3, 'ms'], [1, 's'],
+    [60, 'min'], [3600, 'hr'], [86400, 'd'], [31557600, 'yr'],
+    [3.15576e10, 'kyr'], [3.15576e13, 'Myr'], [3.15576e16, 'Gyr'],
+  ];
+  function fmtDuration(sec) {
+    if (!isFinite(sec) || sec <= 0) return '0 s';
+    let best = DUR_UNITS[0];
+    for (const u of DUR_UNITS) { if (sec >= u[0]) best = u; else break; }
+    const v = sec / best[0];
+    const s = v >= 100 ? Math.round(v).toString() : v.toPrecision(2);
+    return parseFloat(s) + ' ' + best[1];
+  }
+
+  // Peters sim-time for a circular binary to shrink from separation d0 to d1
+  // (geometric units), optionally accelerated by the demo's inspiralRate.
+  // Integrates ḋ = −(64/5) M1 M2 Mt / d³ → t = (5/256)(d0⁴ − d1⁴)/(M1 M2 Mt).
+  function petersWindow(M1, M2, d0, d1, rate) {
+    const Mt = M1 + M2;
+    const lo = Math.max(0, Math.min(d0, d1)), hi = Math.max(d0, d1);
+    const t = (5 / 256) * (Math.pow(hi, 4) - Math.pow(lo, 4)) /
+      Math.max(1e-9, M1 * M2 * Mt);
+    return t / Math.max(1e-6, rate || 1);
+  }
+
   // ── Binary-BH coalescence remnant (approximate NR fits) ──────
   // Given progenitor masses and dimensionless spins χ_i = a_i/M_i (signed,
   // projected on the orbital angular momentum), returns the remnant mass M_f,
@@ -1142,6 +1179,7 @@
   window.KNphysics = {
     horizons, ergosphereEq, ergospherePole, isco, photonSphereEq,
     classify, acceleration, circularSpeed, tidalStress, r_s, peters, mergerRemnant,
+    T_SUN_SECONDS, geomSeconds, fmtDuration, petersWindow,
     rocheLobeEggleton, massTransferRate, orbitalResponseRate, ceCriticalQ,
     ceOutcome, novaIgnitionMass, xrayBurstIgnitionMass, compactMergerChannel, gasStreamPaths,
     STELLAR_INFO, STELLAR_DEFAULTS, wouldCollapse, tempToColor,
