@@ -344,6 +344,43 @@
     bg.setAttribute('aria-selected', view === 'graph' ? 'true' : 'false');
   }
 
+  // ---- about me (fixed signature block that closes the course) -----------
+  var ICON_GITHUB = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>';
+  var ICON_LINKEDIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>';
+  var ICON_LINK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+
+  function renderAboutMe() {
+    var sec = el('section', 'lp-chapter lp-about');
+    sec.id = 'about-me';
+    sec.appendChild(el('div', 'ch-no', t({ en: 'ABOUT', zh: '關於' })));
+    sec.appendChild(el('h2', null, t({ en: 'About Me', zh: '關於我' })));
+
+    sec.appendChild(el('p', 'about-name', 'Chang Wei Lin'));
+
+    var quote = el('blockquote', 'about-quote');
+    quote.appendChild(el('p', 'q-zh', '我愛星空至深，無懼黑夜。'));
+    quote.appendChild(el('p', 'q-en', 'We have loved the stars too fondly to fear the dark.'));
+    var cite = el('footer', 'q-src');
+    cite.innerHTML = '— <cite>The Old Astronomer</cite>, Sarah Williams';
+    quote.appendChild(cite);
+    sec.appendChild(quote);
+
+    var links = el('div', 'about-links');
+    [
+      { href: 'https://github.com/changweilin', label: 'GitHub', icon: ICON_GITHUB },
+      { href: 'https://www.linkedin.com/in/wei-lin-chang-ba38049a/', label: 'LinkedIn', icon: ICON_LINKEDIN },
+      { href: 'https://changweilin.github.io/demo_link/', label: t({ en: 'Demo site', zh: '作品展示' }), icon: ICON_LINK },
+    ].forEach(function (d) {
+      var a = el('a', 'about-link');
+      a.href = d.href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.appendChild(el('span', 'al-ic', d.icon));
+      a.appendChild(el('span', null, d.label));
+      links.appendChild(a);
+    });
+    sec.appendChild(links);
+    return sec;
+  }
+
   function renderFooter() {
     var shell = document.querySelector('.lp-shell');
     var old = shell.querySelector('.lp-foot');
@@ -453,6 +490,15 @@
       li.appendChild(a);
       toc.appendChild(li);
     });
+
+    main.appendChild(renderAboutMe());
+    var aboutLi = el('li');
+    var aboutA = el('a');
+    aboutA.href = '#about-me';
+    aboutA.dataset.target = 'about-me';
+    aboutA.innerHTML = '<span class="n">•</span>' + t({ en: 'About Me', zh: '關於我' });
+    aboutLi.appendChild(aboutA);
+    toc.appendChild(aboutLi);
 
     renderFooter();
     initScrollSpy();

@@ -243,6 +243,34 @@ a:hover { color: var(--cyan-dim); text-decoration: underline; }
 .lp-stub .ct { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
   text-transform: uppercase; color: var(--fg-3); display: block; margin-bottom: 5px; }
 
+/* ---------- About me (course-closing signature) ---------- */
+.lp-about { text-align: center; padding-bottom: 40px; }
+.lp-about .ch-no, .lp-about h2 { text-align: center; }
+.lp-about .about-name {
+  font-family: var(--serif); font-size: 17px; font-weight: 600;
+  color: var(--fg-0); letter-spacing: 0.04em; margin: 4px 0 18px;
+}
+.lp-about .about-quote { margin: 0 auto 22px; max-width: 46ch; border: none; padding: 0; }
+.lp-about .about-quote p { margin: 0 0 6px; color: var(--fg-1); font-family: var(--serif); font-size: 16px; }
+.lp-about .about-quote .q-zh { font-size: 17px; color: var(--fg-0); }
+.lp-about .about-quote .q-en { font-style: italic; color: var(--fg-2); }
+.lp-about .about-quote footer {
+  margin-top: 10px; font-family: var(--mono); font-size: 11.5px;
+  letter-spacing: 0.04em; color: var(--fg-3);
+}
+.lp-about .about-quote footer cite { font-style: normal; color: var(--amber-dim); }
+.lp-about .about-links { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
+.lp-about .about-link {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-1); padding: 8px 14px;
+  color: var(--fg-1); font-size: 13px; text-decoration: none;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.lp-about .about-link:hover { border-color: var(--cyan-dim); background: var(--bg-2); color: var(--fg-0); text-decoration: none; }
+.lp-about .about-link .al-ic { display: inline-flex; width: 16px; height: 16px; color: var(--cyan); }
+.lp-about .about-link .al-ic svg { width: 100%; height: 100%; }
+
 /* ---------- Footer ---------- */
 .lp-foot {
   grid-column: 2 / span 2; margin-top: 60px; padding-top: 24px;
