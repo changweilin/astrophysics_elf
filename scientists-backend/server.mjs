@@ -38,11 +38,13 @@ import { assignScientist } from './lib/router.mjs';
 import { generateFollowups } from './lib/followups.mjs';
 import { registerRequest, unregisterRequest, abortRequest } from './lib/active-requests.mjs';
 import { retrieveContext } from './knowledge/wiki.mjs';
+import { initFeedback, upsertFeedback, listFeedback, feedbackStats } from './lib/feedback.mjs';
 import { openDb } from '../wiki-kb/lib/db.mjs';
 import { createKbRouter, kbHealthPayload } from '../wiki-kb/lib/routes.mjs';
 
 const kbDb = openDb();
 const handleKbRoute = createKbRouter(kbDb);
+initFeedback(kbDb);
 
 // ---- small HTTP helpers ----
 
@@ -373,7 +375,7 @@ async function handleChat(req, res) {
     ];
 
     let reply = '';
-    const stats = await chatStream({ model, messages, signal: ac.signal }, (delta) => {
+    const stats = await chatStream({ model, messages, signal: ac.signal, requestId }, (delta) => {
       reply += delta;
       sse(res, 'token', { text: delta });
     });
@@ -701,6 +703,37 @@ async function handleDiscussFollowups(req, res) {
   sendJson(res, 200, { ok: true, followups });
 }
 
+// ---- feedback (per-reply like/dislike + optional correction) ----
+
+async function handleFeedback(req, res) {
+  let body;
+  try { body = await readJson(req); } catch { return sendJson(res, 400, { error: 'bad JSON body' }); }
+  try {
+    const out = upsertFeedback(kbDb, body);
+    return sendJson(res, 200, { ok: true, ...out });
+  } catch (e) {
+    return sendJson(res, 400, { error: String(e && e.message || e) });
+  }
+}
+
+function handleFeedbackList(req, res, url) {
+  const q = url.searchParams;
+  sendJson(res, 200, {
+    ok: true,
+    ...listFeedback(kbDb, {
+      limit: q.get('limit'),
+      offset: q.get('offset'),
+      rating: q.get('rating'),
+      status: q.get('status'),
+      source: q.get('source'),
+    }),
+  });
+}
+
+function handleFeedbackStats(req, res) {
+  sendJson(res, 200, { ok: true, ...feedbackStats(kbDb) });
+}
+
 // ---- router ----
 
 const server = createServer(async (req, res) => {
@@ -746,6 +779,15 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && path === '/api/discuss/followups') {
       return await handleDiscussFollowups(req, res);
+    }
+    if (req.method === 'POST' && path === '/api/feedback') {
+      return await handleFeedback(req, res);
+    }
+    if (req.method === 'GET' && path === '/api/feedback') {
+      return handleFeedbackList(req, res, url);
+    }
+    if (req.method === 'GET' && path === '/api/feedback/stats') {
+      return handleFeedbackStats(req, res);
     }
     // Wiki-kb routes (search/graph/contribute/etc.), merged in-process --
     // see ../wiki-kb/lib/routes.mjs. /api/health is handled above (this

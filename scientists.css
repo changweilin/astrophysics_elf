@@ -960,6 +960,112 @@ html, body {
   padding-left: 4px;
 }
 
+/* Feedback (like/dislike) buttons + the dislike-detail popup. Mirrors the
+   undo-confirm popup pattern: explicit send/cancel, stays open until answered
+   or dismissed by clicking outside. */
+.sci-fb-wrap { position: relative; display: inline-flex; gap: 6px; }
+.sci-msg-actions:has(.sci-fb-panel) { opacity: 1; }
+.sci-action-btn.fb-up.active {
+  color: var(--ok);
+  border-color: var(--ok);
+  background: rgba(111, 207, 151, 0.15);
+}
+.sci-action-btn.fb-down.active {
+  color: var(--err);
+  border-color: var(--err);
+  background: rgba(239, 111, 111, 0.15);
+}
+.sci-fb-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 0.8rem;
+  color: var(--ink);
+  width: min(280px, 74vw);
+}
+.sci-fb-title { font-size: 0.78rem; color: var(--ink-dim); }
+.sci-fb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sci-fb-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--ink-dim);
+  padding: 3px 10px;
+  font-size: 0.74rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sci-fb-chip:hover { color: var(--ink); border-color: #3b4a70; }
+.sci-fb-chip.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(130, 174, 232, 0.12);
+}
+.sci-fb-text {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 6px 8px;
+  resize: vertical;
+}
+.sci-fb-text::placeholder { color: var(--ink-faint); }
+.sci-fb-text:focus { outline: none; border-color: #3b4a70; }
+.sci-undo-confirm-btn.send {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(130, 174, 232, 0.12);
+}
+.sci-undo-confirm-btn.send:hover { background: rgba(130, 174, 232, 0.22); }
+.sci-undo-confirm-btn.retract {
+  color: var(--err);
+  border-color: var(--err);
+  background: rgba(239, 111, 111, 0.12);
+}
+.sci-undo-confirm-btn.retract:hover { background: rgba(239, 111, 111, 0.22); }
+/* In-flight feedback: dim the controls so a disabled Send reads as busy. */
+.sci-action-btn:disabled,
+.sci-undo-confirm-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* A rated reply keeps its thumbs visible (softly) without hover -- hover-only
+   opacity would hide the stored rating entirely on touch devices. */
+.sci-msg-actions:has(.sci-action-btn.active) { opacity: 0.65; }
+
+/* Inside the mobile compare strip the row's overflow-x:auto forces
+   overflow-y:auto, clipping the dropdown panel, and touch-action:pan-x plus
+   the swipe fallback make the clipped part unreachable -- anchor the panel to
+   the viewport as a bottom sheet instead. z-index clears the mobile header
+   stack (28-30) and composer (20). */
+@media (max-width: 760px) {
+  .sci-compare-row .sci-fb-panel,
+  .sci-compare-row-discuss .sci-fb-panel {
+    position: fixed;
+    top: auto;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    margin-top: 0;
+    z-index: 40;
+    width: min(320px, 92vw);
+  }
+}
+
 
 /* ---- saved-thread editor (FavReader edit mode) ---- */
 .fav-edit { display: flex; flex-direction: column; gap: 12px; padding: 14px; }

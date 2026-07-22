@@ -28,7 +28,7 @@ function getTraceDb() {
 
 // One trace row per Ollama round-trip. Only the last user turn is kept as
 // input (the full transcript would blow the trace field cap anyway).
-function traceChat(kind, { model, messages, t0, stats, error }) {
+function traceChat(kind, { model, messages, t0, stats, error, requestId }) {
   const db = getTraceDb();
   if (!db) return;
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');
@@ -42,7 +42,11 @@ function traceChat(kind, { model, messages, t0, stats, error }) {
     tokensOut: stats ? stats.completionTokens : null,
     ok: !error,
     error,
-    meta: stats ? { doneReason: stats.doneReason } : null,
+    // requestId is the deterministic join key to the feedback table
+    // (feedback.request_id = json_extract(traces.meta, '$.requestId')).
+    meta: (stats || requestId)
+      ? { doneReason: stats ? stats.doneReason : undefined, requestId: requestId || undefined }
+      : null,
   });
 }
 
@@ -97,7 +101,7 @@ export function isBusy() {
 // generated tokens, done_reason = 'stop' when the model finished its thought or
 // 'length' when it was cut off at num_predict). Honors an AbortSignal so the
 // HTTP handler can cancel.
-export async function chatStream({ model, messages, signal, optionOverrides }, onToken) {
+export async function chatStream({ model, messages, signal, optionOverrides, requestId }, onToken) {
   const timeout = AbortSignal.timeout(config.ollama.requestTimeoutMs);
   const composite = signal ? anySignal([signal, timeout]) : timeout;
 
@@ -149,10 +153,10 @@ export async function chatStream({ model, messages, signal, optionOverrides }, o
 
     return { content: full, ...stats };
   }).then((r) => {
-    traceChat('chat-stream', { model, messages, t0, stats: r });
+    traceChat('chat-stream', { model, messages, t0, stats: r, requestId });
     return r;
   }, (e) => {
-    traceChat('chat-stream', { model, messages, t0, error: e && e.message || e });
+    traceChat('chat-stream', { model, messages, t0, error: e && e.message || e, requestId });
     throw e;
   });
 }

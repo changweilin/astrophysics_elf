@@ -12,7 +12,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
-    "check": "node --check server.mjs && node --check config.mjs && node --check lib/ollama.mjs && node --check lib/model-resolver.mjs && node --check lib/context.mjs && node --check lib/sessions.mjs && node --check lib/discussion.mjs && node --check lib/router.mjs && node --check lib/followups.mjs && node --check personas/scientists.mjs && node --check knowledge/wiki.mjs && node --check knowledge/build-finetune-dataset.mjs",
+    "check": "node --check server.mjs && node --check config.mjs && node --check lib/ollama.mjs && node --check lib/model-resolver.mjs && node --check lib/context.mjs && node --check lib/sessions.mjs && node --check lib/discussion.mjs && node --check lib/router.mjs && node --check lib/followups.mjs && node --check lib/feedback.mjs && node --check personas/scientists.mjs && node --check knowledge/wiki.mjs && node --check knowledge/build-finetune-dataset.mjs",
     "build-dataset": "node knowledge/build-finetune-dataset.mjs"
   }
 }

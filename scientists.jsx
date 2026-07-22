@@ -124,6 +124,20 @@ const T = {
     conclusion: '結論',
     panelFull: '討論成員已達上限(5 位)',
     done: '完成',
+    fbUp: '這則回覆很好',
+    fbDown: '這則回覆有問題',
+    fbWhatWrong: '哪裡有問題?(可複選,或直接送出)',
+    fbReasonIncorrect: '內容有誤',
+    fbReasonPersona: '不像本人',
+    fbReasonOffTopic: '答非所問',
+    fbReasonLanguage: '語言問題',
+    fbReasonTooLong: '太冗長',
+    fbCorrectionPh: '建議的正確回答(選填,將用於評估與改進模型)',
+    fbCommentPh: '其他說明(選填)',
+    fbSubmit: '送出',
+    fbCancel: '取消',
+    fbRetract: '收回回饋',
+    fbFail: '回饋傳送失敗,請確認後端連線後再試',
     discussSuggestions: [
       '黑洞最後會如何結束?',
       '宇宙為何會加速膨脹?',
@@ -248,6 +262,20 @@ const T = {
     conclusion: 'Conclusion',
     panelFull: 'Panel is full (max 5)',
     done: 'Done',
+    fbUp: 'Good reply',
+    fbDown: 'Report a problem with this reply',
+    fbWhatWrong: "What's wrong? (pick any, or just send)",
+    fbReasonIncorrect: 'Incorrect',
+    fbReasonPersona: 'Off persona',
+    fbReasonOffTopic: 'Off topic',
+    fbReasonLanguage: 'Language issue',
+    fbReasonTooLong: 'Too long',
+    fbCorrectionPh: 'Suggested correct answer (optional; used to evaluate and improve the model)',
+    fbCommentPh: 'Other notes (optional)',
+    fbSubmit: 'Send',
+    fbCancel: 'Cancel',
+    fbRetract: 'Withdraw',
+    fbFail: 'Could not send feedback -- check the backend connection and try again',
     discussSuggestions: [
       'How will a black hole finally end?',
       "Why is the universe's expansion accelerating?",
@@ -652,6 +680,19 @@ const IconGraph = () => (
   </svg>
 );
 
+const IconThumbUp = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z" />
+    <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+  </svg>
+);
+const IconThumbDown = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z" />
+    <path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+  </svg>
+);
+
 function CopyButton({ text, title }) {
   const [copied, setCopied] = useState(false);
   const onClick = (e) => {
@@ -729,6 +770,164 @@ function UndoButton({ onUndo, title, disabled, lang }) {
               onClick={() => { setConfirming(false); onUndo(); }}
             >
               {lang === 'zh' ? '確認' : 'Confirm'}
+            </button>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+// The user turn a reply answers: nearest preceding role==='user' in the
+// transcript (compare bubbles look past their sibling bubble; discussion
+// phase markers and notices are skipped by the role check).
+function precedingUserText(list, i) {
+  for (let k = i - 1; k >= 0; k--) {
+    if (list[k] && list[k].role === 'user') return list[k].text || '';
+  }
+  return '';
+}
+
+// Reason tags a dislike can carry. Ids are the stable ASCII values stored
+// server-side (the eval pipeline's auto-labeler keys off them); labels come
+// from the T dict so they follow the page language.
+const FB_REASONS = [
+  { id: 'incorrect', key: 'fbReasonIncorrect' },
+  { id: 'off-persona', key: 'fbReasonPersona' },
+  { id: 'off-topic', key: 'fbReasonOffTopic' },
+  { id: 'language', key: 'fbReasonLanguage' },
+  { id: 'too-long', key: 'fbReasonTooLong' },
+];
+
+// Per-reply like/dislike. A thumbs-up sends immediately (click again to
+// retract); a thumbs-down opens a small popup (same explicit-choice pattern
+// as UndoButton's confirm) collecting reason tags, an optional corrected
+// answer -- the backend computes a normalized edit distance from it for model
+// evaluation -- and a free-text note. Clicking an active thumb-down re-opens
+// the popup pre-filled for amending; retraction is an explicit button inside
+// it. The rating itself lives on the message object (msg.fb), so it survives
+// reloads with the session.
+function FeedbackButtons({ msg, tr, onSubmit }) {
+  const fb = msg.fb || null;
+  const rating = fb ? fb.rating : 0;
+  const [open, setOpen] = useState(false);
+  const [reasons, setReasons] = useState([]);
+  const [correction, setCorrection] = useState('');
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const wrapRef = useRef(null);
+  const panelRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    // The most common feedback target is the LAST reply, whose popup would
+    // otherwise open below the transcript's scroll fold (and a touch-drag to
+    // reach it would dismiss it via the outside-close handler below).
+    if (panelRef.current) panelRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const onOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onOutside);
+    document.addEventListener('touchstart', onOutside);
+    return () => {
+      document.removeEventListener('mousedown', onOutside);
+      document.removeEventListener('touchstart', onOutside);
+    };
+  }, [open]);
+
+  const send = async (r, details) => {
+    if (busy) return false;
+    setBusy(true);
+    const ok = await onSubmit(r, details);
+    setBusy(false);
+    return ok;
+  };
+
+  const clickUp = (e) => {
+    e.stopPropagation();
+    setOpen(false);
+    send(rating === 1 ? 0 : 1, null);
+  };
+  const clickDown = (e) => {
+    e.stopPropagation();
+    setReasons((fb && fb.reasons) || []);
+    setCorrection((fb && fb.correction) || '');
+    setComment((fb && fb.comment) || '');
+    setOpen(true);
+  };
+  const submitDown = async () => {
+    const ok = await send(-1, {
+      reasons,
+      correction: correction.trim(),
+      comment: comment.trim(),
+    });
+    if (ok) setOpen(false);
+  };
+  const retract = async () => {
+    const ok = await send(0, null);
+    if (ok) setOpen(false);
+  };
+
+  return (
+    <span className="sci-fb-wrap" ref={wrapRef}>
+      <button
+        className={'sci-action-btn fb-up' + (rating === 1 ? ' active' : '')}
+        onClick={clickUp}
+        disabled={busy}
+        title={tr.fbUp}
+      >
+        <IconThumbUp />
+      </button>
+      <button
+        className={'sci-action-btn fb-down' + (rating === -1 ? ' active' : '')}
+        onClick={clickDown}
+        disabled={busy}
+        title={tr.fbDown}
+      >
+        <IconThumbDown />
+      </button>
+      {open && (
+        <div className="sci-fb-panel" ref={panelRef} onClick={(e) => e.stopPropagation()}>
+          <span className="sci-fb-title">{tr.fbWhatWrong}</span>
+          <div className="sci-fb-chips">
+            {FB_REASONS.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                className={'sci-fb-chip' + (reasons.includes(r.id) ? ' on' : '')}
+                onClick={() => setReasons((cur) => (
+                  cur.includes(r.id) ? cur.filter((x) => x !== r.id) : [...cur, r.id]
+                ))}
+              >
+                {tr[r.key]}
+              </button>
+            ))}
+          </div>
+          <textarea
+            className="sci-fb-text"
+            rows={3}
+            value={correction}
+            placeholder={tr.fbCorrectionPh}
+            onChange={(e) => setCorrection(e.target.value)}
+          />
+          <input
+            className="sci-fb-text"
+            type="text"
+            value={comment}
+            placeholder={tr.fbCommentPh}
+            onChange={(e) => setComment(e.target.value)}
+          />
+          <div className="sci-undo-confirm-actions">
+            {rating === -1 && (
+              <button type="button" className="sci-undo-confirm-btn retract" onClick={retract} disabled={busy}>
+                {tr.fbRetract}
+              </button>
+            )}
+            <button type="button" className="sci-undo-confirm-btn cancel" onClick={() => setOpen(false)}>
+              {tr.fbCancel}
+            </button>
+            <button type="button" className="sci-undo-confirm-btn send" onClick={submitDown} disabled={busy}>
+              {tr.fbSubmit}
             </button>
           </div>
         </div>
@@ -1432,10 +1631,19 @@ function SciAppRoot() {
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
   }, [refreshHealth]);
 
+  // Feedback patches (m.fb) change the messages array identity without adding
+  // content; without this guard, rating a reply the user scrolled up to would
+  // yank the viewport to the bottom (and, on a failed dislike, scroll the
+  // still-open popup off-screen). Set by submitFeedback before each fb-only
+  // update, consumed once by the autoscroll effect below.
+  const fbScrollSkipRef = useRef(false);
+  const fbDiscussScrollSkipRef = useRef(false);
+
   // autoscroll on new content
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    if (fbScrollSkipRef.current) { fbScrollSkipRef.current = false; return; }
     autoScrollLockRef.current = true;
     el.scrollTop = el.scrollHeight;
     requestAnimationFrame(() => { autoScrollLockRef.current = false; });
@@ -1868,7 +2076,9 @@ function SciAppRoot() {
       if (ev.sessionId && !isolated) sessionId.current = ev.sessionId;
       if (ev.model && !isolated) setActiveModel(ev.model);
       if (typeof ev.usage === 'number' && !isolated) setUsage(ev.usage);
-      patchMessageByCid(cid, { ragUsed: !!ev.ragUsed, sources: ev.sources || [] });
+      // `model` is kept on the bubble itself (not just the model chip) so a
+      // later feedback record names the model that actually wrote this reply.
+      patchMessageByCid(cid, { ragUsed: !!ev.ragUsed, sources: ev.sources || [], model: ev.model });
     } else if (ev.type === 'assigned') {
       // Auto-assign mode: tag the in-progress bubble with the chosen expert so it
       // shows that scientist's avatar and name.
@@ -1887,6 +2097,60 @@ function SciAppRoot() {
     }
   }
 
+  // Persist one reply's like/dislike to the backend (/api/feedback). The
+  // rating lives on the message itself (m.fb -- survives reload via the
+  // session localStorage) and the backend upserts by fb.key, so a changed
+  // mind overwrites the same row instead of duplicating it; rating 0 retracts.
+  // The optimistic patch is rolled back on failure -- otherwise localStorage
+  // would keep claiming a rating no server row backs, and the retry click
+  // would misroute into retraction.
+  async function submitFeedback(i, m, rating, details) {
+    const key = (m.fb && m.fb.key) || m.cid || uid();
+    const prevFb = m.fb;
+    const fbState = rating === 0 ? undefined : {
+      key,
+      rating,
+      reasons: details && details.reasons && details.reasons.length ? details.reasons : undefined,
+      correction: details && details.correction ? details.correction : undefined,
+      comment: details && details.comment ? details.comment : undefined,
+    };
+    fbScrollSkipRef.current = true;
+    setMessages((list) => list.map((x, xi) => (xi === i ? { ...x, fb: fbState } : x)));
+    try {
+      const res = await fetch(backendUrl + '/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: key,
+          source: 'chat',
+          // Compare mode's direct bubble never belonged to the server session.
+          sessionId: (m.compare && m.mode === 'direct') ? undefined : (sessionId.current || undefined),
+          requestId: m.requestId || undefined,
+          scientistId: m.id || (selected && selected.id) || undefined,
+          lang,
+          model: m.model || activeModel || undefined,
+          replyMode: m.mode || undefined,
+          ragUsed: typeof m.ragUsed === 'boolean' ? m.ragUsed : undefined,
+          sources: (m.sources || []).map((s) => ({ title: s.title, url: s.url, qid: s.qid, score: s.score })),
+          question: precedingUserText(messagesRef.current, i),
+          answer: m.text,
+          rating,
+          reasons: fbState && fbState.reasons,
+          correction: fbState && fbState.correction,
+          comment: fbState && fbState.comment,
+        }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return true;
+    } catch (e) {
+      fbScrollSkipRef.current = true;
+      setMessages((list) => list.map((x, xi) => (xi === i ? { ...x, fb: prevFb } : x)));
+      fbScrollSkipRef.current = true;
+      pushNotice('err', tr.fbFail);
+      return false;
+    }
+  }
+
   // One /api/chat SSE call, streaming into the message identified by `cid`.
   // `isolated` calls (compare mode's direct-reply companion) send their own
   // history snapshot and never touch the real session (mirrors the existing
@@ -1895,6 +2159,9 @@ function SciAppRoot() {
     const ac = new AbortController();
     const requestId = uid();
     abortRef.current = [...(abortRef.current || []), { ac, requestId }];
+    // Stamped on the bubble so a later feedback record can join this reply to
+    // its backend trace row (traces.meta.requestId) deterministically.
+    patchMessageByCid(cid, { requestId });
 
     let ok = false;
     let gotToken = false;
@@ -2087,6 +2354,9 @@ function SciAppRoot() {
           {showCopy && (
             <div className="sci-msg-actions">
               <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+              {m.text ? (
+                <FeedbackButtons msg={m} tr={tr} onSubmit={(r, d) => submitFeedback(i, m, r, d)} />
+              ) : null}
             </div>
           )}
         </div>
@@ -2171,13 +2441,17 @@ function SciAppRoot() {
     });
   }
 
+  // Last meta event's per-reply facts (model/ragUsed/sources), copied onto
+  // each subsequent speaker bubble of the same call by handleDiscussEvent.
+  const discussMetaRef = useRef({});
+
   // `ctx.isolated` is compare mode's direct-reply lineage (see runDiscussCall):
   // its meta/model/usage must never clobber the real (RAG) session's state,
   // exactly like the single chat's isolated compare call. `ctx.mode`/`turnId`
   // tag every message this call produces, so a compare turn's two full
   // roundtables (direct then RAG) render side by side afterward.
   function handleDiscussEvent(ev, ctx) {
-    const { isolated, mode, turnId } = ctx || {};
+    const { isolated, mode, turnId, requestId } = ctx || {};
     const compare = !!turnId;
     if (ev.type === 'meta') {
       if (!isolated) {
@@ -2185,10 +2459,16 @@ function SciAppRoot() {
         if (ev.model) setDiscussModel(ev.model);
         if (typeof ev.usage === 'number') setDiscussUsage(ev.usage);
       }
+      // Stashed unconditionally (isolated compare calls included) so every
+      // speaker bubble of this call gets tagged with the model/RAG facts of
+      // the reply that actually produced it -- feedback records read them
+      // from the bubble, never from the current model chip.
+      discussMetaRef.current = { model: ev.model, ragUsed: !!ev.ragUsed, sources: ev.sources || [] };
     } else if (ev.type === 'phase') {
       setDiscussMessages((m) => [...m, { role: 'phase', phase: ev.phase, round: ev.round, maxRounds: ev.maxRounds, stopReason: ev.stopReason, compare, mode, turnId }]);
     } else if (ev.type === 'speaker') {
-      setDiscussMessages((m) => [...m, { role: 'sci', id: ev.id, name: ev.name, accent: ev.accent, text: '', conclusion: ev.role === 'conclusion', compare, mode, turnId }]);
+      const dm = discussMetaRef.current || {};
+      setDiscussMessages((m) => [...m, { role: 'sci', id: ev.id, name: ev.name, accent: ev.accent, text: '', conclusion: ev.role === 'conclusion', round: ev.round, model: dm.model, ragUsed: dm.ragUsed, sources: dm.sources, requestId, compare, mode, turnId }]);
     } else if (ev.type === 'token') {
       appendDiscussDelta(ev.text || '');
     } else if (ev.type === 'summary') {
@@ -2203,6 +2483,62 @@ function SciAppRoot() {
       if (!isolated && typeof ev.usage === 'number') setDiscussUsage(ev.usage);
     } else if (ev.type === 'error') {
       pushDiscussNotice('err', tr.errPrefix + ev.error);
+    }
+  }
+
+  // Discussion-tab twin of submitFeedback. Discussion bubbles have no cid, so
+  // the message is patched by object identity (safe: bubbles are only replaced
+  // while streaming, and feedback buttons only render once streaming ends).
+  // The patched clone is kept so a failed POST can swap the original back in.
+  async function submitDiscussFeedback(m, rating, details) {
+    const key = (m.fb && m.fb.key) || uid();
+    const idx = discussMessagesRef.current.indexOf(m);
+    const fbState = rating === 0 ? undefined : {
+      key,
+      rating,
+      reasons: details && details.reasons && details.reasons.length ? details.reasons : undefined,
+      correction: details && details.correction ? details.correction : undefined,
+      comment: details && details.comment ? details.comment : undefined,
+    };
+    const patched = { ...m, fb: fbState };
+    fbDiscussScrollSkipRef.current = true;
+    setDiscussMessages((list) => list.map((x) => (x === m ? patched : x)));
+    try {
+      const res = await fetch(backendUrl + '/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: key,
+          source: 'discuss',
+          sessionId: (m.compare && m.mode === 'direct') ? undefined : (discussSessionId.current || undefined),
+          requestId: m.requestId || undefined,
+          scientistId: m.id || undefined,
+          lang,
+          // The bubble's own model (stamped at meta time), not the current chip:
+          // the chip may have been switched since this reply was generated.
+          model: m.model || discussModel || undefined,
+          replyMode: m.mode || undefined,
+          ragUsed: typeof m.ragUsed === 'boolean' ? m.ragUsed : undefined,
+          sources: (m.sources || []).map((s) => ({ title: s.title, url: s.url, qid: s.qid, score: s.score })),
+          question: precedingUserText(discussMessagesRef.current, idx),
+          answer: m.text,
+          rating,
+          reasons: fbState && fbState.reasons,
+          correction: fbState && fbState.correction,
+          comment: fbState && fbState.comment,
+          meta: (m.conclusion || m.round || m.turnId)
+            ? { conclusion: m.conclusion || undefined, round: m.round || undefined, turnId: m.turnId || undefined }
+            : undefined,
+        }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return true;
+    } catch (e) {
+      fbDiscussScrollSkipRef.current = true;
+      setDiscussMessages((list) => list.map((x) => (x === patched ? m : x)));
+      fbDiscussScrollSkipRef.current = true;
+      pushDiscussNotice('err', tr.fbFail);
+      return false;
     }
   }
 
@@ -2284,7 +2620,7 @@ function SciAppRoot() {
           if (!line) continue;
           let ev;
           try { ev = JSON.parse(line); } catch (e) { continue; }
-          handleDiscussEvent(ev, { isolated, mode, turnId });
+          handleDiscussEvent(ev, { isolated, mode, turnId, requestId });
         }
       }
       ok = true;
@@ -2523,6 +2859,8 @@ function SciAppRoot() {
           setSortOrder={setSortOrder}
           onScroll={handleScroll}
           onUndo={undoDiscussMessage}
+          onFeedback={submitDiscussFeedback}
+          fbScrollSkipRef={fbDiscussScrollSkipRef}
           headRef={setChatHeadNode}
           autoScrollLockRef={autoScrollLockRef}
           installedModels={installedModels}
@@ -3014,7 +3352,7 @@ function FavReader({ fav, tr, lang, onBack, onResume, onDelete, onBio, onEdit })
 // one for items inside a compare-mode column); `typing` is already resolved
 // per-item (is THIS the bubble currently streaming). Shared by the flat
 // (non-compare) path and the two side-by-side columns of a compare turn.
-function renderDiscussItem(m, key, { tr, lang, onBio, onUndo, undoDisabled, typing }) {
+function renderDiscussItem(m, key, { tr, lang, onBio, onUndo, undoDisabled, typing, onFeedback }) {
   if (m.role === 'notice') {
     if (m.kind === 'keypoints') {
       return <div key={key} className="sci-keypoints"><span className="kp-title">{tr.keypointsTitle}</span><div className="kp-body">{m.text}</div></div>;
@@ -3061,6 +3399,9 @@ function renderDiscussItem(m, key, { tr, lang, onBio, onUndo, undoDisabled, typi
         {showCopy && (
           <div className="sci-msg-actions">
             <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+            {onFeedback && m.text ? (
+              <FeedbackButtons msg={m} tr={tr} onSubmit={(r, d) => onFeedback(m, r, d)} />
+            ) : null}
           </div>
         )}
       </div>
@@ -3075,6 +3416,9 @@ function renderDiscussItem(m, key, { tr, lang, onBio, onUndo, undoDisabled, typi
         {showCopy && (
           <div className="sci-msg-actions">
             <CopyButton text={m.text} title={lang === 'zh' ? '複製回覆' : 'Copy reply'} />
+            {onFeedback && m.text ? (
+              <FeedbackButtons msg={m} tr={tr} onSubmit={(r, d) => onFeedback(m, r, d)} />
+            ) : null}
           </div>
         )}
       </div>
@@ -3088,7 +3432,7 @@ function lastSciIndex(list) {
   return -1;
 }
 
-function DiscussMessages({ messages, tr, lang, streaming, onBio, onUndo }) {
+function DiscussMessages({ messages, tr, lang, streaming, onBio, onUndo, onFeedback }) {
   const lastSci = lastSciIndex(messages);
   const out = [];
   let i = 0;
@@ -3114,17 +3458,17 @@ function DiscussMessages({ messages, tr, lang, streaming, onBio, onUndo }) {
         <CompareSwipeRow key={'cmp-' + turnId} className="sci-compare-row-discuss">
           <div className="sci-compare-col">
             <div className="sci-compare-col-label">{tr.replyModeBadgeDirect}</div>
-            {directItems.map((mm, k) => renderDiscussItem(mm, 'd' + k, { tr, lang, onBio, typing: streaming && k === lastDirectSci }))}
+            {directItems.map((mm, k) => renderDiscussItem(mm, 'd' + k, { tr, lang, onBio, onFeedback, typing: streaming && k === lastDirectSci }))}
           </div>
           <div className="sci-compare-col">
             <div className="sci-compare-col-label">{tr.replyModeBadgeRag}</div>
-            {ragItems.map((mm, k) => renderDiscussItem(mm, 'r' + k, { tr, lang, onBio, typing: streaming && k === lastRagSci }))}
+            {ragItems.map((mm, k) => renderDiscussItem(mm, 'r' + k, { tr, lang, onBio, onFeedback, typing: streaming && k === lastRagSci }))}
           </div>
         </CompareSwipeRow>
       );
       continue;
     }
-    out.push(renderDiscussItem(m, i, { tr, lang, onBio, onUndo, undoDisabled: streaming, typing: streaming && i === lastSci }));
+    out.push(renderDiscussItem(m, i, { tr, lang, onBio, onUndo, onFeedback, undoDisabled: streaming, typing: streaming && i === lastSci }));
     i++;
   }
   return out;
@@ -3141,6 +3485,8 @@ function DiscussView({
   sortBy, setSortBy, sortOrder, setSortOrder,
   onScroll,
   onUndo,
+  onFeedback,
+  fbScrollSkipRef,
   headRef,
   autoScrollLockRef,
   installedModels, modelOverride, setModelOverride, busy,
@@ -3150,6 +3496,9 @@ function DiscussView({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    // Feedback-only patches must not yank the viewport (see the single-chat
+    // autoscroll effect's twin guard).
+    if (fbScrollSkipRef && fbScrollSkipRef.current) { fbScrollSkipRef.current = false; return; }
     if (autoScrollLockRef) autoScrollLockRef.current = true;
     el.scrollTop = el.scrollHeight;
     requestAnimationFrame(() => { if (autoScrollLockRef) autoScrollLockRef.current = false; });
@@ -3268,7 +3617,7 @@ function DiscussView({
             </div>
           )}
 
-          <DiscussMessages messages={messages} tr={tr} lang={lang} streaming={streaming} onBio={onBio} onUndo={onUndo} />
+          <DiscussMessages messages={messages} tr={tr} lang={lang} streaming={streaming} onBio={onBio} onUndo={onUndo} onFeedback={onFeedback} />
 
           {/* On-topic follow-up topics drawn from the discussion so far. */}
           {!streaming && followups && followups.length > 0 && (

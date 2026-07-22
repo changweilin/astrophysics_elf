@@ -13,6 +13,12 @@
       "runtimeArgs": ["dist/serve.mjs"],
       "port": 5185,
       "env": { "PORT": "5185" }
+    },
+    {
+      "name": "kn-sci-api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scientists-backend/server.mjs"],
+      "port": 5188
     }
   ]
 }
