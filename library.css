@@ -383,8 +383,8 @@ body.lp-graphmode .lp-shell {
    graph centred rather than pinned to the top. */
 body.lp-graphmode .lp-main {
   grid-column: 1; max-width: none;
-  min-height: calc(100vh - 48px - 44px);   /* viewport minus top bar and footer */
-  display: flex; align-items: center;
+  min-height: calc(100vh - 48px);   /* fill the space under the sticky top bar */
+  display: flex; align-items: center;   /* centre the graph block in it */
 }
 body.lp-graphmode .lp-foot { grid-column: 1; }
 

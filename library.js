@@ -97,7 +97,17 @@
     var rect = stage.getBoundingClientRect();
     var avail = window.innerHeight - headH;
     var target = window.scrollY + rect.top - headH - Math.max(0, (avail - rect.height) / 2);
-    window.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+    // behavior:'auto' overrides the page's scroll-behavior:smooth so the repeated
+    // passes below just snap to the settled position instead of animating each time.
+    window.scrollTo({ top: Math.max(0, target), behavior: 'auto' });
+  }
+  // The knowledge graph loads its list/graph async, and the mobile stack (search
+  // sidebar above the stage) reflows taller as that data arrives -- so centre once
+  // now and again as it settles, otherwise we'd centre against the "Loading…" height.
+  function scheduleCenterGraphStage() {
+    requestAnimationFrame(centerGraphStage);
+    setTimeout(centerGraphStage, 350);
+    setTimeout(centerGraphStage, 800);
   }
 
   // ---- scroll memory (course view) ----------------------------------------
@@ -453,7 +463,7 @@
       // ?kg= deep link). Cleared so a later plain re-render doesn't re-scroll.
       if (pendingCenter) {
         pendingCenter = false;
-        requestAnimationFrame(centerGraphStage);
+        scheduleCenterGraphStage();
       }
       return;
     }
