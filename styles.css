@@ -703,10 +703,22 @@ html, body {
 }
 .viewport .overlay-bl {
   position: absolute; bottom: 12px; left: 14px;
-  display: flex; gap: 12px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   pointer-events: auto;
   z-index: 2;
 }
+/* The window dock stacks above the view-toggle + frame-lock row (which keep
+   their original side-by-side layout inside this wrapper). */
+.viewport .overlay-bl .obl-row { display: flex; gap: 12px; }
+/* Window-manager dock: reuses .view-toggles chrome; the TILE (re-arrange)
+   action reads as a quiet utility, not another visibility toggle. */
+.view-toggles.win-dock .wd-reset {
+  border-left: 1px solid var(--line);
+  border-right: none;
+  color: var(--fg-3);
+  text-transform: uppercase;
+}
+.view-toggles.win-dock .wd-reset:hover { color: var(--cyan); background: oklch(0.20 0.022 255 / 0.6); }
 .viewport .overlay-br {
   position: absolute; bottom: 12px; right: 14px;
   display: flex; flex-direction: column; gap: 4px;
@@ -1288,6 +1300,17 @@ html, body {
   color: var(--amber);
   width: 10px;
 }
+/* Per-window close (×) — closes the window through the central manager, so the
+   dock chip and the window agree. Left of the chevron to avoid the header's
+   right-side controls; stays visible while collapsed (mh-right hides). */
+.kn-win-close {
+  font-family: var(--mono);
+  font-size: 14px; line-height: 1;
+  color: var(--fg-3);
+  cursor: pointer;
+  padding: 0 1px;
+}
+.kn-win-close:hover { color: var(--magenta); }
 .mh-title {
   font-family: var(--mono);
   font-size: 10px;

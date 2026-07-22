@@ -65,10 +65,15 @@
   })();
   var kgInstance = null; // live KNKG mount (destroyed when leaving graph view)
   var kgFocus = null;    // {qid, q} the graph opens on (set by a course term link)
+  // A term-link jump (or a ?kg= deep link) should land the reader looking at the
+  // graph itself, centered — not scrolled to the top of the page (the search
+  // sidebar). Set when a focus is supplied; consumed once after the graph mounts.
+  var pendingCenter = false;
 
   function setView(next, focus) {
     if (next !== 'course' && next !== 'graph') return;
     kgFocus = focus || null;
+    if (focus) pendingCenter = true;   // a term link: land centered on the graph
     if (next === view) {
       if (focus) render(); // already in the graph: re-center it on the new term
       return;
@@ -77,8 +82,22 @@
     view = next;
     try { localStorage.setItem(VIEW_KEY, next); } catch (e) {}
     render();
-    if (next === 'course') restoreScroll(); // return to the remembered spot
-    else window.scrollTo(0, 0);             // graph fills the viewport from the top
+    if (next === 'course') restoreScroll();      // return to the remembered spot
+    else if (!focus) window.scrollTo(0, 0);      // plain toggle: graph from the top
+  }
+
+  // Scroll the graph stage (the canvas block, not the search sidebar) to the
+  // vertical centre of the space under the sticky top bar, so a jump from a
+  // course term link — or a stacked mobile layout — lands on the graph itself.
+  function centerGraphStage() {
+    var stage = document.querySelector('.lp-kg .kg-stage') || document.querySelector('.lp-kg');
+    if (!stage) return;
+    var header = document.querySelector('.lp-top');
+    var headH = header ? header.offsetHeight : 0;
+    var rect = stage.getBoundingClientRect();
+    var avail = window.innerHeight - headH;
+    var target = window.scrollY + rect.top - headH - Math.max(0, (avail - rect.height) / 2);
+    window.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
   }
 
   // ---- scroll memory (course view) ----------------------------------------
@@ -430,6 +449,12 @@
         wrap.appendChild(el('p', null, 'knowledge-graph module failed to load'));
       }
       renderFooter();
+      // Land centered on the graph after layout settles (a term-link jump or a
+      // ?kg= deep link). Cleared so a later plain re-render doesn't re-scroll.
+      if (pendingCenter) {
+        pendingCenter = false;
+        requestAnimationFrame(centerGraphStage);
+      }
       return;
     }
     document.body.classList.remove('lp-graphmode');
@@ -579,6 +604,7 @@
     if (booted) {
       view = 'graph';
       kgFocus = booted;
+      pendingCenter = true;   // deep link: land centered on the graph too
     }
     render();
   }

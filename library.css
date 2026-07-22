@@ -378,22 +378,34 @@ a:hover { color: var(--cyan-dim); text-decoration: underline; }
 body.lp-graphmode .lp-shell {
   grid-template-columns: 1fr; max-width: none; padding: 0 14px;
 }
-body.lp-graphmode .lp-main { grid-column: 1; max-width: none; }
+/* Vertically centre the knowledge-graph block in the space under the sticky top
+   bar (minus the footer), so a jump in from a course term link lands on the
+   graph centred rather than pinned to the top. */
+body.lp-graphmode .lp-main {
+  grid-column: 1; max-width: none;
+  min-height: calc(100vh - 48px - 44px);   /* viewport minus top bar and footer */
+  display: flex; align-items: center;
+}
 body.lp-graphmode .lp-foot { grid-column: 1; }
 
 .lp-kg.kg-root {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr) 320px;
   gap: 14px;
+  width: 100%;
   height: calc(100vh - 140px);
   min-height: 480px;
-  margin-top: 16px;
 }
 @media (max-width: 980px) {
+  /* Mobile: back to normal top-anchored document flow (the side/stage/detail
+     stack is taller than the viewport). library.js scroll-centres the stage on
+     a term-link jump instead. */
+  body.lp-graphmode .lp-main { display: block; min-height: 0; }
   .lp-kg.kg-root {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(320px, 48vh) auto;
     height: auto;
+    margin-top: 16px;
   }
 }
 .kg-side, .kg-detail {

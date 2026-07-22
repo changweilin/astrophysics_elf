@@ -66,7 +66,7 @@ function knFmtAngle(uas) {
   return (v * 1e6).toFixed(1) + ' pas';
 }
 
-function ObserverView({ sim }) {
+function ObserverView({ sim, onClose }) {
   // Inclination presets (degrees from the spin pole). 90 deg is edge-on.
   const INCL = [20, 40, 60, 80];
   // Camera azimuth presets (degrees). Azimuth reuses the cached LUT, so cycling
@@ -321,6 +321,9 @@ function ObserverView({ sim }) {
          style={drag.style}>
       <div className="microscope-head fs-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
+          <span className="kn-win-close" title={tr('Close', '關閉')}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onClose && onClose()}>×</span>
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>

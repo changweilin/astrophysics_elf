@@ -41,6 +41,11 @@ function App() {
   }, [r3dReady]);
   const use3D = mode3d && r3dReady;
 
+  // Central manager for the floating viewport windows (tidal / MHD / field /
+  // observer): one persisted open-state map + a dock, so they are managed from
+  // one place instead of each mounting on its own terms. See drag-move.js.
+  const winMgr = knUseWinManager();
+
   // Attach / detach the WebGL renderer to the 3D canvas.
   useE(() => {
     if (!use3D) return;
@@ -610,6 +615,8 @@ function App() {
           </div>
         </div>
         <div className="overlay-bl">
+          <WindowDock mgr={winMgr} />
+          <div className="obl-row">
           <div className="view-toggles">
             <ToggleBtn label={tr('HORIZON', '視界')}  k="showHorizon" sim={SIM} force={force} />
             <ToggleBtn label={tr('ERGO', '動圈')}     k="showErgo" sim={SIM} force={force} />
@@ -623,6 +630,7 @@ function App() {
             <ToggleBtn label={tr('LABELS', '標籤')}   k="showLabels" sim={SIM} force={force} />
           </div>
           <FrameLock sim={SIM} force={force} />
+          </div>
         </div>
         <div className="overlay-br">
           <div className="view-zoom" role="group" aria-label={tr('Zoom', '縮放')}>
@@ -645,19 +653,21 @@ function App() {
           </div>
         </div>
 
-        <TidalMicroscope sim={SIM} force={force} />
-        <MHDMonitor sim={SIM} force={force} />
+        {/* Floating windows — visibility owned by the central window manager
+            (the WINDOWS dock in overlay-bl), not by each window's own terms.
+            Each is draggable, resizable and viewport-clamped (drag-move.js). */}
+        {winMgr.open.tidal && <TidalMicroscope sim={SIM} force={force} onClose={() => winMgr.setOpen('tidal', false)} />}
+        {winMgr.open.mhd && <MHDMonitor sim={SIM} force={force} onClose={() => winMgr.setOpen('mhd', false)} />}
 
-        {/* Draggable gravitational-field window (desktop). The gravity well and
-            the GW strain overlap, centred on the system centre of mass; a
-            draggable divider wipes between them. Clamped to the viewport so it
-            can never be dragged off-screen. */}
-        <FieldScope sim={SIM} />
+        {/* Gravity well + GW strain, overlapping at the system centre of mass
+            with a draggable wipe divider between them. */}
+        {winMgr.open.field && <FieldScope sim={SIM} onClose={() => winMgr.setOpen('field', false)} />}
 
-        {/* Draggable gravitational-lensing observer view (opt-in via the LENS
-            toggle, since ray tracing is heavier than the other scopes). Renders
-            off-thread through window.KNLensing; does not touch the main canvas. */}
-        {SIM.flags.showLensing && <ObserverView sim={SIM} force={force} />}
+        {/* Gravitational-lensing observer view. Ray tracing is heavier than the
+            other scopes, so it defaults closed; opening it is now a dock choice,
+            independent of the LENS main-canvas overlay. Renders off-thread via
+            window.KNLensing; does not touch the main canvas. */}
+        {winMgr.open.observer && <ObserverView sim={SIM} force={force} onClose={() => winMgr.setOpen('observer', false)} />}
       </div>
 
       <RightPanel sim={SIM} force={force} />
@@ -689,6 +699,29 @@ function FrameLock({ sim, force }) {
           {lbl}
         </button>
       ))}
+    </div>
+  );
+}
+
+// Central dock for the floating viewport windows (tidal / MHD / field /
+// observer): one bar to show/hide each and to re-tile them into the corners.
+// Reuses the .view-toggles chrome so it reads as part of the same overlay. Each
+// chip toggles its window; "bring to front" is a click on the window itself (or
+// the TILE button, which raises + arranges all open windows at once).
+function WindowDock({ mgr }) {
+  return (
+    <div className="view-toggles win-dock" role="group" aria-label={tr('Windows', '視窗')}>
+      <span className="vt-label">{tr('WINDOWS', '視窗')}</span>
+      {mgr.registry.map((w) => (
+        <button key={w.id} className={mgr.open[w.id] ? 'on' : ''}
+          aria-pressed={mgr.open[w.id]}
+          title={mgr.open[w.id] ? tr('Hide window', '隱藏視窗') : tr('Show window', '顯示視窗')}
+          onClick={() => mgr.toggle(w.id)}>
+          <span className="sw" />{tr(w.en, w.zh)}
+        </button>
+      ))}
+      <button className="wd-reset" title={tr('Tile windows into the corners', '將視窗排列到角落')}
+        onClick={mgr.reset}>{tr('TILE', '排列')}</button>
     </div>
   );
 }

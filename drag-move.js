@@ -125,6 +125,36 @@ function knUseDragMove(id, initial, opts) {
     el.addEventListener('pointerdown', onDown);
     return function () { el.removeEventListener('pointerdown', onDown); };
   }, []);
+  // Respond to central window-manager commands (dock "bring to front" and
+  // "tile layout"). The manager owns which windows are open, but each window
+  // owns its own position/z state, so it re-arranges itself on request rather
+  // than the manager reaching into it. Only mounted (open) windows listen.
+  React.useEffect(function () {
+    function onFront(ev) { if (ev.detail && ev.detail.id === id) setZ(knNextZ()); }
+    function onReset(ev) {
+      var slots = ev.detail && ev.detail.slots;
+      if (!slots || !Object.prototype.hasOwnProperty.call(slots, id)) return;
+      var el = rootRef.current;
+      if (!el || !el.parentElement) return;
+      var pr = el.parentElement.getBoundingClientRect();
+      var w = el.offsetWidth, h = el.offsetHeight, i = slots[id], n = ev.detail.count || 1;
+      var M = 14, x, y;
+      if (n > 4) {                       // more windows than corners: cascade
+        x = M + i * 34; y = M + i * 34;
+      } else {                           // tile up to four into the viewport corners
+        x = (i % 2) === 0 ? M : Math.max(M, pr.width - w - M);
+        y = (i < 2) ? M : Math.max(M, pr.height - h - M);
+      }
+      setPos(clamp(x, y));
+      setZ(knNextZ());
+    }
+    window.addEventListener('kn-win-front', onFront);
+    window.addEventListener('kn-win-reset', onReset);
+    return function () {
+      window.removeEventListener('kn-win-front', onFront);
+      window.removeEventListener('kn-win-reset', onReset);
+    };
+  }, [id]);
 
   function onHeadDown(e) {
     if (e.button !== 0) return;
@@ -285,3 +315,74 @@ function knUseSplit(id, defaultFrac, opts) {
   };
 }
 window.knUseSplit = knUseSplit;
+
+/* ---- Central window manager: one registry + shared open/close state --------
+ * The lab's floating windows are managed from a single place (a dock plus this
+ * shared, persisted open-state map) instead of each mounting on its own terms.
+ * Open state is broadcast on 'kn-wins-change' so the dock and the windows never
+ * disagree; "bring to front" / "tile" go the other way via 'kn-win-front' /
+ * 'kn-win-reset' (handled inside knUseDragMove above). ASCII ids only. */
+var KN_WIN_REGISTRY = [
+  { id: 'tidal',    en: 'Tidal',    zh: '潮汐',   defOpen: true },
+  { id: 'mhd',      en: 'MHD Jet',  zh: 'MHD 噴流', defOpen: true },
+  { id: 'field',    en: 'Field',    zh: '重力場', defOpen: true },
+  { id: 'observer', en: 'Observer', zh: '觀測者', defOpen: false },
+];
+window.KN_WIN_REGISTRY = KN_WIN_REGISTRY;
+
+var KN_WIN_OPEN_KEY = 'knwins:open';
+function knReadWinOpenMap() {
+  try {
+    var s = window.localStorage.getItem(KN_WIN_OPEN_KEY);
+    if (s) { var o = JSON.parse(s); if (o && typeof o === 'object') return o; }
+  } catch (e) {}
+  return {};
+}
+function knIsWinOpen(id) {
+  var o = knReadWinOpenMap();
+  if (Object.prototype.hasOwnProperty.call(o, id)) return !!o[id];
+  for (var i = 0; i < KN_WIN_REGISTRY.length; i++) {
+    if (KN_WIN_REGISTRY[i].id === id) return !!KN_WIN_REGISTRY[i].defOpen;
+  }
+  return false;
+}
+function knSetWinOpen(id, open) {
+  var o = knReadWinOpenMap();
+  o[id] = !!open;
+  try { window.localStorage.setItem(KN_WIN_OPEN_KEY, JSON.stringify(o)); } catch (e) {}
+  window.dispatchEvent(new CustomEvent('kn-wins-change'));
+}
+function knBringWinFront(id) {
+  window.dispatchEvent(new CustomEvent('kn-win-front', { detail: { id: id } }));
+}
+// Re-tile every currently-open window into the viewport corners (registry order),
+// so an overlapping pile becomes a clean, all-headers-visible layout in one click.
+function knResetWinLayout() {
+  var slots = {}, n = 0;
+  KN_WIN_REGISTRY.forEach(function (w) { if (knIsWinOpen(w.id)) { slots[w.id] = n; n++; } });
+  window.dispatchEvent(new CustomEvent('kn-win-reset', { detail: { slots: slots, count: n } }));
+}
+
+/* Hook: subscribe a component (the dock, App) to the shared open-state map.
+ * Re-renders on any 'kn-wins-change'. Returns a small manager facade. */
+function knUseWinManager() {
+  var React = window.React;
+  var tick = React.useState(0);
+  React.useEffect(function () {
+    var on = function () { tick[1](function (v) { return v + 1; }); };
+    window.addEventListener('kn-wins-change', on);
+    return function () { window.removeEventListener('kn-wins-change', on); };
+  }, []);
+  var open = {};
+  KN_WIN_REGISTRY.forEach(function (w) { open[w.id] = knIsWinOpen(w.id); });
+  return {
+    registry: KN_WIN_REGISTRY,
+    open: open,
+    isOpen: knIsWinOpen,
+    setOpen: knSetWinOpen,
+    toggle: function (id) { knSetWinOpen(id, !knIsWinOpen(id)); },
+    front: knBringWinFront,
+    reset: knResetWinLayout,
+  };
+}
+window.knUseWinManager = knUseWinManager;

@@ -29,7 +29,7 @@ function mhdView(sim, which) {
   return { params: sim.params, disc: sim.disc, center, m: window.KNDisc.jetMetrics(sim) };
 }
 
-function MHDMonitor({ sim, force }) {
+function MHDMonitor({ sim, force, onClose }) {
   const [collapsed, setCollapsed] = knUseWinPref('mhd', 'collapsed', false);
   const [which, setWhich] = knUseWinPref('mhd', 'which', 'primary');
 
@@ -94,6 +94,9 @@ function MHDMonitor({ sim, force }) {
          style={drag.style}>
       <div className="microscope-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
+          <span className="kn-win-close" title={tr('Close', '關閉')}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onClose && onClose()}>×</span>
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>

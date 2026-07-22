@@ -41,7 +41,7 @@ function companionTidalTarget(sim) {
   };
 }
 
-function TidalMicroscope({ sim, force }) {
+function TidalMicroscope({ sim, force, onClose }) {
   const [collapsed, setCollapsed] = knUseWinPref('tidal', 'collapsed', false);
   const [pinnedId, setPinnedId] = React.useState(null);
   const [pickCompanion, setPickCompanion] = React.useState(false);
@@ -147,6 +147,9 @@ function TidalMicroscope({ sim, force }) {
          style={drag.style}>
       <div className="microscope-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
+          <span className="kn-win-close" title={tr('Close', '關閉')}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onClose && onClose()}>×</span>
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>

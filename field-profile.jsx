@@ -204,7 +204,7 @@ function renderFieldSection(ctx, w, h, kind, sim, opts) {
 // centre. The divider only changes how much of the top layer (the gravity well)
 // is revealed over the bottom layer (the GW strain) via clip-path — neither
 // diagram moves or scales while dragging.
-function FieldScope({ sim }) {
+function FieldScope({ sim, onClose }) {
   const [collapsed, setCollapsed] = knUseWinPref('field', 'collapsed', false);
   const fieldRef = React.useRef(null);   // top pane: gravity well
   const gwRef = React.useRef(null);      // bottom pane: GW strain
@@ -280,6 +280,9 @@ function FieldScope({ sim }) {
           title stop the drag so a tap toggles collapse instead of moving). */}
       <div className="microscope-head fs-head" onPointerDown={drag.onHeadDown}>
         <div className="mh-left">
+          <span className="kn-win-close" title={tr('Close', '關閉')}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onClose && onClose()}>×</span>
           <span className="mh-chev"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setCollapsed(!collapsed)}>{collapsed ? '▸' : '▾'}</span>
