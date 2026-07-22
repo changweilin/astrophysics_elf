@@ -6,6 +6,13 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["serve.mjs"],
       "port": 5184
+    },
+    {
+      "name": "kn-lab-dist",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dist/serve.mjs"],
+      "port": 5185,
+      "env": { "PORT": "5185" }
     }
   ]
 }

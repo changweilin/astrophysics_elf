@@ -7,7 +7,9 @@
   "license": "GPL-3.0-or-later",
   "author": "Chang Wei Lin",
   "scripts": {
+    "build": "node build.mjs",
     "dev": "node serve.mjs",
+    "start:dist": "node dist/serve.mjs",
     "dev:all": "node dev-all.mjs",
     "dev:api": "node scientists-backend/server.mjs",
     "kb:crawl": "node wiki-kb/crawl.mjs all",

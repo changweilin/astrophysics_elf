@@ -1,0 +1,53 @@
+params M=1 Q=0.15 a=0.65; camera r=26 theta=75deg fovY=1.2566
+effective trace opts: affine=30 atol=1e-9 rtol=1e-8 maxStep=0.45 recordEvery=12 escapeR=48
+disc innerR=3.6159 outerR=18 rISCO=3.5691
+
+[correctness] building JS LUT (reference) ...
+[correctness] building WASM LUT ...
+[correctness] raw JS traceCameraRays for Pt/Pphi parity ...
+capture agreement: 100.000% (0/3318 mismatched)
+raw status agreement: 100.000%
+discHit agreement (non-captured): 100.000% (0 mismatched)
+sky angle diff rad: p50=0.00e+0 p99.9=2.39e-7 max=2.66e-7; within 1e-3: 100.000%
+disc r rel diff: p50=0.00e+0 p99.9=1.03e-6 max=1.35e-6; within 1e-4: 100.000%
+disc g abs diff: p50=0.00e+0 max=5.96e-7
+ringGlow abs diff: p50=0.00e+0 max=6.26e-7
+final Pt rel diff max (status-agreeing): 0.00e+0; Pphi: 5.15e-16
+
+[conservation] single-ray adaptive integration, tolerances 1e-9/1e-8
+diag pixel (0,21): JS drift=-9.932e-12 steps=69+0rej | WASM drift=-9.954e-12 steps=69+0rej
+WASM Pt drift=0 Pphi drift=0 (must be exactly 0)
+final r: JS=23.961134 WASM=23.961134
+
+[bench] full LUT build 79x42 (disc on)
+  JS  buildDeflectionLUT 79x42: median 3330.29 ms  (min 3292.20, max 3349.31, n=5)
+  WASM lut-build 79x42        : median 325.15 ms  (min 321.78, max 326.84, n=5)
+
+[bench] trace phase only 79x42 (kernel isolation)
+  JS  traceCameraRays 79x42   : median 3256.28 ms  (min 3248.78, max 3308.39, n=5)
+  WASM trace_ray_batch 79x42  : median 301.10 ms  (min 292.75, max 308.15, n=5)
+
+[bench] coarse progressive pass 40x21 (disc on)
+  JS  buildDeflectionLUT 40x21: median 882.71 ms  (min 859.50, max 910.88, n=5)
+  WASM lut-build 40x21        : median 105.26 ms  (min 102.87, max 109.00, n=5)
+  JS  lutGeometry (both sides): median 30.06 ms  (min 26.19, max 33.36, n=5)
+  JS  traceCameraRays 40x21   : median 813.12 ms  (min 797.42, max 859.30, n=5)
+  WASM trace_ray_batch 40x21  : median 76.18 ms  (min 74.73, max 78.30, n=5)
+
+[bench] single-ray trace (init+integrate+classify), UI options
+  JS  tracePhotonRay x50      : median 46.02 ms  (min 44.83, max 50.01, n=7)
+  WASM trace_single_diag x50  : median 4.28 ms  (min 3.86, max 7.29, n=7)
+
+[boundary] JS<->WASM call + copy overhead
+  no-op call: 5.9 ns/call
+  bulk write 96 KiB into wasm: 0.0019 ms; read full 79x42 payload (136.1 KiB) out: 0.0688 ms
+
+[gates]
+PASS  classification agreement >= 99.9%  capture 100.000%, raw 100.000%
+PASS  sky direction <= 1e-3 rad (>=99.9% of agreeing escaped rays)  within: 100.000%, max 2.66e-7
+PASS  disc-crossing r <= 1e-4 rel (>=99.9% of agreeing hits)  within: 100.000%, max 1.35e-6
+PASS  WASM Hamiltonian drift <= 1e-7  -9.954e-12
+PASS  WASM Pt/Pphi drift exactly 0  Pt 0, Pphi 0
+PASS  speedup >= 8x on 79x42 LUT build  10.2x
+FAIL  speedup >= 8x on 40x21 coarse trace phase, and coarse build <= 87 ms absolute  trace 10.7x, full build 8.4x (105 ms; fixed JS geometry 30 ms on both sides)
+PASS  payload <= 200 KB  136.1 KiB

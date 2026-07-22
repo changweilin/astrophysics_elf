@@ -6,7 +6,7 @@
 // what a given endpoint does.
 //
 //   GET    /api/stats                                 full statistics
-//   GET    /api/search?q=&langs=zh,en&k=8&kind=       hybrid retrieval results
+//   GET    /api/search?q=&langs=zh,en&k=8&kind=&fusion=  hybrid retrieval results
 //   GET    /api/context?q=&lang=zh&maxChars=1500      prompt-ready reference block
 //   GET    /api/page?id= | ?lang=&title= [&chunks=1]  read one page
 //   POST   /api/page {lang, title, force?}            ingest/refresh from Wikipedia
@@ -28,7 +28,7 @@
 //   GET    /api/traces/summary?hours=24                  monitoring aggregates by kind/model
 //   GET    /api/eval/runs?limit=20                       past evaluation runs + averaged metrics
 //   GET    /api/eval/run?id=N                            one run with per-case results
-//   POST   /api/eval/run {mode?,k?,graph?,limit?}        run the eval pipeline (eval/run-eval.mjs);
+//   POST   /api/eval/run {mode?,k?,graph?,limit?,fusion?} run the eval pipeline (eval/run-eval.mjs);
 //                                                        mode 'full' is LLM-gated like translate
 //
 // GET /api/health is intentionally NOT handled here -- each host reports
@@ -115,21 +115,28 @@ export function createKbRouter(db) {
       const q = url.searchParams.get('q') ?? '';
       if (!q.trim()) { json(res, 400, { ok: false, error: 'q required' }); return true; }
       const kind = url.searchParams.get('kind');
+      const fusion = url.searchParams.get('fusion') || undefined;
       const t0 = Date.now();
       const results = await search(db, {
         q,
         langs: langsParam(url),
         kinds: kind ? [kind] : undefined,
         k: Number(url.searchParams.get('k')) || undefined,
+        fusion,
       });
       recordTrace(db, {
         kind: 'search', input: q, ms: Date.now() - t0,
         output: results.map((r) => r.title).join(' | '),
-        meta: { hits: results.length, graphBoosted: results.filter((r) => r.g > 0).length },
+        meta: {
+          hits: results.length,
+          graphBoosted: results.filter((r) => r.g > 0).length,
+          fusion: fusion || config.retrieve.fusion,
+        },
       });
       json(res, 200, {
         ok: true,
         query: q,
+        fusion: fusion || config.retrieve.fusion,
         results: results.map((r) => ({
           ...r,
           score: Number(r.score.toFixed(4)),
@@ -500,6 +507,7 @@ export function createKbRouter(db) {
           mode,
           k: Number(body.k) || 8,
           graph: body.graph !== false,
+          fusion: body.fusion || undefined,
           limit: Number(body.limit) || Infinity,
         });
         logSync(db, 'eval-run', null, `run#${r.runId}`, `mode=${mode} graph=${r.graph} cases=${r.cases}`);

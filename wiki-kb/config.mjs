@@ -88,6 +88,16 @@ export const config = {
     scanMaxChunks: envNum('WKB_SCAN_MAX_CHUNKS', 60000),
     wBm25: envNum('WKB_W_BM25', 0.45),
     wVec: envNum('WKB_W_VEC', 0.55),
+    // Fusion strategy: 'rrf' (default) = weighted Reciprocal Rank Fusion over
+    // the two channel rankings (wBm25/wVec as channel weights); 'weighted' =
+    // legacy weighted min-max normalized score blend. rrfK: the literature
+    // default is 60, but that flattens ranks too much for this corpus's
+    // shallow top-k=8 -- a golden-set sweep (k in 1..60, 2026-07) found k>=40
+    // drops a hit (en-sgra) while k<=10 keeps hitRate 1.0 and MRR within one
+    // rank-step of the weighted baseline (0.780 vs 0.786), so 10 is the
+    // tuned default. Re-run eval/run-eval.mjs --fusion weighted for A/B.
+    fusion: envStr('WKB_FUSION', 'rrf'),
+    rrfK: envNum('WKB_RRF_K', 10),
     // Time decay on the article's last-revision age: stale pages sink but a
     // floor keeps old-yet-canonical physics from vanishing.
     halfLifeDays: envNum('WKB_DECAY_HALFLIFE_DAYS', 1095),

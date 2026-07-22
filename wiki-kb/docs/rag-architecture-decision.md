@@ -39,9 +39,13 @@
 - 候選 chunk 的最終分數 `score *= 1 + wGraph × g`(g 為 min-max 正規化的
   PPR 分數)。乘法式加成 → 沒有 QID 的手動筆記排序完全不受影響,
   `WKB_W_GRAPH=0` 可整體停用(fail-open,任何錯誤都退回純混合檢索)。
+  (2026-07 起兩文字通道本身改以加權 RRF 融合,見 README「混合檢索」節;
+  乘法式圖加成與衰減因子都是尺度無關,無須重調。)
 - **多跳擴充**(吸收 LightRAG 的 dual-level 概念):PPR 高分但不在
   BM25/向量候選中的頁面,拉入至多 `graphExpandPages`(預設 2)個代表
-  chunk —— 這是詞彙/向量通道天生看不到的多跳關聯內容。
+  chunk —— 這是詞彙/向量通道天生看不到的多跳關聯內容。擴充分數錨定在
+  有機結果第 k 名的分數上(`g × graphExpandScore × anchor × decay`),
+  RRF 的分數壓縮或單通道降級才不會讓擴充頁永遠進不了/永遠霸佔 top-k。
 
 新增設定(`config.mjs → retrieve`):`wGraph`、`graphSeedPages`、
 `graphExpandPages`、`graphExpandScore`、`pprAlpha`、`pprIters`,

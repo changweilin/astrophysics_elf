@@ -56,8 +56,11 @@ node server.mjs                   # http://127.0.0.1:5189
 ## 混合檢索與時間衰減
 
 `lib/retrieve.mjs`:BM25(FTS5)取前 400 候選 + 向量餘弦(語料小時全掃描、
-大於 `WKB_SCAN_MAX_CHUNKS` 時只重排 BM25 候選),兩者 min-max 正規化後加權融合
-(預設 0.45 / 0.55),再乘上**時間衰減因子**:
+大於 `WKB_SCAN_MAX_CHUNKS` 時只重排 BM25 候選),兩通道以**加權 RRF**
+(Reciprocal Rank Fusion)融合:對通過 lang/kind 過濾的候選分別按通道排名
+(同分共享名次),`score = Σ w_c / (rrfK + rank_c)` 再除以觀測最大值歸一到
+[0,1](通道權重預設 0.45 / 0.55、`WKB_RRF_K=10`;`WKB_FUSION=weighted` 可
+切回舊的 min-max 加權融合),再乘上**時間衰減因子**:
 
 ```
 decay = floor + (1 - floor) * exp(-ln2 * 條目最後修訂年齡 / 半衰期)

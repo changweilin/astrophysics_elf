@@ -1,0 +1,123 @@
+{
+  "bench": [
+    {
+      "case": "lut-build-79x42-disc",
+      "jsMs": 3330.29,
+      "wasmMs": 325.15,
+      "speedup": 10.2
+    },
+    {
+      "case": "trace-only-79x42",
+      "jsMs": 3256.28,
+      "wasmMs": 301.1,
+      "speedup": 10.8
+    },
+    {
+      "case": "lut-build-40x21-coarse",
+      "jsMs": 882.71,
+      "wasmMs": 105.26,
+      "speedup": 8.4
+    },
+    {
+      "case": "trace-only-40x21",
+      "jsMs": 813.12,
+      "wasmMs": 76.18,
+      "speedup": 10.7
+    },
+    {
+      "case": "fixed-js-geometry-per-build",
+      "jsMs": 30.06,
+      "wasmMs": 30.06,
+      "speedup": 1
+    },
+    {
+      "case": "single-ray-x50",
+      "jsMs": 46.02,
+      "wasmMs": 4.28,
+      "speedup": 10.7
+    }
+  ],
+  "correctness": {
+    "captureAgreementPct": 100,
+    "rawStatusAgreementPct": 100,
+    "discHitAgreementPct": 100,
+    "skyAngleRad": {
+      "p50": 0,
+      "p999": 2.3888378652753583e-7,
+      "max": 2.6572576910446673e-7,
+      "within1e3Pct": 100
+    },
+    "discRRel": {
+      "p50": 0,
+      "p999": 0.0000010318071758749724,
+      "max": 0.0000013540584389618805,
+      "within1e4Pct": 100
+    },
+    "discGAbs": {
+      "p50": 0,
+      "max": 5.960464477539062e-7
+    },
+    "ringGlowAbs": {
+      "p50": 0,
+      "max": 6.258487701416016e-7
+    },
+    "ptRelMax": 0,
+    "pphiRelMax": 5.153115072744602e-16,
+    "conservation": {
+      "jsDrift": -9.932332734052807e-12,
+      "wasmDrift": -9.953704527276841e-12,
+      "wasmPtDrift": 0,
+      "wasmPphiDrift": 0,
+      "jsSteps": "69+0rej",
+      "wasmSteps": "69+0rej"
+    }
+  },
+  "boundary": {
+    "noopNs": 5.9,
+    "write96KiBMs": 0.0019,
+    "readPayloadMs": 0.0688,
+    "payloadKiB": 136.1
+  },
+  "gates": [
+    {
+      "name": "classification agreement >= 99.9%",
+      "ok": true,
+      "detail": "capture 100.000%, raw 100.000%"
+    },
+    {
+      "name": "sky direction <= 1e-3 rad (>=99.9% of agreeing escaped rays)",
+      "ok": true,
+      "detail": "within: 100.000%, max 2.66e-7"
+    },
+    {
+      "name": "disc-crossing r <= 1e-4 rel (>=99.9% of agreeing hits)",
+      "ok": true,
+      "detail": "within: 100.000%, max 1.35e-6"
+    },
+    {
+      "name": "WASM Hamiltonian drift <= 1e-7",
+      "ok": true,
+      "detail": "-9.954e-12"
+    },
+    {
+      "name": "WASM Pt/Pphi drift exactly 0",
+      "ok": true,
+      "detail": "Pt 0, Pphi 0"
+    },
+    {
+      "name": "speedup >= 8x on 79x42 LUT build",
+      "ok": true,
+      "detail": "10.2x"
+    },
+    {
+      "name": "speedup >= 8x on 40x21 coarse trace phase, and coarse build <= 87 ms absolute",
+      "ok": false,
+      "detail": "trace 10.7x, full build 8.4x (105 ms; fixed JS geometry 30 ms on both sides)"
+    },
+    {
+      "name": "payload <= 200 KB",
+      "ok": true,
+      "detail": "136.1 KiB"
+    }
+  ]
+}

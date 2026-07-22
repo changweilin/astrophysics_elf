@@ -1,7 +1,8 @@
 // Hybrid retrieval: FTS5/BM25 (CJK-bigram index) + embedding cosine, fused by
-// weighted min-max-normalized scores, then multiplied by a time-decay factor
-// derived from the article's last-revision age. Falls back to BM25-only when
-// the embedding model is unreachable.
+// weighted Reciprocal Rank Fusion by default (WKB_FUSION=weighted restores the
+// legacy min-max-normalized score blend), then multiplied by a time-decay
+// factor derived from the article's last-revision age. Falls back to BM25-only
+// when the embedding model is unreachable.
 //
 // A third, graph channel (HippoRAG-style PPR over the Wikidata KG, see
 // graph-rank.mjs) multiplicatively boosts candidates whose pages are
@@ -49,7 +50,9 @@ function minMax(values) {
   return (v) => (hi > lo ? (v - lo) / (hi - lo) : 1);
 }
 
-// opts: { q, langs?: ['zh','en'], kinds?: ['scientist'], k? }
+// opts: { q, langs?: ['zh','en'], kinds?: ['scientist'], k?, fusion?, rrfK? }
+// fusion/rrfK override config.retrieve for single-process A/B comparisons
+// (mirrors the opts.noGraph pattern the graph channel got).
 export async function search(db, opts = {}) {
   const q = String(opts.q || '').trim();
   if (!q) return [];
@@ -135,28 +138,69 @@ export async function search(db, opts = {}) {
         (!opts.kinds?.length || opts.kinds.includes(r.kind))
     );
 
-  // 4) fuse scores
-  const bVals = [];
-  const vVals = [];
-  for (const { bm25, cos } of cand.values()) {
-    if (bm25 != null) bVals.push(bm25);
-    if (cos != null) vVals.push(cos);
-  }
-  const nb = minMax(bVals);
-  const nv = minMax(vVals);
+  // 4) fuse scores. RRF works on per-channel ranks, so it is immune to the
+  // incomparable scales of BM25 vs cosine that the min-max path has to patch
+  // over. Ranks are computed over the rows that SURVIVED the lang/kind
+  // filter: rank fusion is not affine like min-max, so filtered-out docs
+  // (e.g. other-language near-duplicates crowding the vector top exactly
+  // when a lang filter is active) must not occupy ranks. Ties share a rank
+  // (competition ranking) so equal-relevance docs score identically no
+  // matter what order SQLite returned them in. The fused score is
+  // normalized by the observed max so the top organic hit is 1.0 pre-decay
+  // in every channel mode (vector down, BM25 empty, single candidate) --
+  // the same invariant min-max provides, which is what keeps the decay
+  // multiplier, graph boost, and graph expansion calibrated downstream.
+  const fusion = opts.fusion || config.retrieve.fusion;
+  const rrfK = opts.rrfK || config.retrieve.rrfK;
   const { wBm25, wVec } = config.retrieve;
+  let fuse;
+  if (fusion === 'rrf') {
+    const rankOf = (key) => {
+      const order = rows
+        .map((r) => ({ id: r.chunkId, v: cand.get(r.chunkId)[key] }))
+        .filter((x) => x.v != null)
+        .sort((a, b) => b.v - a.v);
+      const ranks = new Map();
+      let rank = 0;
+      for (let i = 0; i < order.length; i++) {
+        if (i === 0 || order[i].v < order[i - 1].v) rank = i + 1;
+        ranks.set(order[i].id, rank);
+      }
+      return ranks;
+    };
+    const bRank = rankOf('bm25');
+    const vRank = rankOf('cos');
+    const raw = new Map();
+    let maxRaw = 0;
+    for (const r of rows) {
+      const rb = bRank.get(r.chunkId);
+      const rv = vRank.get(r.chunkId);
+      const s = (rb ? wBm25 / (rrfK + rb) : 0) + (rv ? wVec / (rrfK + rv) : 0);
+      raw.set(r.chunkId, s);
+      if (s > maxRaw) maxRaw = s;
+    }
+    fuse = (id) => (maxRaw > 0 ? raw.get(id) / maxRaw : 0);
+  } else {
+    const bVals = [];
+    const vVals = [];
+    for (const { bm25, cos } of cand.values()) {
+      if (bm25 != null) bVals.push(bm25);
+      if (cos != null) vVals.push(cos);
+    }
+    const nb = minMax(bVals);
+    const nv = minMax(vVals);
+    fuse = (id) => {
+      const { bm25, cos } = cand.get(id);
+      if (bm25 != null && cos != null) {
+        return (wBm25 * nb(bm25) + wVec * nv(cos)) / (wBm25 + wVec);
+      }
+      return bm25 != null ? nb(bm25) : nv(cos);
+    };
+  }
   const scored = rows.map((r) => {
     const { bm25, cos } = cand.get(r.chunkId);
-    let score;
-    if (bm25 != null && cos != null) {
-      score = (wBm25 * nb(bm25) + wVec * nv(cos)) / (wBm25 + wVec);
-    } else if (bm25 != null) {
-      score = nb(bm25);
-    } else {
-      score = nv(cos);
-    }
     const decay = decayFactor(r.revTime);
-    return { ...r, bm25, cos, decay, score: score * decay };
+    return { ...r, bm25, cos, decay, score: fuse(r.chunkId) * decay };
   });
   scored.sort((a, b) => b.score - a.score);
 
@@ -190,6 +234,16 @@ export async function search(db, opts = {}) {
           r.g = graph.score(r.qid);
           r.score *= 1 + wGraph * r.g;
         }
+        scored.sort((a, b) => b.score - a.score);
+        // Anchor expansion scores to the organic distribution. Under RRF the
+        // fused top-k compresses toward 1.0 (a fixed 0.5 could never surface
+        // an expanded page) while degraded single-channel modes cap organic
+        // scores below 0.5 (a fixed 0.5 would outrank every organic hit), so
+        // scale by the k-th organic score. Weighted mode keeps anchor=1,
+        // reproducing the legacy behavior exactly.
+        const anchor = fusion === 'rrf'
+          ? scored[Math.min(k, scored.length) - 1].score
+          : 1;
         for (const e of graph.expand) {
           const decay = decayFactor(e.revTime);
           scored.push({
@@ -198,7 +252,7 @@ export async function search(db, opts = {}) {
             cos: null,
             decay,
             graphExpanded: true,
-            score: e.g * graphExpandScore * decay,
+            score: e.g * graphExpandScore * anchor * decay,
           });
         }
         scored.sort((a, b) => b.score - a.score);

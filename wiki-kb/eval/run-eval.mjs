@@ -3,6 +3,7 @@
 //   node eval/run-eval.mjs                      # full run: retrieval + LLM judge
 //   node eval/run-eval.mjs --retrieval-only     # no LLM at all (fast, free)
 //   node eval/run-eval.mjs --no-graph           # A/B: disable the graph channel
+//   node eval/run-eval.mjs --fusion weighted    # A/B: fusion strategy (rrf|weighted)
 //   node eval/run-eval.mjs --limit 3 --k 8      # subset / retrieval depth
 //   node eval/run-eval.mjs --judge <tag> --answer <tag>
 //
@@ -18,6 +19,7 @@ import { search, buildContext } from '../lib/retrieve.mjs';
 import { recordTrace } from '../lib/trace.mjs';
 import { retrievalMetrics, contextPrecision, contextRecall, faithfulness } from './metrics.mjs';
 import { generate, resolveJudgeModel, resolveAnswerModel } from './judge.mjs';
+import { config } from '../config.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,7 +51,7 @@ const round3 = (x) => Number(x.toFixed(3));
 
 // mode: 'retrieval' (no LLM) or 'full'. Returns the persisted run row shape.
 export async function runEval(db, {
-  mode = 'full', k = 8, graph = true, limit = Infinity,
+  mode = 'full', k = 8, graph = true, limit = Infinity, fusion, rrfK,
   judgeModel, answerModel, datasetPath, log = () => {},
 } = {}) {
   const cases = loadGolden(datasetPath).slice(0, limit);
@@ -77,7 +79,7 @@ export async function runEval(db, {
     log(`  ${c.id} …`);
     const langs = c.lang === 'en' ? ['en'] : [c.lang, 'en'];
     const t0 = Date.now();
-    const results = await search(db, { q: c.question, langs, k, noGraph: !graph });
+    const results = await search(db, { q: c.question, langs, k, noGraph: !graph, fusion, rrfK });
     const retrieveMs = Date.now() - t0;
 
     const m = { ...retrievalMetrics(results, c.expect), retrieveMs };
@@ -145,10 +147,16 @@ export async function runEval(db, {
     log(`    hit=${m.hit} mrr=${m.mrr.toFixed(2)}${full ? ` P=${m.contextPrecision ?? '-'} R=${m.contextRecall ?? '-'} F=${m.faithfulness ?? '-'}` : ''}`);
   }
 
+  // Record the fusion strategy that actually ran, so runs before/after a
+  // default flip stay comparable in kb-admin's eval tab (same reason the
+  // graph flag is persisted).
+  const fusionUsed = fusion || config.retrieve.fusion;
   const metrics = {
     hitRate: round3(avg(acc.hit)),
     mrr: round3(avg(acc.mrr)),
     avgRetrieveMs: Math.round(avg(acc.retrieveMs)),
+    fusion: fusionUsed,
+    ...(fusionUsed === 'rrf' ? { rrfK: rrfK || config.retrieve.rrfK } : {}),
     ...(full ? {
       contextPrecision: round3(avg(acc.precision)),
       contextRecall: round3(avg(acc.recall)),
@@ -181,6 +189,8 @@ if (isMain) {
   const r = await runEval(db, {
     mode: flag('--retrieval-only') ? 'retrieval' : 'full',
     graph: !flag('--no-graph'),
+    fusion: opt('--fusion', undefined),
+    rrfK: Number(opt('--rrf-k', 0)) || undefined,
     k: Number(opt('--k', 8)),
     limit: Number(opt('--limit', Infinity)),
     judgeModel: opt('--judge', undefined),
