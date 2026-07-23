@@ -50,7 +50,7 @@ const EXTRA_FILES = ['scientists-backend/personas/scientists.mjs'];
 
 // Root files never shipped to production.
 const SKIP_FILES = new Set([
-  'build.mjs', 'dev-all.mjs', 'package.json', 'package-lock.json', '_g.txt',
+  'build.mjs', 'dev-all.mjs', 'package.json', 'package-lock.json',
 ]);
 const SKIP_EXT = new Set(['.md']);
 

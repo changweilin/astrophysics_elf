@@ -233,7 +233,7 @@ astrophysics_elf/
 ├── app.jsx                 # 桌面版根元件                      → window.App
 ├── panel-left/right/bottom.jsx   # 桌面面板（參數 / 遙測 / 天體庫）
 ├── tidal-scope.jsx · mhd-monitor.jsx · field-profile.jsx · observer-view.jsx
-├── mobile-app.jsx · mobile-panels.jsx · ios-frame.jsx        → window.MobileApp
+├── mobile-app.jsx · mobile-panels.jsx                        → window.MobileApp
 │
 ├── i18n.js · i18n-dict.js  # 多語系層與八國語系字典            → window.tr / window.KNi18n
 ├── styles.css · mobile-styles.css · page-nav.css
