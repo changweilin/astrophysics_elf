@@ -109,6 +109,7 @@ export function ingestManual(db, {
 export async function processQueue(db, {
   langs = config.langs,
   limit = Infinity,
+  reasons = null, // optional: only drain rows queued by these exact reasons
   log = () => {},
 } = {}) {
   const counts = { added: 0, updated: 0, unchanged: 0, skipped: 0, missing: 0, errors: 0 };
@@ -117,7 +118,7 @@ export async function processQueue(db, {
 
   for (const lang of langs) {
     while (fetches < limit) {
-      const batch = pendingQueue(db, lang, 50);
+      const batch = pendingQueue(db, lang, 50, reasons);
       if (!batch.length) break;
       const titles = batch.map((r) => r.title);
       let meta;
@@ -193,12 +194,29 @@ export async function embedPending(db, { limit = Infinity, log = () => {} } = {}
       )
       .all(Math.min(config.embed.batch, target - embedded));
     if (!rows.length) break;
+    // Retry before giving up: on a long run (100k+ chunks) the failure is
+    // usually transient rather than "Ollama is down" -- on Windows the host
+    // runs out of ephemeral ports while the crawler is also hammering the
+    // network, and Ollama's own server->runner call fails to bind. Backing
+    // off a few seconds is enough for TIME_WAIT sockets to drain; a genuinely
+    // unavailable model still fails all attempts and stops the run as before.
     let vecs;
-    try {
-      vecs = await embedTexts(rows.map((r) => (r.section ? `${r.section}\n${r.text}` : r.text)));
-    } catch (e) {
-      log(`  ! embedding unavailable (${e.message}); BM25-only until re-run`);
-      return { done: false, embedded, remaining: total - embedded, error: String(e) };
+    const texts = rows.map((r) => (r.section ? `${r.section}\n${r.text}` : r.text));
+    let lastErr;
+    for (let attempt = 0; attempt < 4 && !vecs; attempt++) {
+      try {
+        vecs = await embedTexts(texts);
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 3) {
+          log(`  . embed batch failed (${e.message.slice(0, 90)}); retrying in ${5 * 2 ** attempt}s`);
+          await new Promise((r) => setTimeout(r, 5000 * 2 ** attempt));
+        }
+      }
+    }
+    if (!vecs) {
+      log(`  ! embedding unavailable (${lastErr.message}); BM25-only until re-run`);
+      return { done: false, embedded, remaining: total - embedded, error: String(lastErr) };
     }
     rows.forEach((r, i) => {
       const v = vecs[i];

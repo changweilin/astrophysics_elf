@@ -144,6 +144,11 @@ export function openDb(dbPath = config.dbPath) {
   if (dbPath !== ':memory:') mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode=WAL;');
+  // WAL lets readers and one writer coexist, but a SECOND writer still fails
+  // instantly with SQLITE_BUSY unless it is told to wait -- and this file has
+  // several writers by design (a crawl, the merged server writing feedback/
+  // contributions, kb-admin). Wait for the lock instead of throwing.
+  db.exec('PRAGMA busy_timeout=15000;');
   db.exec(SCHEMA);
   migrate(db);
   return db;
@@ -454,7 +459,21 @@ export function enqueue(db, lang, title, depth = 0, reason = '') {
   return r.changes > 0;
 }
 
-export function pendingQueue(db, lang, limit = 50) {
+// `reasons` (optional) restricts the batch to rows queued by those exact
+// reasons, i.e. one slice of the queue -- the filter has to be in SQL, not in
+// the caller, because a JS-side filter over a LIMITed batch would keep
+// re-reading the same non-matching head rows forever (they are never marked
+// done). Used to drain one subtree first when the queue holds several.
+export function pendingQueue(db, lang, limit = 50, reasons = null) {
+  if (reasons && reasons.length) {
+    const holes = reasons.map(() => '?').join(',');
+    return db
+      .prepare(
+        `SELECT title, depth, reason FROM crawl_queue
+         WHERE lang=? AND status='pending' AND reason IN (${holes}) LIMIT ?`
+      )
+      .all(lang, ...reasons, limit);
+  }
   return db
     .prepare("SELECT title, depth, reason FROM crawl_queue WHERE lang=? AND status='pending' LIMIT ?")
     .all(lang, limit);

@@ -56,7 +56,12 @@ export const config = {
     // Category recursion cap (each seed also carries its own depth).
     maxDepth: envNum('WKB_MAX_DEPTH', 3),
     // Safety valve per language so a runaway category tree cannot explode.
-    maxPagesPerLang: envNum('WKB_MAX_PAGES_PER_LANG', 20000),
+    // NOTE: this counts pages ALREADY in the corpus, so once a language is
+    // past the cap every later discovery pass silently queues zero titles.
+    // en/zh were at ~24k/~22k when the interdisciplinary humanities seeds were
+    // added (2026-07-23), hence 40000 -- keep this above the real corpus size
+    // or new seeds are dead code.
+    maxPagesPerLang: envNum('WKB_MAX_PAGES_PER_LANG', 40000),
     // Shallower re-discovery used by the periodic update checker.
     updateDiscoverDepth: envNum('WKB_UPDATE_DEPTH', 1),
   },

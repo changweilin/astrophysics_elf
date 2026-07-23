@@ -5,14 +5,17 @@
 //
 //   node crawl.mjs discover  [--langs zh,en] [--depth N]     seed categories -> queue
 //   node crawl.mjs fetch     [--langs ...] [--limit N]       queue -> pages + chunks
+//                            [--reasons file]                 ... only this queue slice
 //   node crawl.mjs langlinks                                 project zh/en scope -> other langs
 //   node crawl.mjs graph     [--limit N]                     Wikidata entities + edges
-//   node crawl.mjs classify  [--limit N]                     tag root nodes with a subject/content category
+//   node crawl.mjs classify  [--limit N] [--force]           tag root nodes with a subject/content category
+//                                                            (--force re-tags ones already categorized)
 //   node crawl.mjs embed     [--limit N]                     vectorize pending chunks
 //   node crawl.mjs all       [--langs zh,en] [--limit N]     the whole pipeline
 //   node crawl.mjs status                                    corpus statistics
 
 import { parseArgs } from 'node:util';
+import { readFileSync } from 'node:fs';
 import { openDb, stats, logSync } from './lib/db.mjs';
 import { discoverCategories, projectLangLinks } from './lib/discover.mjs';
 import { processQueue, embedPending } from './lib/ingest.mjs';
@@ -25,6 +28,8 @@ const { values: opts, positionals } = parseArgs({
     langs: { type: 'string' },
     depth: { type: 'string' },
     limit: { type: 'string' },
+    reasons: { type: 'string' },
+    force: { type: 'boolean', default: false },
   },
   allowPositionals: true,
 });
@@ -33,6 +38,12 @@ const command = positionals[0] ?? 'all';
 const langs = opts.langs ? opts.langs.split(',').map((s) => s.trim()) : null;
 const depth = opts.depth ? Number(opts.depth) : undefined;
 const limit = opts.limit ? Number(opts.limit) : Infinity;
+// --reasons <file>: newline-separated crawl_queue.reason values (e.g.
+// "category:Category:Philosophy of science"), so one subtree can be fetched
+// ahead of the rest of a mixed queue. Omit to drain the queue in order.
+const reasons = opts.reasons
+  ? readFileSync(opts.reasons, 'utf8').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+  : null;
 const log = (...a) => console.log(...a);
 
 const db = openDb();
@@ -43,8 +54,11 @@ async function runDiscover() {
 }
 
 async function runFetch() {
-  console.log(`[fetch] queue -> pages (limit: ${limit === Infinity ? 'none' : limit})`);
-  const { counts, fetches } = await processQueue(db, { langs: langs ?? config.langs, limit, log });
+  console.log(
+    `[fetch] queue -> pages (limit: ${limit === Infinity ? 'none' : limit}` +
+    `${reasons ? `, ${reasons.length} reason filters` : ''})`
+  );
+  const { counts, fetches } = await processQueue(db, { langs: langs ?? config.langs, limit, reasons, log });
   console.log(`[fetch] ${JSON.stringify(counts)} (${fetches} full fetches)`);
 }
 
@@ -60,8 +74,12 @@ async function runGraph() {
 }
 
 async function runClassify() {
-  console.log('[classify] tagging root nodes missing a category');
-  const r = classifyEntities(db, { limit: Number.isFinite(limit) ? limit : Infinity, log });
+  console.log(
+    opts.force
+      ? '[classify] re-tagging EVERY root node (--force)'
+      : '[classify] tagging root nodes missing a category'
+  );
+  const r = classifyEntities(db, { limit: Number.isFinite(limit) ? limit : Infinity, force: opts.force, log });
   console.log(`[classify] classified=${r.classified}`);
 }
 
