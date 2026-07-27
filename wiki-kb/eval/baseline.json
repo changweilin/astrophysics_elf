@@ -1,0 +1,53 @@
+{
+  "generatedAt": "2026-07-27T15:31:27.937Z",
+  "note": "Retrieval baseline for the non-blocking eval delta (EVAL1a). Reproducible only while the bge-m3 embedding model is reachable; deltas are meaningless if Ollama is down.",
+  "config": {
+    "mode": "retrieval",
+    "k": 8,
+    "fusion": "rrf",
+    "rrfK": 10,
+    "graph": true,
+    "cases": 69
+  },
+  "metrics": {
+    "hitRate": 0.942,
+    "mrr": 0.688,
+    "slices": {
+      "lang:en": {
+        "n": 37,
+        "hitRate": 0.973,
+        "mrr": 0.69
+      },
+      "lang:zh": {
+        "n": 32,
+        "hitRate": 0.906,
+        "mrr": 0.686
+      },
+      "tag:single-hop": {
+        "n": 28,
+        "hitRate": 0.964,
+        "mrr": 0.741
+      },
+      "tag:multi-hop": {
+        "n": 11,
+        "hitRate": 1,
+        "mrr": 0.841
+      },
+      "tag:relational": {
+        "n": 11,
+        "hitRate": 1,
+        "mrr": 0.841
+      },
+      "tag:graph": {
+        "n": 11,
+        "hitRate": 1,
+        "mrr": 0.841
+      },
+      "tag:paraphrase": {
+        "n": 16,
+        "hitRate": 0.813,
+        "mrr": 0.431
+      }
+    }
+  }
+}

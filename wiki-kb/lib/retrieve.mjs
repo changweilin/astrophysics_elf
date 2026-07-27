@@ -278,26 +278,99 @@ export async function search(db, opts = {}) {
 // Compact reference block for prompt injection (used by /api/context and the
 // scientists-backend seam). Each block cites language, title, section, and
 // revision date so the model can weigh freshness.
-export function buildContext(results, maxChars = config.retrieve.maxContextChars) {
+//
+// Delivery (RET2/RET4): search() ranks k chunks and runs the expensive PPR
+// multi-hop expansion, but a tight char budget used to deliver ~1 chunk and
+// truncate the graph-expanded pages away entirely (they sort below organic
+// hits) -- the retrieval depth was paid for and then discarded. So here we
+//   1) collapse same-qid chunks across languages (a concept's zh and en pages
+//      are distinct pageIds sharing one qid) so the budget isn't spent twice on
+//      the same fact, and
+//   2) RESERVE a slot for graph-expanded pages so a couple of multi-hop hits
+//      always reach the model.
+// The returned `coverage` reports delivered-vs-retrieved so the throttle is
+// visible in traces instead of silent.
+const CTX_SEP = 2; // length of the '\n\n' joiner between blocks
+
+function ctxBlock(r) {
+  const rev = (r.revTime || '').slice(0, 10) || 'n/a';
+  const head = `[Wikipedia:${r.lang} "${r.title}"${r.section ? ` #${r.section}` : ''} rev:${rev}]`;
+  return `${head}\n${r.text}`;
+}
+function ctxSource(r) {
+  return {
+    title: r.title,
+    lang: r.lang,
+    url: r.url,
+    revTime: r.revTime,
+    qid: r.qid,
+    score: Number((r.score ?? 0).toFixed(4)),
+    graphExpanded: r.graphExpanded || undefined,
+  };
+}
+// Keep the first (highest-scored) chunk per qid; chunks without a qid (manual
+// notes) are each kept. Input is already score-sorted, so order is preserved.
+function dedupeByQid(rows) {
+  const seen = new Set();
+  const out = [];
+  for (const r of rows) {
+    if (r.qid != null) {
+      if (seen.has(r.qid)) continue;
+      seen.add(r.qid);
+    }
+    out.push(r);
+  }
+  return out;
+}
+
+export function buildContext(results, maxChars = config.retrieve.maxContextChars, opts = {}) {
+  const graphReserve = opts.graphReserve ?? config.retrieve.graphReserve;
+  const organic = dedupeByQid(results.filter((r) => !r.graphExpanded));
+  const expanded = dedupeByQid(results.filter((r) => r.graphExpanded)).slice(0, graphReserve);
+
   const parts = [];
   const sources = [];
   let used = 0;
-  for (const r of results) {
-    const rev = (r.revTime || '').slice(0, 10) || 'n/a';
-    const head = `[Wikipedia:${r.lang} "${r.title}"${r.section ? ` #${r.section}` : ''} rev:${rev}]`;
-    const block = `${head}\n${r.text}`;
-    if (parts.length && used + block.length + 2 > maxChars) break;
-    parts.push(block.length > maxChars - used ? block.slice(0, maxChars - used) : block);
-    used += block.length + 2;
-    sources.push({
-      title: r.title,
-      lang: r.lang,
-      url: r.url,
-      revTime: r.revTime,
-      qid: r.qid,
-      score: Number(r.score.toFixed(4)),
-    });
-    if (used >= maxChars) break;
-  }
-  return { context: parts.join('\n\n'), sources };
+  // Fill `rows` into the running budget. Skips (does not break on) an oversized
+  // block so a later shorter block can still fit; truncates only a lone first
+  // block that alone exceeds the budget.
+  const fill = (rows, budget) => {
+    for (const r of rows) {
+      const block = ctxBlock(r);
+      const sep = parts.length ? CTX_SEP : 0;
+      if (!parts.length && block.length > budget) {
+        const text = block.slice(0, budget);
+        parts.push(text);
+        used += text.length;
+        sources.push(ctxSource(r));
+        continue;
+      }
+      if (used + sep + block.length > budget) continue;
+      parts.push(block);
+      used += sep + block.length;
+      sources.push(ctxSource(r));
+    }
+  };
+
+  // Reserve up to half the budget for the graph-expanded pages, fill organic
+  // into the rest, then let the expansion take whatever the organic fill left.
+  let reserve = 0;
+  for (const r of expanded) reserve += ctxBlock(r).length + CTX_SEP;
+  reserve = Math.min(reserve, Math.floor(maxChars / 2));
+  fill(organic, Math.max(0, maxChars - reserve));
+  fill(expanded, maxChars);
+
+  const retrievedQids = new Set(results.filter((r) => r.qid != null).map((r) => r.qid));
+  const deliveredQids = new Set(sources.filter((s) => s.qid != null).map((s) => s.qid));
+  const coverage = {
+    retrievedChunks: results.length,
+    deliveredChunks: sources.length,
+    retrievedQids: retrievedQids.size,
+    deliveredQids: deliveredQids.size,
+    graphRetrieved: results.filter((r) => r.graphExpanded).length,
+    graphDelivered: sources.filter((s) => s.graphExpanded).length,
+    charsUsed: used,
+    maxChars,
+  };
+  return { context: parts.join('\n\n'), sources, coverage };
 }

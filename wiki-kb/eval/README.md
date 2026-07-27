@@ -21,7 +21,7 @@ node eval/run-eval.mjs --judge llama3 --answer phi4
 
 | 指標 | 定義 | 成本 |
 |---|---|---|
-| hit rate | 任一檢索頁標題命中 `expect` 清單 | 免 LLM |
+| hit rate | 任一檢索頁命中案例的 ground truth(見下)| 免 LLM |
 | MRR | 第一個命中頁的排名倒數 | 免 LLM |
 | Context Precision | 評審認定「對回答有用」的 chunk 比例 | 1 次評審呼叫 |
 | Context Recall | ground truth 句子可歸因於 context 的比例 | 1 次評審呼叫 |
@@ -30,20 +30,23 @@ node eval/run-eval.mjs --judge llama3 --answer phi4
 
 評審輸出解析不到的行一律當「no」——懶惰的評審只會拉低分數,不會灌水。
 
+retrieval 指標另外依 `slices`(golden 的 `tags` + 語言)分組輸出,
+所以 paraphrase / multi-hop 子集的 hitRate/MRR 可以和 single-hop 基準
+分開讀 —— 這正是量測語意召回缺口(RET3)與圖譜通道(KG1)的依據。
+
 ## 黃金測試集(golden.jsonl)
 
-每行一筆:`{id, lang, question, ground_truth, expect}`。
-`expect` 是檢索命中判定用的標題子字串(zh/en 都列,因為 zh 查詢會
-fallback 到 en 語料)。
+每行一筆:`{id, lang, question, ground_truth, expect, expect_qids?, tags?}`。
 
-目前是 14 筆手寫種子(7 en / 7 zh,涵蓋黑洞/緻密星/觀測史)。
+- `expect_qids`(權威):命中判定用的 **qid 級** ground truth。一個概念的
+  zh/en 頁共用同一個 qid,所以這是語言無關且無歧義的信號;有此欄時
+  hit/MRR 以 qid 比對。
+- `expect`(fallback / 舊版):標題子字串清單(zh/en 都列)。只有在
+  `expect_qids` 缺席時才用它做子字串比對,舊種子案例因此不受影響。
+- `tags`(選填):評估切片,如 `single-hop` / `multi-hop` / `relational` /
+  `graph` / `paraphrase`。`paraphrase` 案例刻意避開目標頁標題用字,用來
+  暴露 BM25-only / rerank-only 的語意召回缺口。
 
-### 擴充(暫緩項目)
-
-大規模資料集生成(例如從語料抽 100+ 題)屬於高 LLM 工作量,依指示
-**暫緩**;工作流程已就緒:
-
-1. 從 `pages` 抽樣高品質頁(zh/en 全文、有 QID)。
-2. 用 LLM(上限 Opus 級模型,或本地模型夜間批次)對每頁 summary 出
-   1–2 題 + ground truth。
-3. 人工抽查後 append 到 golden.jsonl —— runner 與 UI 無需任何改動。
+目前 69 筆(37 en / 32 zh):14 筆原始手寫種子 + 55 筆語料實證擴充,
+每筆的 `expect_qids` 都經 `pages` 表驗證存在。新增案例請沿用同一結構,
+`id`/欄位名維持 ASCII,`expect_qids` 需對得上語料中 status='active' 的頁。

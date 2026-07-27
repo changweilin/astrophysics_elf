@@ -38,6 +38,7 @@ import { assignScientist } from './lib/router.mjs';
 import { generateFollowups } from './lib/followups.mjs';
 import { registerRequest, unregisterRequest, abortRequest } from './lib/active-requests.mjs';
 import { retrieveContext } from './knowledge/wiki.mjs';
+import { standaloneQuery } from './lib/query-rewrite.mjs';
 import { initFeedback, upsertFeedback, listFeedback, feedbackStats } from './lib/feedback.mjs';
 import { openDb } from '../wiki-kb/lib/db.mjs';
 import { createKbRouter, kbHealthPayload } from '../wiki-kb/lib/routes.mjs';
@@ -321,11 +322,22 @@ async function handleChat(req, res) {
       scientist = getScientist(scientistId);
     }
 
+    // History-aware query rewrite (RET1): resolve pronouns / omitted subjects in
+    // a conversational follow-up BEFORE retrieval, so "why?" doesn't retrieve on
+    // a dangling reference. Heuristic-gated + fail-open, so a self-contained turn
+    // pays nothing; only meaningful when we are actually going to retrieve.
+    let retrieval = { query: message, rewritten: false };
+    if (replyMode !== 'direct' && config.wiki.rewrite) {
+      retrieval = await standaloneQuery({
+        message, history: priorMessages, summary: priorSummary, lang, model, signal: ac.signal,
+      });
+    }
+
     // Optional Wikipedia/KB retrieval. 'direct' skips it outright; 'rag' forces
     // it past the config.wiki.enabled default; unset keeps the legacy gating.
     const wikiResult = replyMode === 'direct'
       ? { context: '', sources: [] }
-      : await retrieveContext(message, lang, { force: replyMode === 'rag', signal: ac.signal });
+      : await retrieveContext(retrieval.query, lang, { force: replyMode === 'rag', signal: ac.signal });
     const wikiContext = wikiResult.context;
 
     // System prompt WITHOUT summary, used only for the summarize decision so the
@@ -365,6 +377,9 @@ async function handleChat(req, res) {
       replyMode: replyMode || (config.wiki.enabled ? 'rag' : 'direct'),
       ragUsed: !!wikiContext,
       sources: wikiResult.sources,
+      // Surface the rewritten retrieval query when it differs, so the follow-up
+      // grounding is visible/debuggable (undefined when the raw turn was used).
+      retrievalQuery: retrieval.rewritten ? retrieval.query : undefined,
       isolated,
     });
 
@@ -569,13 +584,23 @@ async function handleDiscuss(req, res) {
   const emit = (type, data) => sse(res, type, data);
 
   try {
+    // History-aware query rewrite (RET1), same as the single chat: resolve a
+    // follow-up against the prior (question -> conclusion) rounds before
+    // retrieving. Heuristic-gated + fail-open.
+    let retrieval = { query: message, rewritten: false };
+    if (replyMode !== 'direct' && config.wiki.rewrite && disc.rounds.length) {
+      retrieval = await standaloneQuery({
+        message, history: flattenRounds(disc.rounds), summary: disc.summary, lang, model, signal: ac.signal,
+      });
+    }
+
     // Optional Wikipedia/KB retrieval, same reply-mode semantics as the single
     // chat: 'direct' skips it, 'rag' forces it, unset keeps the legacy gating.
     // Retrieved once for the question and shared by every panelist + the
     // conclusion, rather than once per speaker.
     const wikiResult = replyMode === 'direct'
       ? { context: '', sources: [] }
-      : await retrieveContext(message, lang, { force: replyMode === 'rag', signal: ac.signal });
+      : await retrieveContext(retrieval.query, lang, { force: replyMode === 'rag', signal: ac.signal });
 
     // No usage here: runDiscussion reports the real starting usage from the
     // carried memory below, so a continued discussion isn't shown as 0%.
@@ -584,6 +609,7 @@ async function handleDiscuss(req, res) {
       replyMode: replyMode || (config.wiki.enabled ? 'rag' : 'direct'),
       ragUsed: !!wikiResult.context,
       sources: wikiResult.sources,
+      retrievalQuery: retrieval.rewritten ? retrieval.query : undefined,
     });
 
     // Context management: the panel's memory carries ALL prior (question ->

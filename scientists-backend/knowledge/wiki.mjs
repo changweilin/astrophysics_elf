@@ -65,7 +65,14 @@ async function retrieveFromKb(query, lang, signal) {
     recordTrace(kbDb, {
       kind: 'chat-rag', input: query, ms: Date.now() - t0,
       output: ctx.sources.map((s) => s.title).join(' | '),
-      meta: { lang, sources: ctx.sources.length, graphBoosted: results.filter((r) => r.g > 0).length },
+      meta: {
+        lang,
+        sources: ctx.sources.length,
+        graphBoosted: results.filter((r) => r.g > 0).length,
+        // Delivered-vs-retrieved: how much of what search() found actually
+        // reached the model, and whether a graph-expanded page made the cut.
+        coverage: ctx.coverage,
+      },
     });
     return ctx;
   } catch (e) {
