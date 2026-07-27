@@ -16,10 +16,17 @@ import { generate, parseYesNoLines, parseClaimLines } from './judge.mjs';
 
 // ---- retrieval metrics (pure computation) -----------------------------------
 
-export function retrievalMetrics(results, expect = []) {
+export function retrievalMetrics(results, expect = [], expectQids = []) {
   const titles = results.map((r) => String(r.title || ''));
+  // Prefer qid-level ground truth when the case carries it (unambiguous and
+  // language-independent -- a zh and en page of one concept share a qid);
+  // fall back to the legacy title-substring match for cases without it.
+  const wantQids = new Set((expectQids || []).map((q) => String(q)));
   const lowered = expect.map((e) => String(e).toLowerCase());
-  const isHit = (t) => lowered.some((e) => t.toLowerCase().includes(e));
+  const isHit = (r) =>
+    wantQids.size
+      ? r.qid != null && wantQids.has(String(r.qid))
+      : lowered.some((e) => String(r.title || '').toLowerCase().includes(e));
   // rank over distinct pages, mirroring how a reader sees the source list
   const seen = new Set();
   let rank = 0;
@@ -28,7 +35,7 @@ export function retrievalMetrics(results, expect = []) {
     if (seen.has(r.pageId)) continue;
     seen.add(r.pageId);
     rank++;
-    if (!firstHit && isHit(String(r.title || ''))) firstHit = rank;
+    if (!firstHit && isHit(r)) firstHit = rank;
   }
   return {
     hit: firstHit > 0 ? 1 : 0,

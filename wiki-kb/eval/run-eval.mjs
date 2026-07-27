@@ -19,6 +19,7 @@ import { search, buildContext } from '../lib/retrieve.mjs';
 import { recordTrace } from '../lib/trace.mjs';
 import { retrievalMetrics, contextPrecision, contextRecall, faithfulness } from './metrics.mjs';
 import { generate, resolveJudgeModel, resolveAnswerModel } from './judge.mjs';
+import { saveBaseline, loadBaseline, compareToBaseline, formatComparison } from './baseline.mjs';
 import { config } from '../config.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -74,6 +75,14 @@ export async function runEval(db, {
   );
 
   const acc = { hit: [], mrr: [], retrieveMs: [], precision: [], recall: [], faithfulness: [], hallucination: [] };
+  // Per-slice retrieval accuracy (golden `tags`, plus lang), so a paraphrase /
+  // multi-hop subset can be read separately from the single-hop baseline -- the
+  // whole point of RET3's "semantic recall" and KG1's "graph MRR" metrics.
+  const bySlice = {};
+  const pushSlice = (key, m) => {
+    const s = (bySlice[key] ??= { n: 0, hit: [], mrr: [] });
+    s.n++; s.hit.push(m.hit); s.mrr.push(m.mrr);
+  };
 
   for (const c of cases) {
     log(`  ${c.id} …`);
@@ -82,10 +91,12 @@ export async function runEval(db, {
     const results = await search(db, { q: c.question, langs, k, noGraph: !graph, fusion, rrfK });
     const retrieveMs = Date.now() - t0;
 
-    const m = { ...retrievalMetrics(results, c.expect), retrieveMs };
+    const m = { ...retrievalMetrics(results, c.expect, c.expect_qids), retrieveMs };
     acc.hit.push(m.hit);
     acc.mrr.push(m.mrr);
     acc.retrieveMs.push(retrieveMs);
+    pushSlice(`lang:${c.lang}`, m);
+    for (const tag of (Array.isArray(c.tags) ? c.tags : [])) pushSlice(`tag:${tag}`, m);
 
     let answer = null;
     const detail = {};
@@ -151,12 +162,17 @@ export async function runEval(db, {
   // default flip stay comparable in kb-admin's eval tab (same reason the
   // graph flag is persisted).
   const fusionUsed = fusion || config.retrieve.fusion;
+  const slices = {};
+  for (const [key, s] of Object.entries(bySlice)) {
+    slices[key] = { n: s.n, hitRate: round3(avg(s.hit)), mrr: round3(avg(s.mrr)) };
+  }
   const metrics = {
     hitRate: round3(avg(acc.hit)),
     mrr: round3(avg(acc.mrr)),
     avgRetrieveMs: Math.round(avg(acc.retrieveMs)),
     fusion: fusionUsed,
     ...(fusionUsed === 'rrf' ? { rrfK: rrfK || config.retrieve.rrfK } : {}),
+    ...(Object.keys(slices).length ? { slices } : {}),
     ...(full ? {
       contextPrecision: round3(avg(acc.precision)),
       contextRecall: round3(avg(acc.recall)),
@@ -200,5 +216,32 @@ if (isMain) {
   });
   console.log(`\nrun #${r.runId} (${r.mode}, graph=${r.graph}, k=${r.k}, ${r.cases} cases)`);
   if (r.models.length) console.log(`  models: ${r.models.join(', ')}`);
-  for (const [key, value] of Object.entries(r.metrics)) console.log(`  ${key}: ${value}`);
+  for (const [key, value] of Object.entries(r.metrics)) {
+    if (key === 'slices') {
+      console.log('  slices:');
+      for (const [sk, sv] of Object.entries(value)) {
+        console.log(`    ${sk.padEnd(16)} n=${String(sv.n).padStart(2)}  hitRate=${sv.hitRate}  mrr=${sv.mrr}`);
+      }
+    } else {
+      console.log(`  ${key}: ${value}`);
+    }
+  }
+
+  // EVAL1a: freeze or diff the retrieval baseline. Non-blocking -- the exit code
+  // is never touched here; EVAL1b will gate on compareToBaseline().regressions.
+  if (flag('--save-baseline')) {
+    const p = saveBaseline(r);
+    console.log(`\nsaved baseline -> ${path.relative(process.cwd(), p)} `
+      + `(${r.cases} cases, ${r.metrics.fusion}${r.metrics.rrfK ? ` k=${r.metrics.rrfK}` : ''}, graph=${r.graph})`);
+  } else {
+    const baseline = loadBaseline();
+    if (baseline) {
+      const combined = { ...r.metrics, mode: r.mode, k: r.k, graph: r.graph, cases: r.cases };
+      const cmp = compareToBaseline(combined, baseline);
+      console.log('');
+      for (const line of formatComparison(cmp, baseline)) console.log(line);
+    } else {
+      console.log('\n  (no eval/baseline.json -- run `npm run eval:baseline` to freeze one)');
+    }
+  }
 }

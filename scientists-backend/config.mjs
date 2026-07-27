@@ -165,9 +165,17 @@ export const config = {
     // Wikipedia if the KB has nothing for the query.
     // 'zh' uses zh.wikipedia.org (served as Traditional via the variant header).
     lang: envStr('SCI_WIKI_LANG', 'zh'),
+    // History-aware query rewrite before retrieval (RET1; see lib/query-rewrite.mjs).
+    // Heuristic-gated + fail-open, so a self-contained turn costs nothing.
+    rewrite: envBool('SCI_WIKI_REWRITE', true),
     // Traditional-Chinese variant for zh.wikipedia content negotiation.
     zhVariant: envStr('SCI_WIKI_ZH_VARIANT', 'zh-tw'),
-    maxChars: envNum('SCI_WIKI_MAX_CHARS', 1500),
+    // Delivered RAG-context budget injected into the persona prompt. Was 1500,
+    // which let only ~1 chunk reach the model and truncated away the graph
+    // channel's multi-hop pages (RET2). Widened so buildContext delivers a few
+    // deduped chunks plus a reserved graph-expanded page; every injected block
+    // still counts toward the summarize threshold (context.mjs).
+    maxChars: envNum('SCI_WIKI_MAX_CHARS', 3500),
     timeoutMs: envNum('SCI_WIKI_TIMEOUT_MS', 8000),
   },
 

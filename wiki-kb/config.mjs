@@ -108,7 +108,10 @@ export const config = {
     halfLifeDays: envNum('WKB_DECAY_HALFLIFE_DAYS', 1095),
     decayFloor: envNum('WKB_DECAY_FLOOR', 0.6),
     maxPerPage: envNum('WKB_MAX_PER_PAGE', 2),
-    maxContextChars: envNum('WKB_CONTEXT_MAX_CHARS', 2200),
+    // Delivered-context budget. Was 2200 (delivered ~1-2 chunks); widened so the
+    // k=8 fusion + graph expansion that search() computes actually reaches the
+    // model (RET2). buildContext still counts every block toward this cap.
+    maxContextChars: envNum('WKB_CONTEXT_MAX_CHARS', 3000),
     // Graph-augmented retrieval (HippoRAG-style Personalized PageRank over
     // the existing Wikidata knowledge graph; see lib/graph-rank.mjs and
     // docs/rag-architecture-decision.md). wGraph=0 disables the channel.
@@ -116,6 +119,9 @@ export const config = {
     graphSeedPages: envNum('WKB_GRAPH_SEED_PAGES', 5),
     graphExpandPages: envNum('WKB_GRAPH_EXPAND_PAGES', 2),
     graphExpandScore: envNum('WKB_GRAPH_EXPAND_SCORE', 0.5),
+    // How many graph-expanded (multi-hop) pages buildContext guarantees a slot
+    // in the delivered context, so the PPR expansion is not truncated away.
+    graphReserve: envNum('WKB_GRAPH_RESERVE', 1),
     pprAlpha: envNum('WKB_PPR_ALPHA', 0.5),
     pprIters: envNum('WKB_PPR_ITERS', 15),
   },
