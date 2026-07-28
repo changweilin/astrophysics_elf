@@ -380,6 +380,7 @@ export function createKbRouter(db) {
         recordTrace(db, {
           kind: 'translate', name: page.title, model: r.model, ms: Date.now() - t0,
           input: `${page.lang} -> ${r.target}`, output: r.title,
+          tokensIn: r.promptTokens, tokensOut: r.completionTokens,
           meta: { pageId: page.id, chars: r.content.length },
         });
         if (!res.writableEnded) json(res, 200, { ok: true, ...r });
@@ -438,6 +439,7 @@ export function createKbRouter(db) {
         recordTrace(db, {
           kind: 'generate', name: label, model: r.model, ms: Date.now() - t0,
           input: `${found.entity.qid} -> ${r.target}`, output: r.title,
+          tokensIn: r.promptTokens, tokensOut: r.completionTokens,
           meta: { suggestedLinks: r.suggestedLinks.length },
         });
         if (!res.writableEnded) json(res, 200, { ok: true, ...r });

@@ -42,9 +42,41 @@ export async function embedTexts(texts, signal) {
   });
 }
 
+// Query-embedding LRU. Every chat turn and every eval case re-embeds a small
+// set of identical strings against the scarce 3060 GPU; a query vector is a
+// pure function of (model, text), so caching it removes the redundant embed
+// round-trips entirely. Keyed by model+text (a model swap must not serve a
+// stale vector). Callers use the result read-only (cosine dot in retrieve.mjs),
+// so handing back the cached reference is safe.
+const QUERY_CACHE_MAX = Math.max(0, config.embed.queryCacheMax ?? 512);
+const queryCache = new Map(); // "model\ntext" -> Float32Array
+
+export function clearEmbedCache() {
+  queryCache.clear();
+}
+
 export async function embedQuery(text, signal) {
+  const key = `${config.embed.model}\n${text}`;
+  if (QUERY_CACHE_MAX > 0) {
+    const hit = queryCache.get(key);
+    if (hit !== undefined) {
+      // Refresh recency (delete+set moves it to the tail of the Map's order).
+      queryCache.delete(key);
+      queryCache.set(key, hit);
+      return hit;
+    }
+  }
   const [v] = await embedTexts([text], signal);
-  return v ?? null;
+  const vec = v ?? null;
+  // Only cache real vectors -- a soft-failed embed (null) must be retried next
+  // time, not remembered as "this query has no embedding".
+  if (vec && QUERY_CACHE_MAX > 0) {
+    queryCache.set(key, vec);
+    if (queryCache.size > QUERY_CACHE_MAX) {
+      queryCache.delete(queryCache.keys().next().value); // evict oldest
+    }
+  }
+  return vec;
 }
 
 function normalize(v) {

@@ -8,11 +8,33 @@
 import { config } from '../config.mjs';
 import { chat } from './ollama.mjs';
 
-// Rough token estimate. Mixed CJK/English averages ~2.5-3 chars/token; the
-// divisor is configurable. Good enough to trigger summarization safely early.
+// CJK ideographs, kana and hangul tokenize at roughly one token per character
+// (~1.5-1.8 chars/token), whereas latin script runs ~4 chars/token. A single
+// blended divisor therefore badly mis-estimates either extreme; bucketing by
+// script (ORCH2) tracks mixed CJK/English text far more closely and self-
+// adjusts to the actual mix instead of assuming one.
+function isCjkCodePoint(cp) {
+  return (
+    (cp >= 0x3040 && cp <= 0x30ff) || // Hiragana + Katakana
+    (cp >= 0x3400 && cp <= 0x4dbf) || // CJK Unified Ext A
+    (cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified Ideographs
+    (cp >= 0xf900 && cp <= 0xfaff) || // CJK Compatibility Ideographs
+    (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
+    (cp >= 0x20000 && cp <= 0x2ebef)  // CJK Unified Ext B-F
+  );
+}
+
+// Script-aware token estimate (heuristic fallback used when the inference
+// server has not reported a real prompt_eval_count; see shouldSummarize).
 export function estimateTokens(text) {
   if (!text) return 0;
-  return Math.ceil(text.length / config.context.charsPerToken);
+  let cjk = 0;
+  let other = 0;
+  for (const ch of text) {
+    if (isCjkCodePoint(ch.codePointAt(0))) cjk++;
+    else other++;
+  }
+  return Math.ceil(cjk / config.context.cjkCharsPerToken + other / config.context.charsPerToken);
 }
 
 export function estimateMessagesTokens(messages) {
@@ -31,13 +53,31 @@ export function projectedPromptTokens(systemPrompt, history, nextUser) {
 // True when sending `nextUser` would push the prompt past the summarize line.
 // The line sits at (window * fraction) minus the reply reservation, so we act
 // before the prompt+reply can actually overflow the window.
-export function shouldSummarize(model, systemPromptNoSummary, history, nextUser) {
+//
+// `lastPromptTokens` is Ollama's real prompt_eval_count from the previous turn
+// (0 when unmeasured -- first turn, or just after a summary restart). When we
+// have it, anchor to it (ORCH2): it already counted system+history+prevUser
+// exactly, and the only thing appended since is the previous assistant reply,
+// so the real next prompt is essentially that measurement plus the last reply
+// plus this new user turn. Taking the max of the char-estimate and this
+// real-count anchor means the estimate can never silently drift below reality
+// (the goal is: no prompt exceeds num_ctx), which the old char-only path did
+// for Traditional Chinese.
+export function shouldSummarize(model, systemPromptNoSummary, history, nextUser, lastPromptTokens = 0) {
   const window = model.contextTokens;
   const limit = Math.max(
     256,
     window * config.context.summarizeAtFraction - config.context.replyReserveTokens,
   );
-  return projectedPromptTokens(systemPromptNoSummary, history, nextUser) >= limit;
+  const estimate = projectedPromptTokens(systemPromptNoSummary, history, nextUser);
+  let anchored = 0;
+  if (lastPromptTokens > 0) {
+    const lastAssistant = [...history].reverse().find((m) => m.role === 'assistant');
+    anchored = lastPromptTokens
+      + (lastAssistant ? estimateTokens(lastAssistant.content) + 4 : 0)
+      + estimateTokens(nextUser) + 4;
+  }
+  return Math.max(estimate, anchored) >= limit;
 }
 
 // Fraction of the window currently in use (for telemetry shown in the UI).

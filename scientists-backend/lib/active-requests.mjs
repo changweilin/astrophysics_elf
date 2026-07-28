@@ -29,3 +29,26 @@ export function abortRequest(requestId) {
   active.delete(requestId);
   return true;
 }
+
+// Debounce registry for isolated background generations (follow-up suggestions),
+// keyed by a caller-chosen key such as a session id (ORCH5). Follow-ups are a
+// best-effort, non-blocking generation the user never explicitly waits on, so
+// when a newer turn supersedes an older one there is no reason to keep the
+// stale generation grinding the single GPU -- starting a new one for the same
+// key aborts the previous one. Distinct from `active` above: that keys on the
+// client's requestId for an explicit /stop; this coalesces same-session churn.
+const debounced = new Map(); // key -> AbortController
+
+export function beginDebounced(key, ac) {
+  if (!key) return;
+  const prev = debounced.get(key);
+  if (prev) prev.abort();
+  debounced.set(key, ac);
+}
+
+export function endDebounced(key, ac) {
+  if (!key) return;
+  // Only clear if we still own the slot -- a newer generation may have already
+  // replaced us (and we were the one aborted).
+  if (debounced.get(key) === ac) debounced.delete(key);
+}

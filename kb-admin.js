@@ -888,6 +888,7 @@
         c.appendChild(el('div', 'v', String(k.calls)));
         c.appendChild(el('div', 'sub',
           t({ en: 'avg ', zh: '平均 ' }) + (k.avgMs || 0) + ' ms · ' +
+          'p50 ' + (k.p50Ms == null ? '—' : k.p50Ms) + ' · p95 ' + (k.p95Ms == null ? '—' : k.p95Ms) + ' ms · ' +
           t({ en: 'err ', zh: '錯誤 ' }) + k.errors +
           (k.tokensOut ? ' · ' + k.tokensOut + t({ en: ' tok out', zh: ' 輸出token' }) : '')));
         cards.appendChild(c);

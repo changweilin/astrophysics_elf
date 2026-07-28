@@ -68,7 +68,7 @@ export function splitStatements(text) {
 
 // ---- LLM-judged metrics -------------------------------------------------------
 
-export async function contextPrecision(judgeModel, question, results) {
+export async function contextPrecision(judgeModel, question, results, { onUsage } = {}) {
   if (!results.length) return { value: 0, verdicts: [] };
   const prompt = [
     'You are a strict retrieval evaluator. For EACH numbered context passage below, decide whether it contains information useful for answering the question.',
@@ -79,13 +79,13 @@ export async function contextPrecision(judgeModel, question, results) {
     'PASSAGES:',
     contextBlock(results),
   ].join('\n');
-  const raw = await generate(judgeModel, prompt, { numPredict: 200 });
+  const raw = await generate(judgeModel, prompt, { numPredict: 200, onUsage });
   const verdicts = parseYesNoLines(raw, results.length);
   const useful = verdicts.filter(Boolean).length;
   return { value: useful / results.length, verdicts };
 }
 
-export async function contextRecall(judgeModel, groundTruth, results) {
+export async function contextRecall(judgeModel, groundTruth, results, { onUsage } = {}) {
   const statements = splitStatements(groundTruth);
   if (!statements.length || !results.length) return { value: 0, statements, verdicts: [] };
   const prompt = [
@@ -98,13 +98,13 @@ export async function contextRecall(judgeModel, groundTruth, results) {
     'STATEMENTS:',
     numbered(statements),
   ].join('\n');
-  const raw = await generate(judgeModel, prompt, { numPredict: 200 });
+  const raw = await generate(judgeModel, prompt, { numPredict: 200, onUsage });
   const verdicts = parseYesNoLines(raw, statements.length);
   const supported = verdicts.filter(Boolean).length;
   return { value: supported / statements.length, statements, verdicts };
 }
 
-export async function faithfulness(judgeModel, question, answer, results) {
+export async function faithfulness(judgeModel, question, answer, results, { onUsage } = {}) {
   if (!answer || !results.length) return { value: 0, claims: [], verdicts: [] };
   const extractPrompt = [
     'Break the following answer into its individual factual claims. Output one short, self-contained claim per line, nothing else. At most 10 lines.',
@@ -112,7 +112,7 @@ export async function faithfulness(judgeModel, question, answer, results) {
     `QUESTION: ${question}`,
     `ANSWER: ${answer}`,
   ].join('\n');
-  const claims = parseClaimLines(await generate(judgeModel, extractPrompt, { numPredict: 400 }));
+  const claims = parseClaimLines(await generate(judgeModel, extractPrompt, { numPredict: 400, onUsage }));
   if (!claims.length) return { value: 0, claims, verdicts: [] };
 
   const verifyPrompt = [
@@ -125,7 +125,7 @@ export async function faithfulness(judgeModel, question, answer, results) {
     'CLAIMS:',
     numbered(claims),
   ].join('\n');
-  const verdicts = parseYesNoLines(await generate(judgeModel, verifyPrompt, { numPredict: 200 }), claims.length);
+  const verdicts = parseYesNoLines(await generate(judgeModel, verifyPrompt, { numPredict: 200, onUsage }), claims.length);
   const supported = verdicts.filter(Boolean).length;
   return { value: supported / claims.length, claims, verdicts };
 }

@@ -111,6 +111,9 @@ export async function translatePage(page, target, { maxChars = 3500, signal } = 
       title: fix(parsed.title || page.title),
       summary: fix(parsed.summary),
       content: fix(parsed.content),
+      // Real token counts for trace instrumentation (EVAL2).
+      promptTokens: data?.prompt_eval_count || 0,
+      completionTokens: data?.eval_count || 0,
     };
   });
 }
@@ -220,6 +223,9 @@ export async function generateEntityArticle(entity, target, { relations = [], ca
       content: fix(parsed.content),
       generated: true,
       suggestedLinks,
+      // Real token counts for trace instrumentation (EVAL2).
+      promptTokens: data?.prompt_eval_count || 0,
+      completionTokens: data?.eval_count || 0,
     };
   });
 }
