@@ -13,6 +13,7 @@
 import { ftsQuery } from './db.mjs';
 import { embedQuery, fromBlob, dot } from './embed.mjs';
 import { graphChannel } from './graph-rank.mjs';
+import { routeQuery } from './query-route.mjs';
 import { config } from '../config.mjs';
 
 function decayFactor(revTime, nowMs = Date.now()) {
@@ -50,14 +51,30 @@ function minMax(values) {
   return (v) => (hi > lo ? (v - lo) / (hi - lo) : 1);
 }
 
-// opts: { q, langs?: ['zh','en'], kinds?: ['scientist'], k?, fusion?, rrfK? }
-// fusion/rrfK override config.retrieve for single-process A/B comparisons
-// (mirrors the opts.noGraph pattern the graph channel got).
+// opts: { q, langs?: ['zh','en'], kinds?: ['scientist'], k?, fusion?, rrfK?,
+//         qroute?: 'off'|'observe'|'on', onRoute?: (route) => void }
+// fusion/rrfK/qroute override config.retrieve for single-process A/B comparisons
+// (mirrors the opts.noGraph pattern the graph channel got). onRoute receives the
+// QROUTE decision so callers can slice/trace by route without re-classifying.
 export async function search(db, opts = {}) {
   const q = String(opts.q || '').trim();
   if (!q) return [];
   const k = opts.k || config.retrieve.k;
   const cand = new Map(); // chunkId -> {bm25, cos}
+
+  // QROUTE: pure string classification, no DB/LLM. In 'off' mode this is skipped
+  // entirely; in 'observe' (default) the decision is reported but every knob it
+  // returns is the pre-QROUTE default, so the branch below is behaviour-neutral.
+  const qrouteMode = opts.qroute || config.retrieve.qroute || 'observe';
+  let route = null;
+  if (qrouteMode !== 'off') {
+    try {
+      route = routeQuery(q, { mode: qrouteMode });
+      opts.onRoute?.(route);
+    } catch {
+      route = null; // routing is best-effort; retrieval stands on its own
+    }
+  }
 
   // 1) BM25 candidates
   const match = ftsQuery(q);
@@ -208,8 +225,12 @@ export async function search(db, opts = {}) {
   // query mentions by name. Boost is multiplicative (base * (1 + wGraph*g))
   // so rows without a qid (manual notes) keep their ordering untouched, and
   // a couple of high-PPR pages outside the candidate set are pulled in.
-  const { wGraph, graphSeedPages, graphExpandScore } = config.retrieve;
-  if (wGraph > 0 && scored.length && !opts.noGraph) {
+  const { graphSeedPages, graphExpandScore } = config.retrieve;
+  // QROUTE knobs (all identity values unless the router is in 'on' mode).
+  const wGraph = config.retrieve.wGraph * (route?.wGraphScale ?? 1);
+  const usePpr = route ? route.usePpr : true;
+  const expandPages = route && !route.expand ? 0 : undefined;
+  if (wGraph > 0 && scored.length && !opts.noGraph && usePpr) {
     try {
       const seedQids = [];
       const seenPages = new Set();
@@ -227,6 +248,7 @@ export async function search(db, opts = {}) {
         qv,
         fromBlob,
         dot,
+        expandPages,
       });
       if (graph) {
         for (const r of scored) {
