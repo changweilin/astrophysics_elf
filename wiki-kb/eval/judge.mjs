@@ -39,7 +39,11 @@ export async function resolveAnswerModel(lang) {
   return config.eval.answerModel || resolveTranslateModel();
 }
 
-export async function generate(model, prompt, { temperature = 0, numPredict = 700, signal } = {}) {
+// `onUsage`, when supplied, receives Ollama's real token counts
+// ({ tokensIn, tokensOut }) so callers can populate trace token columns without
+// changing generate()'s string return (EVAL2). Kept optional and out of the
+// return value so existing callers (metrics.mjs verdict parsing) are unchanged.
+export async function generate(model, prompt, { temperature = 0, numPredict = 700, signal, onUsage } = {}) {
   return withBusy(async () => {
     const res = await fetch(`${config.embed.baseUrl}/api/generate`, {
       method: 'POST',
@@ -58,6 +62,7 @@ export async function generate(model, prompt, { temperature = 0, numPredict = 70
       throw new Error(`eval generate HTTP ${res.status}: ${body.slice(0, 200)}`);
     }
     const data = await res.json();
+    if (onUsage) onUsage({ tokensIn: data?.prompt_eval_count || 0, tokensOut: data?.eval_count || 0 });
     // Reasoning models may inline <think> blocks; the verdicts follow them.
     return String(data?.response ?? '')
       .replace(/<think>[\s\S]*?<\/think>/gi, '')

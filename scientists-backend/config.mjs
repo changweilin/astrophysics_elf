@@ -101,9 +101,16 @@ export const config = {
     // Reserve this many tokens for the model's reply so we summarize before the
     // prompt actually overflows.
     replyReserveTokens: envNum('SCI_REPLY_RESERVE', 1024),
-    // Heuristic chars-per-token when the inference server hasn't reported a real
-    // token count yet. Mixed CJK/English sits around 2.5-3.
-    charsPerToken: envNum('SCI_CHARS_PER_TOKEN', 2.8),
+    // Script-aware chars-per-token for the heuristic estimate (ORCH2). The old
+    // single blended 2.8 badly under-counted Traditional Chinese (~1.5-1.8
+    // chars/token), so the running estimate stayed well below the real
+    // prompt_eval_count and the summarize line was crossed too late -- risking a
+    // silent llama.cpp prompt truncation on the zh model. estimateTokens() now
+    // buckets by script: CJK ideographs/kana/hangul at cjkCharsPerToken, all
+    // other text (latin, digits, punctuation) at charsPerToken. Kept slightly
+    // conservative so we summarize a touch early rather than overflow num_ctx.
+    charsPerToken: envNum('SCI_CHARS_PER_TOKEN', 3.8),
+    cjkCharsPerToken: envNum('SCI_CJK_CHARS_PER_TOKEN', 1.6),
     // When a thread is resumed (page reload / saved-thread / restarted backend),
     // the client replays its visible history so the backend can rebuild context.
     // Cap how many turns we seed; the summarizer compresses if it is still large.

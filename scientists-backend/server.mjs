@@ -36,7 +36,7 @@ import {
 import { runDiscussion } from './lib/discussion.mjs';
 import { assignScientist } from './lib/router.mjs';
 import { generateFollowups } from './lib/followups.mjs';
-import { registerRequest, unregisterRequest, abortRequest } from './lib/active-requests.mjs';
+import { registerRequest, unregisterRequest, abortRequest, beginDebounced, endDebounced } from './lib/active-requests.mjs';
 import { retrieveContext } from './knowledge/wiki.mjs';
 import { standaloneQuery } from './lib/query-rewrite.mjs';
 import { initFeedback, upsertFeedback, listFeedback, feedbackStats } from './lib/feedback.mjs';
@@ -348,7 +348,7 @@ async function handleChat(req, res) {
     // also compresses a large *rehydrated* history before it enters the prompt.
     // Isolated calls never mutate shared state, so they skip this step and
     // simply use whatever (bounded) history the client sent.
-    if (!isolated && shouldSummarize(model, baseSystem, priorMessages, message)) {
+    if (!isolated && shouldSummarize(model, baseSystem, priorMessages, message, session ? session.lastPromptTokens : 0)) {
       sse(res, 'summary', { state: 'start', lang });
       try {
         const merged = await summarizeConversation(model, lang, priorMessages, priorSummary);
@@ -507,9 +507,19 @@ async function handleFollowups(req, res) {
   if (!history.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
 
   const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
-  const followups = await generateFollowups({ model, lang, history, summary, existing });
-  rememberFollowups(session, followups);
-  sendJson(res, 200, { ok: true, followups });
+  // ORCH5: abort this generation if the client disconnects, and coalesce
+  // per-session churn so a superseded turn's suggestions stop grinding the GPU.
+  const ac = new AbortController();
+  req.on('close', () => ac.abort());
+  const debounceKey = session ? `followups:${session.id}` : '';
+  beginDebounced(debounceKey, ac);
+  try {
+    const followups = await generateFollowups({ model, lang, history, summary, existing, signal: ac.signal });
+    rememberFollowups(session, followups);
+    if (!res.writableEnded) sendJson(res, 200, { ok: true, followups });
+  } finally {
+    endDebounced(debounceKey, ac);
+  }
 }
 
 // ---- multi-scientist roundtable (Science Dialogue tab) ----
@@ -724,9 +734,18 @@ async function handleDiscussFollowups(req, res) {
   if (!rounds.length && !summary) return sendJson(res, 200, { ok: true, followups: [] });
 
   const model = resolveRequestedModel(lang, typeof body.model === 'string' ? body.model : undefined);
-  const followups = await generateFollowups({ model, lang, history: flattenRounds(rounds), summary, existing });
-  rememberFollowups(disc, followups);
-  sendJson(res, 200, { ok: true, followups });
+  // ORCH5: same disconnect-abort + per-discussion coalescing as the single chat.
+  const ac = new AbortController();
+  req.on('close', () => ac.abort());
+  const debounceKey = disc ? `discuss-followups:${disc.id}` : '';
+  beginDebounced(debounceKey, ac);
+  try {
+    const followups = await generateFollowups({ model, lang, history: flattenRounds(rounds), summary, existing, signal: ac.signal });
+    rememberFollowups(disc, followups);
+    if (!res.writableEnded) sendJson(res, 200, { ok: true, followups });
+  } finally {
+    endDebounced(debounceKey, ac);
+  }
 }
 
 // ---- feedback (per-reply like/dislike + optional correction) ----

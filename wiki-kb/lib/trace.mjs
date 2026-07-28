@@ -69,8 +69,26 @@ export function listTraces(db, { kind, limit = 100, offset = 0 } = {}) {
   return { total, rows };
 }
 
+// Exact latency percentile for one kind in the window. avg+max hide tail
+// latency (a single slow model reload spikes maxMs while p50 stays flat); p50
+// and p95 make the typical vs worst-case split legible in the dashboard. Two
+// tiny indexed queries per kind (kinds are a small fixed set), so this stays
+// cheap even against the full retention window.
+function msPercentile(db, since, kind, p) {
+  const n = db.prepare(
+    'SELECT COUNT(*) AS n FROM traces WHERE ts >= ? AND kind = ? AND ms IS NOT NULL'
+  ).get(since, kind).n;
+  if (!n) return null;
+  const offset = Math.min(n - 1, Math.max(0, Math.round((n - 1) * p)));
+  const row = db.prepare(
+    `SELECT ms FROM traces WHERE ts >= ? AND kind = ? AND ms IS NOT NULL
+     ORDER BY ms LIMIT 1 OFFSET ?`
+  ).get(since, kind, offset);
+  return row ? row.ms : null;
+}
+
 // Aggregates for the monitoring dashboard: per-kind call count, error rate,
-// latency percentiles-ish (avg + max), token totals, within a time window.
+// latency (avg + p50/p95 + max), token totals, within a time window.
 export function traceSummary(db, { sinceHours = 24 } = {}) {
   const since = new Date(Date.now() - sinceHours * 3600 * 1000).toISOString();
   const byKind = db.prepare(
@@ -83,6 +101,10 @@ export function traceSummary(db, { sinceHours = 24 } = {}) {
             SUM(COALESCE(tokens_out,0)) AS tokensOut
      FROM traces WHERE ts >= ? GROUP BY kind ORDER BY calls DESC`
   ).all(since);
+  for (const row of byKind) {
+    row.p50Ms = msPercentile(db, since, row.kind, 0.5);
+    row.p95Ms = msPercentile(db, since, row.kind, 0.95);
+  }
   const byModel = db.prepare(
     `SELECT model,
             COUNT(*) AS calls,

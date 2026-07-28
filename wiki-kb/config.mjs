@@ -82,6 +82,10 @@ export const config = {
     // raised above Ollama's 5m default -- a crawl/ingest batch's embed calls
     // are often spaced out enough to otherwise evict the model between them.
     keepAlive: envStr('WKB_OLLAMA_KEEP_ALIVE', '30m'),
+    // In-memory LRU of query vectors (embed.mjs embedQuery). A query embedding
+    // is a pure function of (model, text), so identical chat/eval queries never
+    // need to re-hit the GPU. 0 disables the cache.
+    queryCacheMax: envNum('WKB_EMBED_QUERY_CACHE', 512),
   },
 
   retrieve: {

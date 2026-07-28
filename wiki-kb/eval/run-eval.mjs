@@ -110,19 +110,27 @@ export async function runEval(db, {
 
       const { context } = buildContext(results);
       const tA = Date.now();
+      let answerUsage = { tokensIn: null, tokensOut: null };
       try {
-        answer = await generate(answerer, answerPrompt(c.question, context, c.lang), { temperature: 0.2, numPredict: 400 });
-        recordTrace(db, { kind: 'eval-answer', name: c.id, model: answerer, input: c.question, output: answer, ms: Date.now() - tA });
+        answer = await generate(answerer, answerPrompt(c.question, context, c.lang), {
+          temperature: 0.2, numPredict: 400, onUsage: (u) => { answerUsage = u; },
+        });
+        recordTrace(db, { kind: 'eval-answer', name: c.id, model: answerer, input: c.question, output: answer, ms: Date.now() - tA, tokensIn: answerUsage.tokensIn, tokensOut: answerUsage.tokensOut });
       } catch (e) {
         recordTrace(db, { kind: 'eval-answer', name: c.id, model: answerer, input: c.question, ms: Date.now() - tA, ok: false, error: e.message });
       }
 
+      // Sum token usage across all three RAGAS judge calls into the one
+      // eval-judge trace row (EVAL2), so the monitoring dashboard's token
+      // columns reflect judge cost instead of reading ~0.
+      const judgeUsage = { tokensIn: 0, tokensOut: 0 };
+      const accUsage = (u) => { judgeUsage.tokensIn += u.tokensIn; judgeUsage.tokensOut += u.tokensOut; };
       const tJ = Date.now();
       try {
         const [prec, rec, faith] = [
-          await contextPrecision(judge, c.question, results),
-          await contextRecall(judge, c.ground_truth, results),
-          answer ? await faithfulness(judge, c.question, answer, results) : { value: 0, claims: [], verdicts: [] },
+          await contextPrecision(judge, c.question, results, { onUsage: accUsage }),
+          await contextRecall(judge, c.ground_truth, results, { onUsage: accUsage }),
+          answer ? await faithfulness(judge, c.question, answer, results, { onUsage: accUsage }) : { value: 0, claims: [], verdicts: [] },
         ];
         m.contextPrecision = round3(prec.value);
         m.contextRecall = round3(rec.value);
@@ -137,7 +145,7 @@ export async function runEval(db, {
         acc.recall.push(rec.value);
         acc.faithfulness.push(faith.value);
         acc.hallucination.push(1 - faith.value);
-        recordTrace(db, { kind: 'eval-judge', name: c.id, model: judge, input: c.question, output: JSON.stringify(m), ms: Date.now() - tJ });
+        recordTrace(db, { kind: 'eval-judge', name: c.id, model: judge, input: c.question, output: JSON.stringify(m), ms: Date.now() - tJ, tokensIn: judgeUsage.tokensIn, tokensOut: judgeUsage.tokensOut });
       } catch (e) {
         detail.judgeError = e.message;
         recordTrace(db, { kind: 'eval-judge', name: c.id, model: judge, input: c.question, ms: Date.now() - tJ, ok: false, error: e.message });
