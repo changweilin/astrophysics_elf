@@ -12,7 +12,62 @@ node eval/run-eval.mjs --retrieval-only   # 只算檢索指標,免 LLM,幾秒完
 node eval/run-eval.mjs --no-graph         # A/B:停用圖譜通道(對照組)
 node eval/run-eval.mjs --limit 3 --k 8
 node eval/run-eval.mjs --judge llama3 --answer phi4
+
+npm run eval:baseline                     # 凍結目前的檢索基準線(baseline.json)
+npm run eval:ab -- no-graph               # 配對 A/B + 顯著性(EVAL3,見下)
+npm run eval:gate                         # 阻斷式回歸閘門(EVAL1b,見下)
 ```
+
+不含 `--gate` 時,退出碼永遠是 0 —— 基準線比較只是報告。
+
+## 配對 A/B 與信賴區間(EVAL3)
+
+黃金測試集只有 69 筆。這個規模下,單看「MRR 0.688 → 0.694」是沒有資訊的:
+現行 `rrfK=10` 當初就是拿 0.780 對 0.786 決定的,而那個差距完全在抽樣雜訊裡。
+`eval/stats.mjs` 讓每個旋鈕的變動可以被「判定」,而不是被「目測」:
+
+- 每次執行都會在 hitRate/MRR(整體與各 slice)旁印出 **bootstrap 95% 信賴
+  區間**。11 筆的 slice 和 69 筆的整體都會給出一個 MRR,只有區間能說明
+  哪一個撐得起結論。
+- `--ab <variant>` 會用**同一份資料集、同一個順序**再跑一輪對照組,然後逐案
+  **配對**比較。配對很重要:此處變異數主要來自「案例本身難易」(paraphrase
+  案例對任何設定都難),配對後這一項會被消掉。
+- 判定標籤(`negligible` 預設 0.01,約一個 rank-step):
+
+| 標籤 | 意義 |
+|---|---|
+| `improved` / `regressed` | 差異的信賴區間**不含 0** —— 效果是真的 |
+| `no-effect` | 整個區間落在 ±negligible 內 —— **已排除**有意義的變化 |
+| `need-more-cases` | 區間含 0 但超出 ±negligible —— 未定案;會一併印出需要多少筆案例才能定案 |
+
+第三個標籤才是重點:今天一次邊際的 sweep 會被讀成「沒變化」,實際上是
+「在 n=69 下量不出來」。
+
+可用的 variant:`no-graph`、`qroute`、`fusion=weighted`、`rrf-k=60`、`k=12`。
+`--ab` 只在 `--retrieval-only` 下可用(配對的評審跑會讓 LLM 成本翻倍)。
+
+## 回歸閘門(EVAL1b)
+
+`node eval/run-eval.mjs --retrieval-only --gate` 會改變退出碼:
+
+| 退出碼 | 意義 |
+|---|---|
+| 0 | 沒有超出容差的回歸 |
+| 1 | 有回歸 —— 這是唯一的「失敗」 |
+| 2 | **無法判定**,不予裁決(見下) |
+
+容差不再是手挑的 0.005:每個 scope 的容差取自 baseline.json 中**該 scope 自己
+的 bootstrap 區間寬度的一半**(下限 `WKB_EVAL_GATE_MIN_TOL`)。所以 11 筆的
+slice 被允許照它實際的抖動幅度抖,而 69 筆的整體指標則被抓得很緊。
+
+退出碼 2(不予裁決,而不是判定失敗)發生在:
+
+- **Ollama 不可用** —— 嵌入模型連不上時向量通道會靜默退化成 BM25-only,
+  所有差值都是假訊號。閘門會先 ping `/api/tags` 再決定要不要裁決。
+- **執行設定與 baseline 不同**(fusion/rrfK/graph/k/cases)——不是同一把尺。
+- **沒有 baseline.json**。
+
+會誤判的閘門比沒有閘門更糟,所以這三種情況一律拒絕裁決。
 
 結果寫入 `eval_runs` / `eval_cases`(kb.sqlite),在 kb-admin.html 的
 「RAG 評估」分頁可瀏覽與逐案檢視;每次 LLM 呼叫也會進「LLM 監測」分頁。
@@ -30,9 +85,9 @@ node eval/run-eval.mjs --judge llama3 --answer phi4
 
 評審輸出解析不到的行一律當「no」——懶惰的評審只會拉低分數,不會灌水。
 
-retrieval 指標另外依 `slices`(golden 的 `tags` + 語言)分組輸出,
-所以 paraphrase / multi-hop 子集的 hitRate/MRR 可以和 single-hop 基準
-分開讀 —— 這正是量測語意召回缺口(RET3)與圖譜通道(KG1)的依據。
+retrieval 指標另外依 `slices`(golden 的 `tags` + 語言 + QROUTE 的 `route:*`)
+分組輸出,所以 paraphrase / multi-hop 子集的 hitRate/MRR 可以和 single-hop
+基準分開讀 —— 這正是量測語意召回缺口(RET3)與圖譜通道(KG1)的依據。
 
 ## 黃金測試集(golden.jsonl)
 

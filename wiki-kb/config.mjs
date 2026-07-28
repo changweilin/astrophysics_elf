@@ -128,6 +128,26 @@ export const config = {
     graphReserve: envNum('WKB_GRAPH_RESERVE', 1),
     pprAlpha: envNum('WKB_PPR_ALPHA', 0.5),
     pprIters: envNum('WKB_PPR_ITERS', 15),
+    // QROUTE (lib/query-route.mjs): per-query routing of the graph channel so a
+    // plain definitional lookup does not pay for PPR + multi-hop expansion.
+    //   'off'     never classify (byte-identical to pre-QROUTE retrieval)
+    //   'observe' classify and report the route (eval slices, traces) but apply
+    //             NO knob change -- the default, because the policy below
+    //             changes ranking and must be A/B'd first
+    //   'on'      apply the policy
+    qroute: envStr('WKB_QROUTE', 'observe'),
+    // Routes whose queries skip the PPR walk entirely. Empty by default: the
+    // graph BOOST fires on 69/69 golden queries and a --no-graph A/B costs the
+    // graph slice -0.08 MRR, so dropping the walk is a ranking change that
+    // needs `--ab qroute` evidence, not a guess.
+    qrouteSkipPpr: envList('WKB_QROUTE_SKIP_PPR', []),
+    // Routes that skip only the multi-hop EXPANSION probe (the boost is kept).
+    // Expansion fires on 0/69 golden queries, so this is a pure cost saving on
+    // the current query mix -- see OPTIMIZATION-PLAN.md's graph-expansion note.
+    qrouteSkipExpand: envList('WKB_QROUTE_SKIP_EXPAND', ['lookup', 'paraphrase']),
+    // Per-route multiplier on wGraph, e.g. "graph-heavy=1.2,paraphrase=0.6".
+    // Unset routes use 1 (no change) -- same "measure before tuning" rule.
+    qrouteGraphWeights: envStr('WKB_QROUTE_GRAPH_WEIGHTS', ''),
   },
 
   // RAG evaluation pipeline (eval/run-eval.mjs): RAGAS-style metrics judged
@@ -144,6 +164,19 @@ export const config = {
     judgeModelZh: envStr('WKB_EVAL_JUDGE_MODEL_ZH', ''),
     answerModelZh: envStr('WKB_EVAL_ANSWER_MODEL_ZH', ''),
     timeoutMs: envNum('WKB_EVAL_TIMEOUT_MS', 300000),
+    // Resampling statistics (eval/stats.mjs, EVAL3). The seed is fixed so a CI
+    // -- and therefore the EVAL1b gate tolerance derived from it -- is
+    // byte-identical across runs and machines.
+    bootstrapResamples: envNum('WKB_EVAL_BOOTSTRAP', 2000),
+    bootstrapSeed: envNum('WKB_EVAL_BOOTSTRAP_SEED', 20260728),
+    ciAlpha: envNum('WKB_EVAL_CI_ALPHA', 0.05),
+    // EVAL1b gate: a scope's tolerance is half its baseline bootstrap CI width
+    // (a drop inside sampling noise is not a regression), floored here so a
+    // freakishly tight slice CI cannot make the gate hair-trigger.
+    gateMinTol: envNum('WKB_EVAL_GATE_MIN_TOL', 0.005),
+    // Practical-equivalence bound for the A/B verdict: a delta whose whole CI
+    // sits inside +-this is labelled `no-effect` rather than `need-more-cases`.
+    gateNegligible: envNum('WKB_EVAL_GATE_NEGLIGIBLE', 0.01),
   },
 
   // LLM observability (lib/trace.mjs): every retrieve/translate/generate/chat

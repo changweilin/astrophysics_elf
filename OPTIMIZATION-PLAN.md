@@ -80,9 +80,9 @@ regressing −0.08 MRR.
 |----|------|--------|------|
 | **RET2** ✅ **DONE (core)** | `buildContext` now: budget **1500→3500** (scientists) / 2200→3000 (wiki-kb); cross-lingual **qid dedup**; **reserved graph slot** (`graphReserve=1`); returns `coverage` (delivered-vs-retrieved) logged to the `chat-rag` trace. Delivered chunks/qids roughly doubled on real queries (e.g. `什麼是伽瑪射線暴?` 3→6 qids). **small-to-big (parent-section delivery) deferred** — higher complexity, lower marginal value. **Finding:** graph *expansion* fires on **0/69** golden queries (boost fires on 69/69), so the reserved slot is currently a proven-correct no-op — the "expansion truncated away" half of B2 doesn't manifest on this query mix; see [graph-expansion note](#graph-expansion-is-inert-on-the-golden-set). | M | RET4 (folded in) |
 | **RET1** ✅ **DONE** | History-aware **query rewrite** (`lib/query-rewrite.mjs`): high-precision pronoun/opener heuristic gate (11/11 on a discriminating set) → one deterministic local-Ollama rewrite only for dependent turns; fail-open; wired into **both** single-chat and discussion handlers before `retrieveContext`, gated by `SCI_WIKI_REWRITE` + `replyMode`; rewritten query surfaced in `meta.retrievalQuery`. Demo (en+zh): `"who first derived it?"`→`"Who first derived the Chandrasekhar limit?"` **MISS→hit@2**; `"它的密度有多高?"`→`"中子星的密度有多高?"` **MISS→hit@2**; `"why can't light escape from it?"` hit@4→**hit@1**. **TODO:** commit a multi-turn golden slice (+`history` field) so this is regression-tracked, not just demo'd. `seedQids` injection from extracted entities deferred. | M | — |
-| **QROUTE** | **Query router**: classify graph-heavy / vector-only / skip-PPR per query so simple lookups don't pay PPR cost or eat graph noise. | S–M | — |
-| **EVAL3** | Bootstrap CIs over per-case metric arrays + paired A/B significance (graph on/off, rrf/weighted); label borderline sweeps "need more cases". | M | GOLD1 |
-| **EVAL1b** | Promote EVAL1a to a **blocking** pre-push/CI gate; tolerance from CI width, qid-level hit. | S | GOLD1, EVAL3 |
+| **QROUTE** ✅ **DONE (observe-mode default)** | `lib/query-route.mjs` classifies every query into `graph-heavy` / `lookup` / `paraphrase` / `balanced` (pure string work — no DB, no LLM, no embed) and emits the graph-channel knobs. Three modes (`WKB_QROUTE`): `off` = pre-QROUTE behaviour byte-for-byte, **`observe` (default)** = report the route into eval slices + `search`/`context` traces but change nothing, `on` = apply the policy. Verified against the golden set: **11/11** relational/graph cases → `graph-heavy`, **15/16** paraphrase → `paraphrase`, **24/28** single-hop → `lookup` (`node lib/query-route.test.mjs`, 68 assertions). Policy defaults: skip the multi-hop **expansion** on `lookup`/`paraphrase` (it fires 0/69, so pure cost saving), **keep PPR everywhere** and all per-route `wGraph` scales at 1 — dropping the walk is a ranking change and the boost fires 69/69, so it waits on `--ab qroute` evidence. | S–M | — |
+| **EVAL3** ✅ **DONE** | `eval/stats.mjs`: seeded-deterministic (mulberry32, never `Math.random`) percentile **bootstrap CIs** on every retrieval number, **paired** bootstrap delta + sign-flip **permutation test** (exact ≤18 non-zero diffs, Monte Carlo above) for A/B. `--ab <variant>` reruns the same dataset in the same order and pairs case-by-case — pairing matters because per-case difficulty is the dominant variance term here. Verdicts are an *equivalence* test, not just a null test: `improved`/`regressed` (CI excludes 0), `no-effect` (whole CI inside ±0.01 — a meaningful effect is **ruled out**), `need-more-cases` (undecided; prints the `casesNeeded` estimate). Variants: `no-graph`, `qroute`, `fusion=`, `rrf-k=`, `k=`. `node eval/stats.test.mjs`, 46 assertions. | M | GOLD1 |
+| **EVAL1b** ✅ **DONE** | `run-eval.mjs --gate` (`npm run eval:gate`) sets the exit code: **0** clean, **1** regression, **2 undecidable**. Tolerance is no longer the hand-picked 0.005 — `gateTolerances()` takes **half each scope's own baseline CI width** (floored at `WKB_EVAL_GATE_MIN_TOL`), so an 11-case slice may wobble as much as 11 cases actually wobble while the 69-case overall number is held tight. Exit 2 (refuse to judge, rather than fail) on: **Ollama down** (`embedAvailable()` precondition — BM25-only makes every delta an artifact), run-config mismatch vs baseline, or no baseline. `saveBaseline` now persists the `ci` block; a pre-EVAL3 baseline still gates on the flat 0.005 and says so. | S | GOLD1, EVAL3 |
 | **KG1** | **Relation-typed edge weights + hub damping** in `graph-rank.mjs`. PPR is undirected/unweighted (`buildIndex`, `graph-rank.mjs:42`): a `P31→'infrared source'` edge (10,379 in-edges) counts like a `P184` advisor edge; 46% of edges terminate on class stubs. Down-weight `P31/P279`-into-stubs, up-weight advisor/influence/part-of/discoverer. `WKB_GRAPH_EDGE_WEIGHTS` override, no schema change. | M | GOLD1+EVAL3 for **acceptance** (metric = MRR delta CI excludes zero) |
 | **KG2** | Materialize `entities.entity_type` from dominant `P31/P279` (black-hole/star/galaxy/telescope/mission/observatory/award/concept…). Typing is binary today (person vs topic); the 'other' bucket holds 30.7% of topics. Enables typed retrieval/filter + PPR seeding. | M | — |
 | **KG3** | Ingest Wikidata **aliases** (`entity_aliases`) into the linking label map. `linkQueryEntities` is exact en/zh label match, so "JWST", "Sgr A*", "M87*", "CMB" never seed PPR. | M | — |
@@ -106,6 +106,13 @@ multi-hop neighbor **not** directly retrievable. Two follow-ups: (a) add a small
 scope (is the expansion path mistuned, or genuinely unnecessary given the boost?).
 The reserved-slot delivery is proven correct (unit-tested) for when expansion does
 fire; it is simply dormant today.
+
+**QROUTE acts on the cost half of this** (follow-up (b)): since the expansion probe
+demonstrably contributes nothing on `lookup`/`paraphrase` queries, those routes skip
+it by default once the router is `on`, saving the per-page SQL without touching the
+boost. The *ranking* half — is the expansion path mistuned, or genuinely unnecessary
+given the boost? — still belongs to KG1, and follow-up (a) (a 2-hop golden slice that
+actually exercises expansion) is still open.
 
 ## Phase 2 — Structural depth (once eval is trustworthy)
 
@@ -153,8 +160,11 @@ fire; it is simply dormant today.
 2. **B1/B2 fixes** (RET2 now, RET3 in Phase 2) — you're already paying for the
    compute both bugs discard.
 3. **LOOP1 + EVAL1a/EVAL2/ORCH2/ORCH5/RET4/EMBCACHE** — cheap, parallel, no deps.
-4. **Close the loop** (EVAL3 → EVAL1b) and **fix the anaphora/throttle pair**
-   (RET1 + RET2 + QROUTE).
+4. ✅ **Close the loop** (EVAL3 → EVAL1b) and **fix the anaphora/throttle pair**
+   (RET1 + RET2 + QROUTE) — all shipped. Every knob is now falsifiable: a change
+   is scored by a paired CI, and a regression beyond the golden set's own noise
+   fails the process. **Next action is a measurement, not code:** re-freeze the
+   baseline (for CI-derived tolerances) and run `--ab qroute`.
 5. **Deepen KG** (KG1/KG2/KG3) and **personas** (PERS1 + PERSANA) against CIs.
 6. **Structural** (RET3 IVF, KGCOMM global search, RET6 sweep) last.
 
@@ -163,11 +173,22 @@ fire; it is simply dormant today.
 Consolidated so they aren't buried in the ✅ rows above. Each is a small,
 well-scoped follow-up to something that shipped this pass.
 
-- [ ] **EVAL1b — promote the gate.** EVAL1a prints a non-blocking delta; make it
-  blocking with `process.exitCode = compareToBaseline(...).regressions.length ? 1 : 0`
-  plus an **Ollama-up precondition** (retrieval metrics are only reproducible while
-  bge-m3 is reachable), and wire into `wiki-kb` `check` / pre-push. Set the tolerance
-  from EVAL3's bootstrap-CI width, not the current hand-picked 0.005.
+- [ ] **Re-freeze `baseline.json` with its CI block.** `saveBaseline` now writes
+  bootstrap CIs, but the committed baseline predates EVAL3, so `--gate` currently
+  falls back to the flat 0.005 tolerance (and says so). One `npm run eval:baseline`
+  against the real corpus with bge-m3 up replaces every tolerance with the golden
+  set's measured sampling noise. **Needs the real `kb.sqlite` + Ollama** — it
+  cannot be produced from source.
+- [ ] **Decide QROUTE's mode with `--ab qroute`.** The router ships in `observe`
+  mode: it labels queries and populates `route:*` eval slices and traces, but
+  changes no retrieval behaviour. Run `npm run eval:ab -- qroute` on the real
+  corpus and flip `WKB_QROUTE=on` only if every scope reads `improved` or
+  `no-effect` — `need-more-cases` means the golden set is still too small to
+  justify it. Same rule for the two knobs deliberately left at their identity
+  values: `qrouteSkipPpr` (empty) and the per-route `wGraph` scales (all 1).
+- [ ] **Wire `eval:gate` into pre-push.** `npm run check` stays DB-free and fast
+  (syntax + unit tests), so the gate is a separate `npm run eval:gate` — it needs
+  both the corpus and a reachable embedding model, which no CI runner has today.
 - [ ] **RET4 — MMR diversity pass.** Cross-lingual `qid` dedup shipped in
   `buildContext`; the maximal-marginal-relevance pass over near-duplicate
   *different-`qid`* chunks is still TODO.

@@ -117,12 +117,14 @@ export function createKbRouter(db) {
       const kind = url.searchParams.get('kind');
       const fusion = url.searchParams.get('fusion') || undefined;
       const t0 = Date.now();
+      let route = null;
       const results = await search(db, {
         q,
         langs: langsParam(url),
         kinds: kind ? [kind] : undefined,
         k: Number(url.searchParams.get('k')) || undefined,
         fusion,
+        onRoute: (r) => { route = r; },
       });
       recordTrace(db, {
         kind: 'search', input: q, ms: Date.now() - t0,
@@ -131,12 +133,17 @@ export function createKbRouter(db) {
           hits: results.length,
           graphBoosted: results.filter((r) => r.g > 0).length,
           fusion: fusion || config.retrieve.fusion,
+          // QROUTE: in the default 'observe' mode this is the only thing the
+          // router produces -- the route distribution over real traffic, which
+          // is what justifies (or kills) turning the policy on.
+          ...(route ? { route: route.route, routeApplied: route.applied } : {}),
         },
       });
       json(res, 200, {
         ok: true,
         query: q,
         fusion: fusion || config.retrieve.fusion,
+        ...(route ? { route: route.route } : {}),
         results: results.map((r) => ({
           ...r,
           score: Number(r.score.toFixed(4)),
@@ -149,13 +156,18 @@ export function createKbRouter(db) {
       const q = url.searchParams.get('q') ?? '';
       if (!q.trim()) { json(res, 400, { ok: false, error: 'q required' }); return true; }
       const t0 = Date.now();
-      const results = await search(db, { q, langs: langsParam(url) });
+      let route = null;
+      const results = await search(db, { q, langs: langsParam(url), onRoute: (r) => { route = r; } });
       const maxChars = Number(url.searchParams.get('maxChars')) || undefined;
       const ctx = buildContext(results, maxChars);
       recordTrace(db, {
         kind: 'context', input: q, ms: Date.now() - t0,
         output: ctx.sources.map((s) => s.title).join(' | '),
-        meta: { sources: ctx.sources.length, chars: ctx.context.length },
+        meta: {
+          sources: ctx.sources.length,
+          chars: ctx.context.length,
+          ...(route ? { route: route.route, routeApplied: route.applied } : {}),
+        },
       });
       json(res, 200, { ok: true, query: q, ...ctx });
       return true;

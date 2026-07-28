@@ -1,19 +1,28 @@
-// Committed retrieval baseline + non-blocking delta report (EVAL1a).
+// Committed retrieval baseline + delta report (EVAL1a) and the blocking gate
+// (EVAL1b).
 //
 // `baseline.json` freezes the deterministic retrieval metrics (overall + per
-// slice hitRate/MRR) so every later run prints how it moved the needle. This is
-// deliberately NON-blocking: it never changes the exit code. The blocking gate
-// (EVAL1b) is a thin wrapper that fails when `compareToBaseline().regressions`
-// is non-empty -- once the golden set and EVAL3's CIs justify a tolerance.
+// slice hitRate/MRR) so every later run prints how it moved the needle, plus
+// the bootstrap CI of each of those numbers (EVAL3).
+//
+// EVAL1a is the NON-blocking report: it never touches the exit code.
+// EVAL1b is `run-eval.mjs --gate`, which fails the process when a regression
+// clears tolerance -- and the tolerance is no longer the hand-picked 0.005.
+// `gateTolerances()` derives it per scope from HALF THE BASELINE CI WIDTH, so
+// the gate's threshold is the golden set's own sampling noise: a slice measured
+// on 11 cases gets a wide tolerance because its mean genuinely wobbles that
+// much, while a 69-case overall metric gets a tight one. `gateMinTol` floors it.
 //
 // Caveat baked into the file: retrieval metrics are only reproducible while the
 // bge-m3 embedding model is reachable. With Ollama down the vector channel drops
-// to BM25-only and deltas are meaningless -- the gate (EVAL1b) must precondition
-// on an Ollama ping; this report just prints the caveat.
+// to BM25-only and deltas are meaningless -- so the gate PRECONDITIONS on an
+// embed-model ping (see run-eval.mjs) and refuses to judge rather than failing
+// spuriously; this report just prints the caveat.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { config } from '../config.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const BASELINE_PATH = path.join(HERE, 'baseline.json');
@@ -21,10 +30,32 @@ export const BASELINE_PATH = path.join(HERE, 'baseline.json');
 const round4 = (x) => Number(x.toFixed(4));
 
 // Keep only the deterministic, retrieval-side metrics (drop LLM-judged ones and
-// the machine-dependent avgRetrieveMs, which is noise across hosts).
+// the machine-dependent avgRetrieveMs, which is noise across hosts). The `ci`
+// block is kept because the gate's tolerance is derived from it.
 function pickMetrics(m) {
   const out = { hitRate: m.hitRate, mrr: m.mrr };
   if (m.slices) out.slices = m.slices;
+  if (m.ci) out.ci = m.ci;
+  return out;
+}
+
+// Per-scope regression tolerance from the baseline's stored CIs (EVAL3 -> EVAL1b).
+// Returns { 'overall.mrr': 0.07, 'tag:paraphrase.hitRate': 0.19, ... }.
+// Scopes without a stored CI simply fall back to the caller's flat `tol`.
+export function gateTolerances(baseline, { minTol = config.eval.gateMinTol } = {}) {
+  const out = {};
+  const ci = baseline?.metrics?.ci;
+  if (!ci) return out;
+  const add = (scope, name, entry) => {
+    if (!entry || typeof entry.width !== 'number') return;
+    out[`${scope}.${name}`] = round4(Math.max(minTol, entry.width / 2));
+  };
+  add('overall', 'hitRate', ci.hitRate);
+  add('overall', 'mrr', ci.mrr);
+  for (const [key, s] of Object.entries(ci.slices || {})) {
+    add(key, 'hitRate', s.hitRate);
+    add(key, 'mrr', s.mrr);
+  }
   return out;
 }
 
@@ -45,16 +76,18 @@ export function loadBaseline() {
   try { return JSON.parse(readFileSync(BASELINE_PATH, 'utf8')); } catch { return null; }
 }
 
-// Pure diff (prints nothing). tol = rank-step tolerance below which a change is
-// treated as noise. Returns rows for every (scope, metric) pair plus the subset
+// Pure diff (prints nothing). `tol` is the flat fallback tolerance below which a
+// change is treated as noise; `tolBy` (from gateTolerances) overrides it per
+// `scope.metric`. Returns rows for every (scope, metric) pair plus the subset
 // that regressed / improved and any run-config mismatch vs the baseline.
-export function compareToBaseline(metrics, baseline, { tol = 0.005 } = {}) {
+export function compareToBaseline(metrics, baseline, { tol = 0.005, tolBy = {} } = {}) {
   const rows = [];
   const add = (scope, name, curr, base) => {
     if (typeof curr !== 'number' || typeof base !== 'number') return;
     const delta = round4(curr - base);
-    const status = delta > tol ? 'up' : delta < -tol ? 'down' : 'flat';
-    rows.push({ scope, metric: name, base, curr, delta, status });
+    const t = tolBy[`${scope}.${name}`] ?? tol;
+    const status = delta > t ? 'up' : delta < -t ? 'down' : 'flat';
+    rows.push({ scope, metric: name, base, curr, delta, status, tol: t });
   };
 
   const bm = baseline.metrics || {};
@@ -88,7 +121,8 @@ export function compareToBaseline(metrics, baseline, { tol = 0.005 } = {}) {
 }
 
 // Human-readable one-liners for the CLI. Returns an array of lines.
-export function formatComparison(cmp, baseline) {
+// `blocking` only changes the wording -- the exit code is the caller's call.
+export function formatComparison(cmp, baseline, { blocking = false } = {}) {
   const arrow = { up: '^', down: 'v', flat: '=' };
   const sign = (d) => (d > 0 ? `+${d}` : `${d}`);
   const lines = [`  vs baseline (${baseline.generatedAt || 'unknown'}):`];
@@ -96,11 +130,14 @@ export function formatComparison(cmp, baseline) {
     lines.push(`    ! run config differs from baseline -- delta not apples-to-apples: ${cmp.configMismatch.join(', ')}`);
   }
   for (const r of cmp.rows) {
-    lines.push(`    ${arrow[r.status]} ${(`${r.scope}.${r.metric}`).padEnd(24)} ${r.base} -> ${r.curr}  (${sign(r.delta)})`);
+    lines.push(
+      `    ${arrow[r.status]} ${(`${r.scope}.${r.metric}`).padEnd(24)} ${r.base} -> ${r.curr}  (${sign(r.delta)}`
+      + `${r.tol != null ? `, tol ${r.tol}` : ''})`
+    );
   }
   lines.push(
     cmp.regressions.length
-      ? `    => ${cmp.regressions.length} regression(s) beyond tolerance (non-blocking).`
+      ? `    => ${cmp.regressions.length} regression(s) beyond tolerance${blocking ? '.' : ' (non-blocking).'}`
       : '    => no regressions beyond tolerance.'
   );
   return lines;

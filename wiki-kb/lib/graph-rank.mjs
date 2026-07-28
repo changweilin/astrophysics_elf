@@ -141,8 +141,12 @@ function personalizedPageRank(index, seedIdxs, { alpha, iters }) {
 //   langs           same lang filter the caller applied
 //   qv / fromBlob / dot   optional query vector + helpers, to pick the best
 //                   chunk of an expansion page instead of its first chunk
-export function graphChannel(db, { q, seedQids = [], excludePageIds = new Set(), langs, qv, fromBlob, dot } = {}) {
-  const { pprAlpha, pprIters, graphExpandPages } = config.retrieve;
+//   expandPages     optional override for config.retrieve.graphExpandPages, so
+//                   QROUTE can drop the expansion probe per query (0 = boost
+//                   only) without touching the process-wide config
+export function graphChannel(db, { q, seedQids = [], excludePageIds = new Set(), langs, qv, fromBlob, dot, expandPages } = {}) {
+  const { pprAlpha, pprIters } = config.retrieve;
+  const graphExpandPages = expandPages ?? config.retrieve.graphExpandPages;
   const index = getIndex(db);
   if (!index) return null;
 

@@ -70,6 +70,24 @@ decay = floor + (1 - floor) * exp(-ln2 * 條目最後修訂年齡 / 半衰期)
 —— 久未更新的條目往後排,但經典物理不會被埋掉。Ollama 不在線時自動退化為
 BM25-only,檢索永不失敗。
 
+### 查詢路由(QROUTE,`lib/query-route.mjs`)
+
+每一次查詢先做一次純字串分類(不碰 DB、不呼叫 LLM、不做嵌入),分成
+`graph-heavy`(問關係:指導教授、以誰命名、獎項、發現者、對人名的所有格)、
+`lookup`(短的定義式問句)、`paraphrase`(刻意避開目標條目用字的長描述)、
+`balanced`。三種模式(`WKB_QROUTE`):
+
+| 模式 | 行為 |
+|---|---|
+| `off` | 不分類,與導入 QROUTE 前逐位元相同 |
+| `observe`(**預設**) | 分類並把 `route` 寫進 eval slices 與 `search`/`context` trace,但**不改變任何檢索行為** |
+| `on` | 套用路由政策 |
+
+`on` 的預設政策只做一件事:對 `lookup`/`paraphrase` 跳過多跳**擴展**探測
+(它在 69 筆黃金案例上觸發 0 次,純粹是省成本)。**PPR 一律保留**、每個
+route 的 `wGraph` 倍率一律 1 —— 圖譜的 boost 在 69/69 都會觸發,關掉它是
+排名變更,要有 `npm run eval:ab -- qroute` 的配對證據才動。
+
 ## 定期更新檢查
 
 ```powershell
@@ -170,13 +188,18 @@ $env:WKB_EXCLUDE_EXTRA = "(pattern|to|exclude)"
 主要環境變數(完整見 `config.mjs`):`WKB_DB`、`WKB_LANGS`、`WKB_PRIORITY_LANGS`、
 `WKB_FULLTEXT_LANGS`、`WKB_MAX_PAGES_PER_LANG`、`WKB_EMBED_MODEL`、`WKB_OLLAMA_URL`、
 `WKB_TOP_K`、`WKB_W_BM25`/`WKB_W_VEC`、`WKB_DECAY_HALFLIFE_DAYS`、`WKB_DECAY_FLOOR`、
-`WKB_PORT`。
+`WKB_QROUTE`、`WKB_PORT`。
 
 ## 驗證
 
 ```powershell
-npm run check        # node --check 所有模組
+npm run check        # node --check 所有模組 + 單元測試(免 DB、免 Ollama)
+npm test             # 只跑單元測試(eval/stats、lib/query-route)
+npm run eval:gate    # 檢索回歸閘門:需要 kb.sqlite 與可連線的 bge-m3
 ```
+
+`check` 刻意保持不依賴語料與 Ollama,所以可以隨時跑;`eval:gate`(EVAL1b)
+兩者都需要,詳見 `eval/README.md`。
 
 內容授權:維基百科文字為 **CC BY-SA 4.0**,每筆 `pages` 都記錄來源與授權欄位;
 對外展示時請保留出處(`/api/context` 的引用頭已含標題與修訂日期)。

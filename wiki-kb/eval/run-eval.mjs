@@ -7,6 +7,15 @@
 //   node eval/run-eval.mjs --limit 3 --k 8      # subset / retrieval depth
 //   node eval/run-eval.mjs --judge <tag> --answer <tag>
 //
+// EVAL3 -- paired A/B with significance, instead of eyeballing two numbers:
+//   node eval/run-eval.mjs --retrieval-only --ab no-graph
+//   node eval/run-eval.mjs --retrieval-only --ab fusion=weighted
+//   node eval/run-eval.mjs --retrieval-only --ab rrf-k=60
+//   node eval/run-eval.mjs --retrieval-only --ab qroute
+//
+// EVAL1b -- blocking regression gate (exit 1 on regression, 2 if undecidable):
+//   node eval/run-eval.mjs --retrieval-only --gate
+//
 // Every run is persisted (eval_runs + eval_cases) and every LLM call traced
 // (traces table), so results show up in kb-admin.html's 評估/監測 tabs.
 // runEval() is also exported for the HTTP route (retrieval-only from the UI).
@@ -17,9 +26,11 @@ import path from 'node:path';
 import { openDb, now } from '../lib/db.mjs';
 import { search, buildContext } from '../lib/retrieve.mjs';
 import { recordTrace } from '../lib/trace.mjs';
+import { embedAvailable } from '../lib/embed.mjs';
 import { retrievalMetrics, contextPrecision, contextRecall, faithfulness } from './metrics.mjs';
 import { generate, resolveJudgeModel, resolveAnswerModel } from './judge.mjs';
-import { saveBaseline, loadBaseline, compareToBaseline, formatComparison } from './baseline.mjs';
+import { saveBaseline, loadBaseline, compareToBaseline, formatComparison, gateTolerances } from './baseline.mjs';
+import { bootstrapCI, abVerdict, formatVerdict } from './stats.mjs';
 import { config } from '../config.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -52,7 +63,7 @@ const round3 = (x) => Number(x.toFixed(3));
 
 // mode: 'retrieval' (no LLM) or 'full'. Returns the persisted run row shape.
 export async function runEval(db, {
-  mode = 'full', k = 8, graph = true, limit = Infinity, fusion, rrfK,
+  mode = 'full', k = 8, graph = true, limit = Infinity, fusion, rrfK, qroute,
   judgeModel, answerModel, datasetPath, log = () => {},
 } = {}) {
   const cases = loadGolden(datasetPath).slice(0, limit);
@@ -75,28 +86,38 @@ export async function runEval(db, {
   );
 
   const acc = { hit: [], mrr: [], retrieveMs: [], precision: [], recall: [], faithfulness: [], hallucination: [] };
-  // Per-slice retrieval accuracy (golden `tags`, plus lang), so a paraphrase /
-  // multi-hop subset can be read separately from the single-hop baseline -- the
-  // whole point of RET3's "semantic recall" and KG1's "graph MRR" metrics.
+  // Per-slice retrieval accuracy (golden `tags`, plus lang and the QROUTE
+  // route), so a paraphrase / multi-hop subset can be read separately from the
+  // single-hop baseline -- the whole point of RET3's "semantic recall" and
+  // KG1's "graph MRR" metrics.
   const bySlice = {};
   const pushSlice = (key, m) => {
     const s = (bySlice[key] ??= { n: 0, hit: [], mrr: [] });
     s.n++; s.hit.push(m.hit); s.mrr.push(m.mrr);
   };
+  // Case-level arrays, in dataset order, so a second run of the same dataset can
+  // be compared PAIRED against this one (EVAL3, see abCompare below).
+  const perCase = [];
 
   for (const c of cases) {
     log(`  ${c.id} …`);
     const langs = c.lang === 'en' ? ['en'] : [c.lang, 'en'];
     const t0 = Date.now();
-    const results = await search(db, { q: c.question, langs, k, noGraph: !graph, fusion, rrfK });
+    let route = null;
+    const results = await search(db, {
+      q: c.question, langs, k, noGraph: !graph, fusion, rrfK, qroute,
+      onRoute: (r) => { route = r; },
+    });
     const retrieveMs = Date.now() - t0;
 
     const m = { ...retrievalMetrics(results, c.expect, c.expect_qids), retrieveMs };
     acc.hit.push(m.hit);
     acc.mrr.push(m.mrr);
     acc.retrieveMs.push(retrieveMs);
+    perCase.push({ id: c.id, lang: c.lang, tags: c.tags ?? [], route: route?.route ?? null, hit: m.hit, mrr: m.mrr });
     pushSlice(`lang:${c.lang}`, m);
     for (const tag of (Array.isArray(c.tags) ? c.tags : [])) pushSlice(`tag:${tag}`, m);
+    if (route) pushSlice(`route:${route.route}`, m);
 
     let answer = null;
     const detail = {};
@@ -174,6 +195,20 @@ export async function runEval(db, {
   for (const [key, s] of Object.entries(bySlice)) {
     slices[key] = { n: s.n, hitRate: round3(avg(s.hit)), mrr: round3(avg(s.mrr)) };
   }
+  // EVAL3: bootstrap CIs on every retrieval number the baseline stores. A slice
+  // of 11 cases and a slice of 69 both print an MRR; only the interval says
+  // which of them can support a verdict. `strip` drops the bookkeeping fields so
+  // baseline.json stays readable.
+  const strip = ({ lo, hi, width }) => ({ lo, hi, width });
+  const ciSlices = {};
+  for (const [key, s] of Object.entries(bySlice)) {
+    ciSlices[key] = { hitRate: strip(bootstrapCI(s.hit)), mrr: strip(bootstrapCI(s.mrr)) };
+  }
+  const ci = {
+    hitRate: strip(bootstrapCI(acc.hit)),
+    mrr: strip(bootstrapCI(acc.mrr)),
+    ...(Object.keys(ciSlices).length ? { slices: ciSlices } : {}),
+  };
   const metrics = {
     hitRate: round3(avg(acc.hit)),
     mrr: round3(avg(acc.mrr)),
@@ -181,6 +216,7 @@ export async function runEval(db, {
     fusion: fusionUsed,
     ...(fusionUsed === 'rrf' ? { rrfK: rrfK || config.retrieve.rrfK } : {}),
     ...(Object.keys(slices).length ? { slices } : {}),
+    ci,
     ...(full ? {
       contextPrecision: round3(avg(acc.precision)),
       contextRecall: round3(avg(acc.recall)),
@@ -196,7 +232,70 @@ export async function runEval(db, {
     db.prepare('UPDATE eval_runs SET judge_model=?, answer_model=? WHERE id=?').run(summary, summary, runId);
   }
   db.prepare('UPDATE eval_runs SET metrics=? WHERE id=?').run(JSON.stringify(metrics), runId);
-  return { runId, mode, k, graph, cases: cases.length, models: [...modelsUsed].sort(), metrics };
+  return { runId, mode, k, graph, cases: cases.length, models: [...modelsUsed].sort(), metrics, perCase };
+}
+
+// ---- EVAL3: paired A/B --------------------------------------------------------
+
+// Variant specs accepted by --ab. Each returns the runEval opts to override.
+const AB_VARIANTS = {
+  'no-graph': () => ({ graph: false }),
+  qroute: () => ({ qroute: 'on' }),
+  fusion: (v) => ({ fusion: v }),
+  'rrf-k': (v) => ({ rrfK: Number(v) }),
+  k: (v) => ({ k: Number(v) }),
+};
+
+export function parseVariant(spec) {
+  const [name, value] = String(spec || '').split('=');
+  const make = AB_VARIANTS[name];
+  if (!make) {
+    throw new Error(`unknown --ab variant "${spec}" (want one of: ${Object.keys(AB_VARIANTS).join(', ')})`);
+  }
+  return { name: spec, opts: make(value) };
+}
+
+// Pair two runs case-by-case and label every scope. Arms MUST come from the
+// same dataset in the same order -- runEval preserves dataset order, and the
+// id equality check below makes a mismatch loud rather than silently unpaired.
+export function abCompare(variantRun, baseRun) {
+  const a = variantRun.perCase;
+  const b = baseRun.perCase;
+  if (a.length !== b.length || a.some((c, i) => c.id !== b[i].id)) {
+    throw new Error('A/B arms are not case-aligned; both arms must run the same dataset');
+  }
+  const scopes = [{ key: 'overall', pick: () => true }];
+  const sliceKeys = new Set();
+  for (const c of b) {
+    sliceKeys.add(`lang:${c.lang}`);
+    for (const t of c.tags) sliceKeys.add(`tag:${t}`);
+    if (c.route) sliceKeys.add(`route:${c.route}`);
+  }
+  for (const key of [...sliceKeys].sort()) {
+    const [kind, value] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
+    scopes.push({
+      key,
+      // Slice membership is taken from the BASE arm so both arms carry exactly
+      // the same case set even when the variant reroutes a query (route:* would
+      // otherwise compare different subsets and break pairing).
+      pick: (i) => (kind === 'lang' ? b[i].lang === value
+        : kind === 'tag' ? b[i].tags.includes(value)
+        : b[i].route === value),
+    });
+  }
+
+  const out = [];
+  for (const scope of scopes) {
+    const idx = a.map((_, i) => i).filter((i) => scope.pick(i));
+    if (idx.length < 2) continue;
+    out.push({
+      scope: scope.key,
+      n: idx.length,
+      hitRate: abVerdict(idx.map((i) => a[i].hit), idx.map((i) => b[i].hit)),
+      mrr: abVerdict(idx.map((i) => a[i].mrr), idx.map((i) => b[i].mrr)),
+    });
+  }
+  return out;
 }
 
 // ---- CLI ----------------------------------------------------------------------
@@ -210,33 +309,106 @@ if (isMain) {
     return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : fallback;
   };
   const db = openDb();
-  const r = await runEval(db, {
+  const gate = flag('--gate');
+  const abSpec = opt('--ab', undefined);
+
+  // Validate the A/B request BEFORE the base run: a typo'd variant name or a
+  // judged --ab used to surface only after a full run had already been paid for.
+  let variant = null;
+  if (abSpec) {
+    if (!flag('--retrieval-only')) {
+      console.error('--ab requires --retrieval-only (a paired judged run would double the LLM cost).');
+      process.exitCode = 2;
+      process.exit();
+    }
+    try {
+      variant = parseVariant(abSpec);
+    } catch (e) {
+      console.error(e.message);
+      process.exitCode = 2;
+      process.exit();
+    }
+  }
+
+  // EVAL1b precondition. Retrieval metrics are only reproducible while the
+  // embedding model answers; with Ollama down the vector channel silently
+  // degrades to BM25-only and every delta is an artifact. A gate that failed on
+  // that would train people to ignore it, so refuse to judge (exit 2) instead.
+  if (gate) {
+    const ok = await embedAvailable();
+    if (!ok) {
+      console.error(
+        `gate: embedding model "${config.embed.model}" unreachable at ${config.embed.baseUrl} `
+        + '-- retrieval metrics are not reproducible in BM25-only mode. Not judging.'
+      );
+      process.exitCode = 2;
+      process.exit();
+    }
+  }
+
+  const baseOpts = {
     mode: flag('--retrieval-only') ? 'retrieval' : 'full',
     graph: !flag('--no-graph'),
     fusion: opt('--fusion', undefined),
     rrfK: Number(opt('--rrf-k', 0)) || undefined,
+    qroute: opt('--qroute', undefined),
     k: Number(opt('--k', 8)),
     limit: Number(opt('--limit', Infinity)),
     judgeModel: opt('--judge', undefined),
     answerModel: opt('--answer', undefined),
     datasetPath: opt('--dataset', undefined),
     log: console.log,
-  });
-  console.log(`\nrun #${r.runId} (${r.mode}, graph=${r.graph}, k=${r.k}, ${r.cases} cases)`);
-  if (r.models.length) console.log(`  models: ${r.models.join(', ')}`);
-  for (const [key, value] of Object.entries(r.metrics)) {
-    if (key === 'slices') {
-      console.log('  slices:');
-      for (const [sk, sv] of Object.entries(value)) {
-        console.log(`    ${sk.padEnd(16)} n=${String(sv.n).padStart(2)}  hitRate=${sv.hitRate}  mrr=${sv.mrr}`);
+  };
+  const r = await runEval(db, baseOpts);
+
+  // `[lo, hi]` on every headline number: at n=69 the interval is what says
+  // whether a delta means anything, so it is printed next to the point estimate
+  // rather than buried in the JSON.
+  const band = (c) => (c ? ` [${c.lo}, ${c.hi}]` : '');
+  const report = (run) => {
+    console.log(`\nrun #${run.runId} (${run.mode}, graph=${run.graph}, k=${run.k}, ${run.cases} cases)`);
+    if (run.models.length) console.log(`  models: ${run.models.join(', ')}`);
+    const ci = run.metrics.ci || {};
+    for (const [key, value] of Object.entries(run.metrics)) {
+      if (key === 'ci') continue; // folded into the lines below
+      if (key === 'slices') {
+        console.log('  slices:');
+        for (const [sk, sv] of Object.entries(value)) {
+          const sci = ci.slices?.[sk];
+          console.log(
+            `    ${sk.padEnd(20)} n=${String(sv.n).padStart(2)}  `
+            + `hitRate=${sv.hitRate}${band(sci?.hitRate)}  mrr=${sv.mrr}${band(sci?.mrr)}`
+          );
+        }
+      } else if (key === 'hitRate' || key === 'mrr') {
+        console.log(`  ${key}: ${value}${band(ci[key])}`);
+      } else {
+        console.log(`  ${key}: ${value}`);
       }
-    } else {
-      console.log(`  ${key}: ${value}`);
     }
+  };
+  report(r);
+
+  // EVAL3: paired A/B. The variant arm reruns the SAME dataset in the same
+  // order, so every scope is compared case-by-case (see abCompare).
+  if (variant) {
+    console.log(`\n=== A/B variant: ${variant.name} (rerunning the same ${r.cases} cases) ===`);
+    const v = await runEval(db, { ...baseOpts, ...variant.opts });
+    report(v);
+    console.log(`\n  paired A/B  variant(${variant.name}) vs base  [95% CI of the difference]`);
+    for (const row of abCompare(v, r)) {
+      console.log(`    ${row.scope} (n=${row.n})`);
+      console.log(formatVerdict('hitRate', row.hitRate));
+      console.log(formatVerdict('mrr', row.mrr));
+    }
+    console.log('\n  ^ improved  v regressed  = no-effect (a meaningful change is ruled out)'
+      + '  ? need-more-cases (undecided at this n)');
+    process.exit();
   }
 
-  // EVAL1a: freeze or diff the retrieval baseline. Non-blocking -- the exit code
-  // is never touched here; EVAL1b will gate on compareToBaseline().regressions.
+  // EVAL1a (report) / EVAL1b (gate): freeze or diff the retrieval baseline.
+  // Without --gate the exit code is never touched; with it, a regression beyond
+  // the CI-derived tolerance fails the process.
   if (flag('--save-baseline')) {
     const p = saveBaseline(r);
     console.log(`\nsaved baseline -> ${path.relative(process.cwd(), p)} `
@@ -245,11 +417,33 @@ if (isMain) {
     const baseline = loadBaseline();
     if (baseline) {
       const combined = { ...r.metrics, mode: r.mode, k: r.k, graph: r.graph, cases: r.cases };
-      const cmp = compareToBaseline(combined, baseline);
+      // Tolerance = half the baseline's bootstrap CI width for that same scope
+      // (floored at config.eval.gateMinTol), so an 11-case slice is allowed to
+      // wobble as much as 11 cases actually wobble and the 69-case overall
+      // number is held tight. Falls back to the flat 0.005 for scopes the
+      // baseline predates the CI block for.
+      const tolBy = gateTolerances(baseline);
+      const cmp = compareToBaseline(combined, baseline, { tolBy });
       console.log('');
-      for (const line of formatComparison(cmp, baseline)) console.log(line);
+      for (const line of formatComparison(cmp, baseline, { blocking: gate })) console.log(line);
+      if (gate) {
+        if (!Object.keys(tolBy).length) {
+          console.log('    note: baseline has no `ci` block (pre-EVAL3) -- gating on the flat 0.005 tolerance.'
+            + ' Re-freeze with `npm run eval:baseline` for CI-derived tolerances.');
+        }
+        if (cmp.configMismatch.length) {
+          console.error('gate: run config differs from the baseline -- refusing to judge.');
+          process.exitCode = 2;
+        } else {
+          process.exitCode = cmp.regressions.length ? 1 : 0;
+        }
+      }
     } else {
       console.log('\n  (no eval/baseline.json -- run `npm run eval:baseline` to freeze one)');
+      if (gate) {
+        console.error('gate: no baseline to compare against.');
+        process.exitCode = 2;
+      }
     }
   }
 }
