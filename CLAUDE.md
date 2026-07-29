@@ -1,75 +1,105 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repo. See `AGENTS.md` for the
-cross-tool (Codex/ChatGPT) operating map; this file is the Claude-specific
-companion and the two are kept in sync.
+Guidance for Claude Code when working in this repo. `AGENTS.md` is the
+cross-tool (Codex/ChatGPT) companion; when you edit one, keep the other in
+sync. This file holds the durable principles and the map — operational
+detail lives in the subsystem docs linked at the bottom.
 
 ## What This Project Is
 
-The **Kerr-Newman Black Hole Laboratory** — a static, browser-based physics
-demo plus an additive high-fidelity physics core.
+**Astro ELF — Kerr-Newman Black Hole Laboratory**: a zero-build browser
+physics lab plus three cleanly isolated companion subsystems.
 
-- **Root files** = the browser demo. Plain `.js`/`.jsx` loaded via
-  `index.html` with in-browser Babel + React 18 UMD. No bundler, no build step.
-  - Engine: `physics.js`, `sim.js`, `disc.js` (define `window.KNphysics`,
-    `window.KNSim`, `window.KNDisc`).
-  - Renderers: `render.js` (Canvas2D fallback + mobile) and `render3d.mjs`
-    (default desktop WebGL renderer, `window.KNRender3D`, vendored Three.js in
-    `vendor/`). While `sim.view.mode3d` is set, `KNSim.worldToScreen/
-    screenToWorld` delegate to the 3D camera, so pointer interaction is
-    renderer-agnostic. Small windows try `KNRender3D.create*View` first and
-    fall back to the 2D canvas renderers (which mobile still uses).
-  - Desktop UI: `panel-*.jsx`, `tidal-scope.jsx`, `mhd-monitor.jsx`,
-    `app.jsx` (defines `window.App`).
-  - Mobile UI: `mobile-panels.jsx`, `mobile-app.jsx` (defines
-    `window.MobileApp`); `mobile-styles.css`. Layout is picked at runtime by
-    `window.__knIsMobile()`.
-- **`full-physics/`** = additive, benchmarked physics core (ES modules,
-  `.mjs`). This is the stable source for high-fidelity calculations. New
-  engine-facing work goes through `full-physics/physics-engine.mjs`; its
-  contract is `full-physics/engine-contract.md`.
+| Part | What it is | Contract with the rest |
+|---|---|---|
+| Root files | Browser demo + pages (`index.html` lab, `library.html`, `scientists.html`, `kb-admin.html`). Plain `.js`/`.jsx`, React 18 UMD + in-browser Babel, no bundler. | `window.*` globals |
+| `full-physics/` | Benchmarked high-fidelity physics core (ES modules). | Facade `physics-engine.mjs` (spec: `engine-contract.md`); reaches the demo only through root `full-physics-bridge.mjs` as `window.KNFull` |
+| `scientists-backend/` | Local Ollama persona LLM, port 5188; also serves the merged wiki-kb API for the live app. | REST/SSE HTTP API only — shares no code with the demo |
+| `wiki-kb/` | Wikipedia knowledge graph + hybrid RAG (`node:sqlite`, Ollama `bge-m3` embeddings; standalone admin server on 5189). | Small HTTP API (`lib/routes.mjs`) |
 
-## Run / Serve
+Root demo internals: engine `physics.js` / `sim.js` / `disc.js`
+(`window.KNphysics/KNSim/KNDisc`); renderers `render.js` (Canvas2D fallback +
+mobile) and `render3d.mjs` (desktop WebGL, `window.KNRender3D`, vendored
+Three.js in `vendor/`); desktop UI `app.jsx` (`window.App`) + `panel-*.jsx`;
+mobile UI `mobile-app.jsx` (`window.MobileApp`) + `mobile-panels.jsx`, chosen
+at runtime by `window.__knIsMobile()`; UI strings in `i18n-dict.js`.
 
-```powershell
-npm run dev          # node serve.mjs -> http://127.0.0.1:5184/
-PORT=7000 node serve.mjs
+## Principles (durable — apply to every task)
+
+1. **Isolation by contract.** Subsystems share no code. The only crossings
+   are `window.*` globals inside the demo, `window.KNFull` from the bridge,
+   and the two HTTP APIs. Never import across subsystem boundaries.
+2. **Additive first.** Prefer, in order: new standalone files → verification
+   scripts/samples → adapter/facade files → edits to shared originals (only
+   with per-target approval, kept small and reversible). SQLite migrations
+   are add-only.
+3. **Measure before tuning.** Physics changes are gated by
+   `full-physics/run-benchmarks.mjs` (thresholds in
+   `CONSERVATION-LEDGER.md`); retrieval/LLM changes are gated by the wiki-kb
+   golden-set eval and its committed `eval/baseline.json`. Never tune a knob
+   that has no falsifiable metric — grow the eval set first.
+4. **Zero-dependency bias.** Root demo stays bundler-free (UMD React +
+   Babel-in-browser); wiki-kb and scientists-backend use Node built-ins
+   (`node:sqlite`, Node >= 22.5) plus local Ollama only. No new npm or
+   cloud dependencies without explicit approval.
+5. **ASCII code, zh-TW copy.** Identifiers, object IDs, API field names,
+   file paths: ASCII only. User-visible text is Traditional Chinese first
+   with i18n support; corrupt glyphs are localization debt, not physics
+   intent.
+6. **Muted visuals.** Effects clearly visible but gentle — never neon glare
+   (user preference).
+7. **Preserve public globals** unless intentionally migrating:
+   `window.KNphysics`, `KNSim`, `KNDisc`, `KNRender3D`, `KNFull`, `App`,
+   `MobileApp`.
+8. **Match surrounding style.** Comment density mirrors neighboring code; no
+   lint config beyond `node --check`, tests, and the benchmark suite.
+
+## Gotchas learned the hard way
+
+- All `text/babel` root scripts share **one global lexical scope** (and
+  `build.mjs` deliberately preserves this in `dist/`): a top-level `const`
+  in `app.jsx` is referenced by `mobile-app.jsx`, and a top-level
+  `const`/`let` duplicated across two files is a SyntaxError in both dev
+  and build. Duplicate `function` declarations are last-wins.
+- Live N-body motion is **deliberately pseudo-Newtonian**. Phase 6 wrapped
+  only displayed geometry (ISCO/photon radii, GR preview line, object
+  catalog, jet readouts, worker-offloaded orbit diagnostics) via
+  `window.KNFull`. Porting the live motion RHS to the exact integrator is a
+  separate pass that needs explicit approval.
+- While `sim.view.mode3d` is set, `KNSim.worldToScreen/screenToWorld`
+  delegate to the 3D camera, so pointer interaction is renderer-agnostic.
+- Bridge consumers use the `knfull-ready` / `knfull-update` event pattern
+  and must keep an inline fallback for when the bridge has not loaded.
+
+## Run
+
+```bash
+npm run dev        # static demo -> http://127.0.0.1:5184/
+npm run dev:all    # demo (5184) + scientists-backend / merged KB API (5188)
+npm run kb:serve   # wiki-kb standalone admin server (5189, no chat model)
+npm run build      # precompile to dist/ (dev flow stays zero-build)
 ```
 
-`serve.mjs` is a static server bound to `127.0.0.1`; HTTPS is terminated by
-`tailscale serve` (see `serve.mjs` header). Prefer the `run` skill to launch
-and confirm a change in the real app.
+HTTPS is terminated by `tailscale serve` (see `serve.mjs` header). Prefer the
+`run` skill to launch and confirm a change in the real app.
 
 ## Verify Before Finishing
 
-- Syntax: `node --check physics.js`, `node --check sim.js`,
-  `node --check disc.js`, `node --check serve.mjs`.
-- Physics regression (run after any physics/catalog/facade/unit/integration
-  change): `node .\full-physics\run-benchmarks.mjs`.
-- Smoke samples: `node .\full-physics\run-sample.mjs`,
-  `node .\full-physics\run-object-mhd-sample.mjs`,
-  `node .\full-physics\run-units-sample.mjs`.
-
-## Guardrails (do not break)
-
-- **ASCII only** for identifiers, object IDs, API field names, file paths.
-  Corrupt UI glyphs are localization debt, not physics intent — treat as l10n.
-- **Preserve browser globals** unless intentionally migrating:
-  `window.KNphysics`, `window.KNSim`, `window.KNDisc`, `window.App`,
-  `window.MobileApp`.
-- **`full-physics/` is add-only.** Do not modify the original browser demo
-  files to wire it in. Editing root demo files for integration is **Phase 6**
-  and is *blocked until explicitly approved* — read
-  `full-physics/PROGRESS-PLAN.md` first.
-- Visual effects should be clearly visible but **muted/gentle, never neon
-  glare** (user preference).
+- Full gate: `npm test` (physics/interaction/pace-fit/render tests + the
+  physics regression benchmarks).
+- Targeted: `node --check <file>.js` for edited root scripts;
+  `node full-physics/run-benchmarks.mjs` after any physics / catalog /
+  facade / unit / integration change; `full-physics/run-*-sample.mjs` for
+  smoke checks.
+- Retrieval or persona changes: run the wiki-kb eval and compare against the
+  committed baseline (see `OPTIMIZATION-PLAN.md`).
 
 ## Skills And Subagents
 
-Claude project skills live in `.claude/skills/`, with matching subagents in
-`.claude/agents/`. Five role families mirror the Codex roles in `AGENTS.md`.
-Invoke a skill with the Skill tool; delegate to a subagent with the Agent tool
-when the work is self-contained and benefits from an isolated context.
+Project skills live in `.claude/skills/`, matching subagents in
+`.claude/agents/` (mirrored for Codex in `.codex/`). Default to handling
+work inline with the matching skill; spawn a subagent only when asked, or
+when a task is large and isolatable.
 
 | Task domain | Skill (`/`) | Subagent |
 |---|---|---|
@@ -79,21 +109,17 @@ when the work is self-contained and benefits from an isolated context.
 | Geometry, geodesics, integrators, tidal, MHD, ray tracing, benchmarks | `kn-spatial-numerics` | `kn-spatial-numerics-analyst` |
 | Product/education/market analysis | `kn-market-science` | `kn-market-science-analyst` |
 
-Routing notes:
-- Editing `app.jsx` / `mobile-app.jsx` / `panel-*.jsx` / Canvas rendering →
-  `kn-ui-events`.
-- Touching `physics.js` / `sim.js` / `full-physics/*.mjs` numerics →
-  `kn-spatial-numerics`; always re-run `run-benchmarks.mjs` after.
-- Object library / presets / parameter ranges / `engine-contract.md` →
-  `kn-parameter-db`.
-- Any user-visible string → `kn-l10n-translation` (keep code/IDs ASCII).
-- Only spawn a subagent when the user asks, or when a task is large and
-  isolatable. Default to handling work inline with the matching skill.
+Wiki-KB / scientists-backend work (retrieval, knowledge graph, eval,
+personas, feedback) has no dedicated skill: follow `OPTIMIZATION-PLAN.md`
+and the subsystem READMEs directly.
 
-## Conventions
+## Deeper Docs (read before touching that area)
 
-- Match surrounding style; comment density mirrors neighboring code.
-- No build/lint config beyond `node --check` and the benchmark suite — use
-  them as the gate.
-- Keep root demo files framework-light (UMD React + Babel-in-browser); do not
-  introduce a bundler or npm UI dependencies without explicit approval.
+- `full-physics/engine-contract.md` — stable facade contract.
+- `full-physics/PROGRESS-PLAN.md` — add-only history and the Phase 6
+  integration record (complete, per-target approved).
+- `OPTIMIZATION-PLAN.md` — knowledge-graph + scientist-LLM roadmap, eval
+  baselines, known read-path bugs.
+- `wiki-kb/README.md`, `scientists-backend/README.md` — subsystem
+  operations (crawl pipeline, models, ports, env vars).
+- `README.md` — user-facing overview and quick start.
