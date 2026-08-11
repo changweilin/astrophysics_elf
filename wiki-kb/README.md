@@ -1,205 +1,222 @@
-# Wiki Knowledge Base(wiki-kb)
+# Wiki Knowledge Base (`wiki-kb`)
 
-爬取維基百科「太空 / 天文物理 / 宇宙學 / 相關學科 + 這些領域的科學家與科學史」
-條目,建立**知識圖譜 + RAG 檢索庫**,並附**定期更新檢查**。與瀏覽器 demo、
-`scientists-backend/` 一樣乾淨隔離:唯一的對外契約是一個小型 HTTP API。
+Crawls Wikipedia (space / astrophysics / cosmology / adjacent fields + the
+scientists and history behind them) into a **knowledge graph + hybrid RAG
+corpus**, with scheduled update checks. Cleanly isolated like the rest of the
+repo: the only outward contract is a small HTTP API.
 
-- **零 npm 相依**:儲存用 Node 內建 `node:sqlite`(需 Node >= 22.5;本機為 v24),
-  向量嵌入用本機 Ollama(與 scientists-backend 同一台 3060)。
-- **語言**:繁中(zh,一律以 `zh-tw` 變體抓取)、英、日、韓、德、法、義、西。
-  zh/en 為優先語言 → 走完整分類樹爬取並存**全文**;其餘六語靠 langlink 投影
-  繼承同一範圍,預設只存**導言**(可用 `WKB_FULLTEXT_LANGS` 擴大)。
-- **禮貌爬取**:序列請求 + 250ms 間隔、描述性 User-Agent、`maxlag=5`、退避重試。
+- **Zero npm dependencies.** Storage is Node's built-in `node:sqlite`
+  (Node >= 22.5; this box runs v24); embeddings come from local Ollama
+  (`bge-m3`, same 3060 as scientists-backend).
+- **Languages.** zh (always fetched in the `zh-tw` variant) and en are priority
+  languages: full category-tree crawl, **full text** stored. The other six
+  (ja/ko/de/fr/es/it) inherit scope via langlinks and store **intros only**
+  (widen with `WKB_FULLTEXT_LANGS`).
+- **Polite crawling.** Serial requests at 250 ms, descriptive User-Agent,
+  `maxlag=5`, backoff retries (~4 req/s, so a full crawl takes hours). Every
+  stage is idempotent and resumable — queue and content hashes live in SQLite.
+
+Corpus state (last full sweep, 2026-07-23): **126,090 pages** (en 34.6k, zh
+26.3k), **453,434 chunks all embedded**, 43.5k entities, 219k edges.
+Deliberately left queued: ~24.5k langlink projections for the six secondary
+languages and ~11.7k of the en astronomy backlog (mostly named minor planets).
+`data/kb.sqlite` is gitignored.
 
 ```
 crawl.mjs / check-updates.mjs ──> data/kb.sqlite <── server.mjs (:5189, standalone/admin)
       │  MediaWiki + Wikidata API                        ↑
-      └─ Ollama /api/embed (bge-m3)                       │ lib/routes.mjs (shared dispatch)
-                                                           │
-                                    scientists-backend/server.mjs (:5188, merged -- the live app)
+      └─ Ollama /api/embed (bge-m3)                      │ lib/routes.mjs (shared dispatch)
+                                                         │
+                            scientists-backend/server.mjs (:5188, merged — the live app)
 ```
 
-`lib/routes.mjs` holds the actual route dispatch; `server.mjs` here just wraps
-it for standalone use (crawl/admin work via `kb-admin.html`, no Ollama chat
-model needed). The live app talks to the merged copy in
-`scientists-backend/server.mjs` instead -- see below.
+`lib/routes.mjs` owns the route dispatch. The local `server.mjs` wraps it for
+standalone crawl/admin use (`kb-admin.html`, no chat model needed); the live app
+uses the copy merged into `scientists-backend/server.mjs` — same process, same
+`data/kb.sqlite` (WAL, two connections are fine). Enabling RAG is just
+`SCI_WIKI_RAG=1` + `npm run dev:all`; no `SCI_WIKI_KB_URL`, no second terminal.
+`knowledge/wiki.mjs` calls `lib/retrieve.mjs` directly and falls back to live
+Wikipedia on any error or empty result — fail-open, chat never breaks on KB.
 
-## 快速開始
+## Data model (`data/kb.sqlite`)
 
-```powershell
-ollama pull bge-m3                # 多語嵌入模型(缺了也能跑,退化為 BM25-only)
-
-cd wiki-kb
-node crawl.mjs all --limit 300    # 先小批量試跑(可重複執行、可續傳)
-node crawl.mjs all                # 完整管線:discover -> fetch -> langlinks -> graph -> embed
-node crawl.mjs status             # 語料統計
-
-node kb-admin.mjs search --q "黑洞的事件視界" --langs zh,en
-node server.mjs                   # http://127.0.0.1:5189
-```
-
-首次完整爬取請估計數小時(受禮貌速率限制;約 4 req/s)。所有階段都冪等且
-可中斷續跑:佇列與內容雜湊都在 SQLite 裡,`--limit` 分批跑到完為止。
-
-## 資料模型(data/kb.sqlite)
-
-| 表 | 內容 | 更新機制 |
+| Table | Contents | Update mechanism |
 |---|---|---|
-| `pages` | 條目全文/導言 + **metadata**:語言、QID、kind(topic/scientist/history)、URL、**來源與授權**(wikipedia, CC BY-SA 4.0)、**修訂版本 rev_id / rev_time、crawled_at / updated_at 時間戳** | rev_id 比對,變更才重抓 |
-| `page_categories` | 條目的可見分類 | 隨頁面重抓 |
-| `chunks` | 依章節切塊的文字 + `text_hash` + 嵌入向量 BLOB | 雜湊比對:內容沒變的段落**保留舊向量**,只重嵌入真正改過的段落 |
-| `chunks_fts` | FTS5 全文索引(CJK 以字元 bigram 斷詞,中日韓可搜) | 隨 chunks 重建 |
-| `entities` / `edges` | **知識圖譜**:Wikidata 實體(標籤/描述/生卒年)+ 型別化關係邊(師承 P184/P185、影響 P737、發現者 P61、instance-of P31、母天體 P397 ...) | `crawl.mjs graph` / 更新檢查時增量同步 |
-| `crawl_queue` | 待抓佇列(含來源 reason:category:… / langlink:…) | 冪等 enqueue |
-| `sync_log` | **營運稽核日誌**:added/updated/deleted/discover/update-check | 只增不改 |
+| `pages` | Full text / intro + metadata: lang, QID, kind (topic/scientist/history), URL, source + licence (Wikipedia, CC BY-SA 4.0), `rev_id`/`rev_time`, `crawled_at`/`updated_at` | Re-fetch only when `rev_id` differs |
+| `page_categories` | Visible categories | Rebuilt with the page |
+| `chunks` | Section-sliced text + `text_hash` + embedding BLOB | Hash compare: unchanged sections **keep their vectors**, only changed ones re-embed |
+| `chunks_fts` | FTS5 index (CJK tokenized as character bigrams, so zh/ja/ko are searchable) | Rebuilt with chunks |
+| `entities` / `edges` | Knowledge graph: Wikidata entities (label/description/dates) + typed relations (advisor P184/P185, influence P737, discoverer P61, instance-of P31, parent body P397, …) | Incremental sync on `crawl.mjs graph` / update check |
+| `crawl_queue` | Pending fetches with a `reason` (`category:…` / `langlink:…`) | Idempotent enqueue |
+| `sync_log` | Operational audit: added/updated/deleted/discover/update-check | Append-only |
+| `eval_runs` / `eval_cases` | Eval history, browsable in kb-admin | Append-only |
+| `feedback` | Chat up/down votes, reasons, corrections, `ned`, `sources`, `status`/`auto_label` | Upsert by `cid`; triaged by `scientists-backend/knowledge/triage-feedback.mjs` |
 
-## 混合檢索與時間衰減
+## Hybrid retrieval
 
-`lib/retrieve.mjs`:BM25(FTS5)取前 400 候選 + 向量餘弦(語料小時全掃描、
-大於 `WKB_SCAN_MAX_CHUNKS` 時只重排 BM25 候選),兩通道以**加權 RRF**
-(Reciprocal Rank Fusion)融合:對通過 lang/kind 過濾的候選分別按通道排名
-(同分共享名次),`score = Σ w_c / (rrfK + rank_c)` 再除以觀測最大值歸一到
-[0,1](通道權重預設 0.45 / 0.55、`WKB_RRF_K=10`;`WKB_FUSION=weighted` 可
-切回舊的 min-max 加權融合),再乘上**時間衰減因子**:
+`lib/retrieve.mjs`: BM25 (FTS5) takes the top 400 candidates; vector cosine
+full-scans when the corpus is small, otherwise **re-ranks the BM25 candidates
+only** (above `WKB_SCAN_MAX_CHUNKS`). The two channels fuse with **weighted
+RRF** — rank each lang/kind-filtered candidate per channel (ties share a rank),
+`score = Σ w_c / (rrfK + rank_c)`, normalized to [0,1] by the observed max
+(defaults 0.45 / 0.55, `WKB_RRF_K=10`; `WKB_FUSION=weighted` reverts to the old
+min-max blend). Then a recency factor:
 
 ```
-decay = floor + (1 - floor) * exp(-ln2 * 條目最後修訂年齡 / 半衰期)
+decay = floor + (1 - floor) * exp(-ln2 * page_revision_age / half_life)
 ```
 
-預設半衰期 3 年(`WKB_DECAY_HALFLIFE_DAYS=1095`)、下限 0.6(`WKB_DECAY_FLOOR`)
-—— 久未更新的條目往後排,但經典物理不會被埋掉。Ollama 不在線時自動退化為
-BM25-only,檢索永不失敗。
+Defaults: 3-year half-life (`WKB_DECAY_HALFLIFE_DAYS=1095`), floor 0.6
+(`WKB_DECAY_FLOOR`) — stale pages sink, classic physics is never buried. With
+Ollama down retrieval degrades to BM25-only rather than failing.
 
-### 查詢路由(QROUTE,`lib/query-route.mjs`)
+> **Known gap:** because the corpus has ~453k embedded chunks, the vector
+> channel is *permanently* in re-rank mode and contributes **zero independent
+> recall** — a query that does not FTS-match returns nothing. This is the
+> paraphrase-slice deficit tracked as RET3 in `../OPTIMIZATION-PLAN.md`.
 
-每一次查詢先做一次純字串分類(不碰 DB、不呼叫 LLM、不做嵌入),分成
-`graph-heavy`(問關係:指導教授、以誰命名、獎項、發現者、對人名的所有格)、
-`lookup`(短的定義式問句)、`paraphrase`(刻意避開目標條目用字的長描述)、
-`balanced`。三種模式(`WKB_QROUTE`):
+### Graph channel (HippoRAG-style)
 
-| 模式 | 行為 |
+Design record: `docs/rag-architecture-decision.md`. Query n-grams and the top
+hybrid hits seed Wikidata QIDs, then bounded **Personalized PageRank**
+(damping ~0.5) over an in-memory adjacency list lifts pages 1-2 hops from the
+seeds. Fusion is **multiplicative**: `score *= 1 + wGraph × g` — notes without a
+QID are unaffected, `WKB_W_GRAPH=0` disables the channel, and any error falls
+back to plain hybrid search. A multi-hop **expansion** probe can additionally
+pull in up to `graphExpandPages` representative chunks that the lexical/vector
+channels cannot see (anchored to the k-th organic score); it fires on 0/69
+golden queries today, so treat it as unproven rather than load-bearing.
+
+Knobs (`config.mjs → retrieve`, all `WKB_*`-overridable): `wGraph`,
+`graphSeedPages`, `graphExpandPages`, `graphExpandScore`, `pprAlpha`,
+`pprIters`.
+
+### Query routing (QROUTE, `lib/query-route.mjs`)
+
+Every query is classified by pure string work (no DB, no LLM, no embedding)
+into `graph-heavy` (relations: advisor, named-after, awards, discoverer,
+possessives on person names), `lookup` (short definitional), `paraphrase` (long
+descriptions that deliberately avoid the target page's wording), or `balanced`.
+Modes via `WKB_QROUTE`:
+
+| Mode | Behaviour |
 |---|---|
-| `off` | 不分類,與導入 QROUTE 前逐位元相同 |
-| `observe`(**預設**) | 分類並把 `route` 寫進 eval slices 與 `search`/`context` trace,但**不改變任何檢索行為** |
-| `on` | 套用路由政策 |
+| `off` | No classification; bit-for-bit identical to pre-QROUTE |
+| `observe` (**default**) | Classify, write `route` into eval slices and `search`/`context` traces, change **nothing** |
+| `on` | Apply the policy |
 
-`on` 的預設政策只做一件事:對 `lookup`/`paraphrase` 跳過多跳**擴展**探測
-(它在 69 筆黃金案例上觸發 0 次,純粹是省成本)。**PPR 一律保留**、每個
-route 的 `wGraph` 倍率一律 1 —— 圖譜的 boost 在 69/69 都會觸發,關掉它是
-排名變更,要有 `npm run eval:ab -- qroute` 的配對證據才動。
+The `on` policy currently does exactly one thing: skip the multi-hop expansion
+probe for `lookup`/`paraphrase` (pure cost saving — it fires 0 times on the
+golden set). **PPR always stays on** and every per-route `wGraph` scale is 1;
+the boost fires 69/69, so disabling it is a ranking change that needs paired
+`npm run eval:ab -- qroute` evidence first.
 
-## 定期更新檢查
+## Commands
 
 ```powershell
-node check-updates.mjs --dry-run              # 只報告,不改資料
-node check-updates.mjs --discover             # 修訂比對 + 掃新條目 + 重嵌入
-.\schedule-task.ps1                           # 註冊 Windows 工作排程器,每天 03:30
-.\schedule-task.ps1 -Weekly -Time "04:00"     # 或每週日
-.\schedule-task.ps1 -Unregister               # 移除
+ollama pull bge-m3                       # embeddings (optional -> BM25-only)
+
+node crawl.mjs all --limit 300           # small trial run (resumable, repeatable)
+node crawl.mjs all                       # discover -> fetch -> langlinks -> graph -> embed
+node crawl.mjs status                    # corpus stats
+node server.mjs                          # http://127.0.0.1:5189
+
+node check-updates.mjs --dry-run         # report only
+node check-updates.mjs --discover        # rev compare + scan for new pages + re-embed
+.\schedule-task.ps1                      # Windows Task Scheduler, daily 03:30
+.\schedule-task.ps1 -Weekly -Time "04:00"
+.\schedule-task.ps1 -Unregister
 ```
 
-流程:(1) 每 50 頁一批比對 `rev_id`,變更 → 重抓重切塊(未變段落保留向量),
-維基上已刪除 → 軟刪除;(2) `--discover` 淺層重掃種子分類撿新條目,新頁面再做
-langlink 投影;(3) 同步新 QID 的圖譜、嵌入新段落;(4) 全部寫入 `sync_log`。
-日誌檔:`data\update-check.log`。
+Update check: (1) compare `rev_id` in batches of 50 — changed pages are
+re-fetched and re-chunked (unchanged sections keep vectors), pages deleted
+upstream are soft-deleted; (2) `--discover` re-scans seed categories shallowly
+and langlink-projects new pages; (3) sync new QIDs into the graph and embed new
+chunks; (4) everything lands in `sync_log`. Log file: `data\update-check.log`.
 
-## CRUD 營運(kb-admin.mjs)
+CRUD / operations (`kb-admin.mjs`):
 
 ```powershell
-node kb-admin.mjs stats                                   # 總覽
-node kb-admin.mjs list --lang zh --kind scientist         # 查詢(C/R)
+node kb-admin.mjs stats
+node kb-admin.mjs list --lang zh --kind scientist
 node kb-admin.mjs get --lang zh --title "史蒂芬·霍金" --chunks
-node kb-admin.mjs add --lang en --title "Kerr metric"     # 手動收錄(C)
-node kb-admin.mjs refresh --id 12                         # 強制重抓(U)
-node kb-admin.mjs delete --id 12          # 軟刪除(D;--hard 徹底清除)
-node kb-admin.mjs reembed                 # 補嵌入(--all 全部重嵌)
-node kb-admin.mjs entity --qid Q937       # 愛因斯坦的實體 + 關係邊
+node kb-admin.mjs add --lang en --title "Kerr metric"       # manual ingest
+node kb-admin.mjs refresh --id 12                           # force re-fetch
+node kb-admin.mjs delete --id 12                            # soft delete (--hard purges)
+node kb-admin.mjs reembed                                   # backfill (--all re-embeds)
+node kb-admin.mjs entity --qid Q937
 node kb-admin.mjs graph --qid Q937 --depth 2
-node kb-admin.mjs export --out corpus.jsonl --lang zh     # 匯出(可餵微調)
-node kb-admin.mjs log --limit 50          # 同步稽核日誌
+node kb-admin.mjs export --out corpus.jsonl --lang zh       # finetune-ready dump
+node kb-admin.mjs log --limit 50
 node kb-admin.mjs vacuum
+node kb-admin.mjs search --q "黑洞的事件視界" --langs zh,en
 ```
 
-## HTTP API(server.mjs,:5189)
+## HTTP API (`server.mjs`, :5189)
 
-| Method | Path | 說明 |
+| Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/health` | 存活 + 語料計數 + 嵌入模型狀態 |
-| GET | `/api/stats` | 完整統計 |
-| GET | `/api/search?q=&langs=zh,en&k=8&kind=` | 混合檢索結果(含分數/衰減/來源) |
-| GET | `/api/context?q=&lang=zh&maxChars=1500` | 可直接注入 prompt 的引用區塊(含標題/語言/修訂日期) |
-| GET/POST/DELETE | `/api/page` | 條目 CRUD(POST `{lang,title,force}` 收錄;DELETE `?id=&hard=1`) |
-| GET | `/api/entity?qid=` | 知識圖譜實體(出邊/入邊/對應條目) |
-| GET | `/api/graph?qid=&depth=` | 子圖(給視覺化用) |
+| GET | `/api/health` | Liveness + corpus counts + embedding-model status |
+| GET | `/api/stats` | Full statistics |
+| GET | `/api/search?q=&langs=zh,en&k=8&kind=` | Hybrid results (scores, decay, sources) |
+| GET | `/api/context?q=&lang=zh&maxChars=1500` | Prompt-ready citation block (title, lang, revision date) |
+| GET/POST/DELETE | `/api/page` | Page CRUD (POST `{lang,title,force}`; DELETE `?id=&hard=1`) |
+| GET | `/api/entity?qid=` | Graph entity (out/in edges, linked pages) |
+| GET | `/api/graph?qid=&depth=` | Subgraph for visualization |
 
-### 接上 Scientists 聊天後端
+## Scope and extension
 
-KB 已經**合併進 `scientists-backend/server.mjs`**(:5188)同一個行程 ——
-`lib/routes.mjs` 的路由分派同時被這裡的 `server.mjs`(獨立執行,給
-`kb-admin.html` 與爬蟲/管理用)與 `scientists-backend/server.mjs`(合併執行,
-給正式站用)引用。開啟 RAG 只需要:
-
-```powershell
-$env:SCI_WIKI_RAG = "1"
-npm run dev:all
-```
-
-不用再另開終端跑 `wiki-kb/server.mjs`,也不用設定 `SCI_WIKI_KB_URL` —— 兩邊
-現在共用同一個行程與同一顆 `data/kb.sqlite`(WAL 模式,兩個連線並存沒問題)。
-`scientists-backend/knowledge/wiki.mjs` 會**先問本地 KB**(直接呼叫
-`lib/retrieve.mjs`,不再走 HTTP),任何錯誤或空結果都退回原本的線上維基路徑
-—— fail-open,聊天永不因 KB 掛掉而中斷。
-
-若只是要做爬蟲/管理工作(`kb-admin.html`、`npm run kb:crawl` 等),不需要
-Ollama 聊天模型跑起來,仍然可以獨立執行 `npm run kb:serve`(:5189)。
-
-## 範圍與擴充
-
-種子分類與排除規則在 `lib/seeds.mjs`(排除科幻/影視/遊戲/音樂/占星/列表/
-消歧義等)。不改程式碼即可擴充:
+Seed categories and exclusion rules live in `lib/seeds.mjs` (sci-fi, film, TV,
+games, music, astrology, list and disambiguation pages are excluded). Extend
+without touching code:
 
 ```powershell
-$env:WKB_EXTRA_SEEDS  = "en|Category:Radio astronomy|2;zh|Category:射电天文学|2"
+$env:WKB_EXTRA_SEEDS   = "en|Category:Radio astronomy|2;zh|Category:射电天文学|2"
 $env:WKB_EXCLUDE_EXTRA = "(pattern|to|exclude)"
 ```
 
-範圍除了天文/天體物理/宇宙學本科與科學家、科學史之外,另含:
+Beyond core astronomy/astrophysics/cosmology, scientists, and history of
+science, the corpus also covers philosophy/history/sociology of science, space
+policy and law, science ethics/communication, archaeoastronomy
+(`humanities/*`, `people/{philosophers,historians,sociologists}-of-science`),
+and space life science: space medicine, astrobiology, SETI, Fermi paradox,
+panspermia, extremophiles, habitability (`space-life/*`,
+`people/{astronauts,astrobiologists}`).
 
-- **跨領域人文與社會科學**:科學哲學(含物理哲學、時間哲學、人擇原理)、科學
-  史學與科學革命、科學社會學/STS、太空政策與太空法、科學倫理、科學傳播與天文
-  教育、科學與宗教、考古天文學 → `humanities/*`、
-  `people/{philosophers,historians,sociologists}-of-science`。
-- **太空生命科學**:太空醫學/載人航天生理、地外生命與 SETI(含費米悖論、
-  泛種論、嗜極生物、行星適居性) → `space-life/*`、
-  `people/{astronauts,astrobiologists}`。
+Three traps worth remembering:
 
-三個要注意的地方:
+- zh Wikipedia stores **one script variant per category** and the API does not
+  convert category titles, so a seed written in the wrong variant silently
+  matches zero pages (five were fixed in 2026-07: 廣義相對論, 太陽系外行星,
+  天體生物學, 天體物理學家, 物理學史). Test both spellings with
+  `categoryMembers` before adding a zh seed.
+- `WKB_MAX_PAGES_PER_LANG` is a cap **including existing corpus**, not a
+  per-run increment. Once a language exceeds it, every later discover silently
+  enqueues nothing.
+- `openDb` sets `busy_timeout` to 15 s for a reason: without it any second
+  writer (the merged server storing feedback while a crawl runs) dies with
+  `SQLITE_BUSY`. Long embed runs also need the retry/backoff — Windows
+  ephemeral-port exhaustion killed a 100k-chunk run mid-way once.
+- When the queue mixes subtrees, `crawl.mjs fetch --reasons <file>` (one
+  `crawl_queue.reason` per line, e.g. `category:Category:Philosophy of science`)
+  drains just that subtree and leaves the rest queued.
 
-- zh 維基**一個分類只存一種字體變體**,API 也不會轉換分類標題,所以種子拼錯
-  變體會安靜地抓到零筆(2026-07 修掉五個:廣義相對論、太陽系外行星、
-  天體生物學、天體物理學家、物理學史)。加 zh 種子前先用
-  `categoryMembers` 兩種寫法各試一次。
-- `WKB_MAX_PAGES_PER_LANG` 是**含既有語料**的上限,不是本次新增量。一旦某語言
-  的既有頁數超過它,之後每次 discover 都會安靜地一筆都不排隊。
-- 佇列混雜多個子樹時,`crawl.mjs fetch --reasons <file>`(每行一個
-  `crawl_queue.reason`,例如 `category:Category:Philosophy of science`)可以只抓
-  其中一個子樹,先把要的部分補完,其餘留在佇列裡慢慢跑。
+Main env vars (full list in `config.mjs`): `WKB_DB`, `WKB_LANGS`,
+`WKB_PRIORITY_LANGS`, `WKB_FULLTEXT_LANGS`, `WKB_MAX_PAGES_PER_LANG`,
+`WKB_EMBED_MODEL`, `WKB_OLLAMA_URL`, `WKB_TOP_K`, `WKB_W_BM25`/`WKB_W_VEC`,
+`WKB_DECAY_HALFLIFE_DAYS`, `WKB_DECAY_FLOOR`, `WKB_QROUTE`, `WKB_PORT`.
 
-主要環境變數(完整見 `config.mjs`):`WKB_DB`、`WKB_LANGS`、`WKB_PRIORITY_LANGS`、
-`WKB_FULLTEXT_LANGS`、`WKB_MAX_PAGES_PER_LANG`、`WKB_EMBED_MODEL`、`WKB_OLLAMA_URL`、
-`WKB_TOP_K`、`WKB_W_BM25`/`WKB_W_VEC`、`WKB_DECAY_HALFLIFE_DAYS`、`WKB_DECAY_FLOOR`、
-`WKB_QROUTE`、`WKB_PORT`。
-
-## 驗證
+## Verify
 
 ```powershell
-npm run check        # node --check 所有模組 + 單元測試(免 DB、免 Ollama)
-npm test             # 只跑單元測試(eval/stats、lib/query-route)
-npm run eval:gate    # 檢索回歸閘門:需要 kb.sqlite 與可連線的 bge-m3
+npm run check        # node --check every module + unit tests (no DB, no Ollama)
+npm test             # unit tests only (eval/stats, lib/query-route)
+npm run eval:gate    # retrieval regression gate — needs kb.sqlite AND live bge-m3
 ```
 
-`check` 刻意保持不依賴語料與 Ollama,所以可以隨時跑;`eval:gate`(EVAL1b)
-兩者都需要,詳見 `eval/README.md`。
+`check` is deliberately corpus- and Ollama-free so it can run anywhere (this is
+what CI runs). `eval:gate` needs both; see `eval/README.md`.
 
-內容授權:維基百科文字為 **CC BY-SA 4.0**,每筆 `pages` 都記錄來源與授權欄位;
-對外展示時請保留出處(`/api/context` 的引用頭已含標題與修訂日期)。
+Content licence: Wikipedia text is **CC BY-SA 4.0** and every `pages` row
+records source + licence. Preserve attribution when displaying it — the
+`/api/context` citation header already carries title and revision date.

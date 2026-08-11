@@ -1,202 +1,154 @@
 # Scientists Backend
 
-Local LLM backend for the Black Hole Lab **Scientists** page. It roleplays famous
-physicists and astronomers (Einstein, Feynman, Newton, Galileo, Kepler, Hubble,
-Hawking, Chandrasekhar, Sagan, Vera Rubin, Noether, Copernicus) and answers
-math / physics / astronomy / cosmology questions.
+Local LLM backend for the lab's **Scientists** page (`/scientists.html`). It
+roleplays famous physicists and astronomers (Einstein, Feynman, Newton,
+Galileo, Kepler, Hubble, Hawking, Chandrasekhar, Sagan, Vera Rubin, Noether,
+Copernicus) and answers math / physics / astronomy / cosmology questions
+against a local [Ollama](https://ollama.com) server (RTX 3060 is the design
+target), reachable from a phone over Tailscale.
 
-It runs on your local machine against an [Ollama](https://ollama.com) server (an
-RTX 3060 is the design target) and is reachable from your phone over Tailscale.
-
-## Clean isolation
-
-This backend shares **no code** with the static browser demo. The only contract
-is the small REST/SSE API below. The demo's `serve.mjs` and root files are
-untouched; the frontend (`/scientists.html`) talks to this process over HTTP.
+**Clean isolation.** Shares no code with the browser demo; the only contract is
+the REST/SSE API below. It also hosts the merged wiki-kb routes in-process
+(`../wiki-kb/lib/routes.mjs`), so the live app talks to one port.
 
 ```
-Browser (scientists.html / .jsx)  --HTTP/SSE-->  scientists-backend  --HTTP-->  Ollama (3060)
-        served by serve.mjs :5184                       :5188                     :11434
+Browser (scientists.html)  --HTTP/SSE-->  scientists-backend  --HTTP-->  Ollama
+     served by serve.mjs :5184                 :5188  (+ merged KB)        :11434
 ```
 
-## Per-language model switching
+## Run
 
-Switching the UI language switches the model. Each request carries `lang`, and
-the backend serves it with that language's strongest 3060-sized model:
+```powershell
+npm run dev:all     # from the repo root: page :5184 + this backend :5188
+npm run dev:api     # this backend only (= node scientists-backend/server.mjs)
+```
 
-| Language | Default model | Why |
+Both processes must be up — Ollama alone is not enough (the page shows
+"無法連到後端 / Cannot reach the backend"). Config is environment-driven;
+`.env.example` is reference only, the backend does not auto-load `.env`.
+
+Mobile: expose **both** ports on the tailnet, then set the backend URL in the
+page's Settings (stored in `localStorage`, or append
+`?api=https://<host>:5188` once).
+
+```powershell
+tailscale serve --bg --https=5184 http://127.0.0.1:5184
+tailscale serve --bg --https=5188 http://127.0.0.1:5188
+```
+
+## Models
+
+Each request carries `lang`; switching UI language switches the model.
+
+| Language | Default | Why |
 |---|---|---|
-| Traditional Chinese (`zh`) | `jcai/llama-3-taiwan-8b-instruct` | Tops the Open TW LLM Leaderboard among Taiwan-localized 8B models; authentic zh-TW terminology. ~6 GB at Q4. |
-| English (`en`) | `phi4` (14B) | Leads STEM/math reasoning at this tier (MATH ~80%). ~10 GB at Q4 -- tight on 12 GB; see fallbacks. |
+| Traditional Chinese (`zh`) | `jcai/llama-3-taiwan-8b-instruct` | Best Taiwan-localized 8B; authentic zh-TW terminology. ~6 GB at Q4 |
+| English (`en`) | `phi4` (14B) | Leads STEM/math reasoning at this tier. ~10 GB at Q4 — tight on 12 GB |
 
-Alternatives: `breeze-2` / MediaTek Breeze for zh, `qwen3:8b` (safe, strong
-bilingual) or `qwen3:14b` (quality) for either. Override with `SCI_MODEL_ZH` /
-`SCI_MODEL_EN`.
+Alternatives: `breeze-2` for zh, `qwen3:8b` (safe bilingual) or `qwen3:14b` for
+either. Override with `SCI_MODEL_ZH` / `SCI_MODEL_EN`.
 
-**Runs immediately (auto-fallback).** If a preferred model isn't pulled yet, the
-backend automatically falls back to the strongest model you *do* have installed
-(see `SCI_FALLBACKS_ZH` / `SCI_FALLBACKS_EN`) so the page works right away. The
-startup log and `/api/health` (`modelStatus`) show whether each language is
-running the preferred model or a fallback. Once you `ollama pull` the preferred
-model it is used automatically -- no config change needed.
-
-**Shared model pin (multi-device).** The model-picker dropdown in the UI sets a
-pin that is shared by *every* device talking to this backend, not just the one
-that changed it (`/api/health` reports it as `modelOverride`). Ollama can only
-keep one model loaded at a time, so a per-browser pin would otherwise make two
-devices (e.g. phone + desktop over Tailscale) fight over which model is loaded,
-forcing a slow reload on nearly every turn. The client checks `/api/health`
-before assuming a model so it converges on whatever the backend already has
-pinned. `/api/health` also reports `busy: true` while a generation (from any
-device) is already in flight, since Ollama serializes requests and a new one
-will simply queue behind it rather than answer immediately.
-
-## Setup
-
-### 1. Install Ollama and pull the models
-
-```powershell
-# Install from https://ollama.com, then:
-ollama pull jcai/llama-3-taiwan-8b-instruct:q4_k_m   # Traditional Chinese (no :latest tag is published)
-ollama pull phi4                                     # English (or: ollama pull qwen3:8b)
-```
-
-If VRAM is tight on the 3060, prefer `qwen3:8b` for both and/or lower
-`SCI_CONTEXT_TOKENS_EN`.
-
-### 2. Start everything (one command)
-
-From the repo root, run both the static page server and this backend together:
-
-```powershell
-npm run dev:all
-#   [web] static page  http://127.0.0.1:5184
-#   [api] LLM backend  http://127.0.0.1:5188
-# open http://127.0.0.1:5184/scientists.html   (Ctrl+C stops both)
-```
-
-Env overrides pass through, e.g. `SCI_MODEL_ZH=qwen3:8b npm run dev:all`.
-
-Prefer separate terminals? `npm run dev` (page only) and `npm run dev:api`
-(backend only, = `node scientists-backend/server.mjs`) do the same thing.
-Configuration is environment-driven; copy `.env.example` for reference. (The
-backend does not auto-load `.env`; set real env vars or use your shell.)
-
-> **Both servers must be running.** The page (5184) and the backend (5188) are
-> separate processes; if only the page is up you'll see "無法連到後端 / Cannot
-> reach the backend". Ollama (11434) being up is not enough on its own.
-
-## Mobile over Tailscale
-
-Expose **both** ports on your tailnet (static page + backend API):
-
-```powershell
-tailscale serve --bg --https=5184 http://127.0.0.1:5184   # the page
-tailscale serve --bg --https=5188 http://127.0.0.1:5188   # this backend
-```
-
-On the phone:
-1. Open `https://<your-host>.ts.net:5184/scientists.html`.
-2. Tap **設定 / Settings** and set the backend URL to
-   `https://<your-host>.ts.net:5188` (or append `?api=https://<host>:5188` to the
-   page URL once). It is remembered in `localStorage`.
+- **Auto-fallback.** If a preferred model is not pulled, the backend falls back
+  to the strongest installed one (`SCI_FALLBACKS_ZH`/`_EN`) so the page works
+  immediately; `/api/health` (`modelStatus`) reports preferred-vs-fallback and
+  it switches automatically once you `ollama pull` the real one.
+- **The model pin is shared across devices**, not per browser
+  (`modelOverride` in `/api/health`). Ollama keeps one model loaded at a time,
+  so a per-browser pin would make a phone and a desktop fight over the GPU and
+  force a reload nearly every turn. Clients read `/api/health` before assuming a
+  model. `busy: true` means a generation from *any* device is in flight.
 
 ## Context window: summarize at 70%, then restart
 
-Long tutoring sessions would overflow the small KV cache on a 3060. When the
-estimated prompt reaches `SCI_SUMMARIZE_AT` (default **0.70**) of the model's
-context window, the backend:
+Long tutoring sessions would overflow the 3060's KV cache. When the estimated
+prompt reaches `SCI_SUMMARIZE_AT` (default **0.70**) of the context window the
+backend compresses the dialogue into a compact bilingual "memory", clears the
+history, seeds the next turn with it, and emits an SSE `summary` event.
 
-1. asks the model to compress the dialogue into a compact bilingual "memory",
-2. clears the running history and seeds the next turn with that memory,
-3. emits an SSE `summary` event so the UI shows a "context restarted" notice.
+Token estimation is script-aware (CJK ~1.6 chars/token vs ~3.8 for Latin) and
+anchored to the last *measured* `prompt_eval_count`, so the running estimate can
+never drift below reality and silently truncate.
 
-The context meter in the header shows current usage.
+## Knowledge / RAG
 
-## Wikipedia compatibility
+The `retrieveContext` seam in `knowledge/wiki.mjs` is the single integration
+point (an external service could replace it wholesale).
 
-Two complementary paths (the `retrieveContext` seam in `knowledge/wiki.mjs` is
-the single integration point, so an external "LLM-wiki" service can replace it):
+- **Offline KB first.** With `SCI_WIKI_RAG=1`, retrieval calls
+  `../wiki-kb/lib/retrieve.mjs` directly in-process — hybrid BM25 + vector with
+  time decay and a graph channel over 8 languages. No separate server or URL.
+- **Live Wikipedia fallback.** Only when the KB has no match; fails open, so
+  chat never breaks because retrieval did.
+- **Query rewrite** (`lib/query-rewrite.mjs`): a high-precision pronoun/opener
+  gate decides whether a turn is anaphoric, and only then spends one
+  deterministic local call to rewrite it before retrieval. Fail-open; the
+  rewritten query is surfaced as `meta.retrievalQuery`.
+- **Offline fine-tuning** (optional path B):
 
-**A. Live retrieval (RAG).** Set `SCI_WIKI_RAG=1`. Each question pulls the intro
-of the best-matching Wikipedia article (zh.wikipedia in the `zh-tw` variant for
-Chinese, en.wikipedia for English) and injects it as reference context. Fails
-open -- if Wikipedia is unreachable the chat proceeds normally.
+  ```powershell
+  node knowledge/build-finetune-dataset.mjs --lang zh --out data-zh.jsonl
+  # fine-tune with Unsloth / Llama-Factory -> GGUF -> ollama create -> SCI_MODEL_ZH=...
+  ```
 
-**A+. Offline knowledge base.** The wiki-kb corpus (`../wiki-kb`, see its
-README) is merged into this same backend process, so retrieval always asks it
-first when `SCI_WIKI_RAG=1` -- no separate server or URL to configure. It's a
-hybrid BM25+vector search with time decay over astronomy/astrophysics/
-cosmology articles, scientists, and history of science in 8 languages, and
-only falls back to live Wikipedia when the KB has no match.
+  `--topics topics.txt` supplies your own topic list.
 
-**B. Offline fine-tuning.** Build a chat-format dataset from Wikipedia and
-LoRA-fine-tune a local model:
+## Feedback loop
 
-```powershell
-node knowledge/build-finetune-dataset.mjs --lang zh --out data-zh.jsonl
-node knowledge/build-finetune-dataset.mjs --lang en --out data-en.jsonl
-# fine-tune with Unsloth / Llama-Factory, export to GGUF,
-# ollama create my-sci-zh -f Modelfile
-# then: SCI_MODEL_ZH=my-sci-zh
-```
-
-Pass `--topics topics.txt` (one topic per line) to use your own topic list.
+Chat up/down votes (with reasons and corrections) go to the `feedback` table in
+the shared `kb.sqlite`, upserted by `cid`, with server-side normalized edit
+distance. `knowledge/triage-feedback.mjs` walks `status='new'` rows and labels
+them deterministically (`positive` / by reason / `major`|`minor` on `ned>0.6`),
+falling back to one fail-open judge call only for a bare downvote; rows it
+cannot judge stay `new`. Idempotent; `--limit` / `--no-llm` / `--dry-run`.
+Downstream use (exemplars, finetune sourcing) is LOOP2 in
+`../OPTIMIZATION-PLAN.md`.
 
 ## API
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/api/health` | - | status, resolved models, Ollama liveness |
-| GET | `/api/scientists` | - | persona list (id, names, fields, blurb, accent, `starters`) |
+| GET | `/api/health` | — | status, resolved models, `modelOverride`, `busy`, Ollama liveness, KB health |
+| GET | `/api/scientists` | — | persona list (id, names, fields, blurb, accent, `starters`) |
 | POST | `/api/chat` | `{sessionId?, scientistId, lang, message, history?}` | **SSE** stream |
-| POST | `/api/session/reset` | `{sessionId}` | `{ok}` |
-| POST | `/api/session/summarize` | `{sessionId, lang}` | `{ok, changed, summary, usage}` |
+| POST | `/api/chat/stop` | `{sessionId}` | `{ok}` |
+| POST | `/api/session/reset` \| `/summarize` | `{sessionId, lang?}` | `{ok, ...}` |
 | POST | `/api/followups` | `{sessionId?, lang, history?}` | `{ok, followups[]}` |
-| POST | `/api/discuss` | `{sessionId?, scientistIds[], lang, message, rounds?}` | **SSE** roundtable stream |
-| POST | `/api/discuss/reset` | `{sessionId}` | `{ok}` |
-| POST | `/api/discuss/summarize` | `{sessionId, lang}` | `{ok, changed, summary, usage}` |
-| POST | `/api/discuss/followups` | `{sessionId?, lang, rounds?}` | `{ok, followups[]}` |
+| POST | `/api/discuss` | `{sessionId?, scientistIds[], lang, message, rounds?}` | **SSE** roundtable |
+| POST | `/api/discuss/stop` \| `/reset` \| `/summarize` \| `/followups` | `{sessionId, ...}` | `{ok, ...}` |
+| POST/GET | `/api/feedback` | vote payload / query | upsert by `cid` / list |
+| GET | `/api/feedback/stats` | — | aggregate rates |
+| * | wiki-kb routes | — | merged from `../wiki-kb/lib/routes.mjs` |
 
-SSE event types on `/api/chat`: `meta` (sessionId, model, lang, scientistId,
-`auto`, usage), `assigned` (routed `id`/`name`/`accent`/`via`, auto mode only),
-`token` (text delta), `summary` (start/done/error), `done` (token counts,
-usage), `error`.
+SSE on `/api/chat`: `meta` (sessionId, model, lang, scientistId, `auto`, usage),
+`assigned` (routed id/name/accent/via, auto mode only), `token`, `summary`
+(start/done/error), `done` (token counts), `error`.
 
-### Auto-assign, follow-ups, rehydration, and starters
-
-- **Auto-assign expert** — send `scientistId: "auto"` and the backend routes the
-  question to the best-matched scientist with an *isolated* LLM call (keyword
-  ranking is the fallback). The routing prompt/answer never enter the chat
-  session, so picking the expert does not consume the answer's context window.
-  An `assigned` SSE event tells the client which persona answered. The session
-  id stays `auto`, so each turn can be answered by a different expert while
-  keeping continuity.
-- **Follow-up suggestions** — `/api/followups` (and `/api/discuss/followups`)
-  return 3-4 short, on-topic next questions generated from the running
-  conversation by an isolated call; the generation and the unclicked options
-  never enter context. Set `SCI_FOLLOWUPS=0` to disable.
-- **Rehydration** — sessions are memory-only, so a page reload, a saved-thread
-  resume, or a backend restart leaves the client holding a transcript the
-  backend forgot. The client replays its visible `history` (chat) or `rounds`
-  (discussion) and the backend seeds an *empty* session/discussion from it,
-  summarizing first when that replayed history would exceed the 70% line. A live
-  session is never double-seeded.
-- **Per-scientist starters** — `/api/scientists` includes a `starters`
-  `{zh, en}` set tailored to each persona; the empty chat state samples from the
-  selected scientist's own questions rather than one global list.
-
-`/api/discuss` runs a multi-scientist roundtable (Science Dialogue tab): the
-panel is ranked by topic expertise (most-expert leads and concludes), each
-speaks in turn building on the others, and the loop stops when a neutral
-moderator judges the question resolved, the transcript reaches
-`SCI_DISCUSS_STOP_AT` (default 0.5) of the window, or `SCI_DISCUSS_MAX_ROUNDS`
-is hit -- then the lead delivers the conclusion. SSE event types: `meta`
-(sessionId, model, ranked `speakers`, usage), `phase`
+SSE on `/api/discuss`: `meta` (ranked `speakers`), `phase`
 (`discussing`/`concluding`, round, stopReason), `speaker` (id, name, accent,
-`role` = turn|conclusion), `token` (id, text delta), `turn-done` (id, usage),
-`done` (rounds, resolved, stopReason, usage), `error`. Tunable via
-`SCI_DISCUSS_*` env vars (see `config.mjs`).
+`role` = turn|conclusion), `token`, `turn-done`, `done` (rounds, resolved,
+stopReason), `error`.
+
+Behaviours worth knowing:
+
+- **Auto-assign** — `scientistId: "auto"` routes the question to the best-matched
+  persona with an *isolated* LLM call (keyword ranking as fallback), so picking
+  an expert never consumes the answer's context window. The session id stays
+  `auto`, so each turn can be answered by a different expert.
+- **Follow-ups** — 3-4 next questions generated by an isolated call; the
+  generation and unclicked options never enter context. `SCI_FOLLOWUPS=0`
+  disables. Requests abort on client disconnect and debounce per
+  session/discussion, so a superseded turn stops occupying the GPU.
+- **Rehydration** — sessions are memory-only. On reload / thread resume /
+  backend restart the client replays its visible `history` (or `rounds`) and the
+  backend seeds an *empty* session from it, summarizing first if that would
+  cross the 70% line. A live session is never double-seeded.
+- **Per-scientist starters** — `/api/scientists` returns a `{zh, en}` starter set
+  per persona; the empty state samples from the selected scientist's own set.
+- **Roundtable** — the panel is ranked by topic expertise (most expert leads and
+  concludes), each speaks building on the others, and the loop stops when a
+  neutral moderator judges the question resolved, the transcript hits
+  `SCI_DISCUSS_STOP_AT` (default 0.5) of the window, or `SCI_DISCUSS_MAX_ROUNDS`.
+  Tunables: `SCI_DISCUSS_*` in `config.mjs`.
 
 ## Verify
 

@@ -45,7 +45,7 @@ const COPY_DIRS = ['avatars', 'logos', 'library-images', 'portraits', 'vendor', 
 
 // Pruned out of the copied dirs: nothing the browser fetches, and dist/ is
 // what the public Pages deploy publishes. full-physics/ carries internal
-// plans (PROGRESS-PLAN, PHASE6-*) and the Rust/WASM proof-of-concept with its
+// agent docs (README, engine-contract, PHASE6-*) and the Rust/WASM PoC with its
 // compiled .wasm and bench dumps; portraits/ keeps the raw green-screen art
 // next to the chroma-keyed copies, and only portraits/keyed/ is ever fetched
 // (scientist-page.mjs) — the raw originals are ~30 MB of build-time source.
