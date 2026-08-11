@@ -1,0 +1,106 @@
+name: CI
+
+# One gate for every automated check in the repo. deploy.yml calls this
+# workflow (workflow_call) and refuses to publish unless it is green, so the
+# live site can never be built from a tree that fails its own tests.
+#
+# Triggers are deliberately non-overlapping: pull requests and manual runs go
+# through here directly; pushes to main arrive via deploy.yml's call, so main
+# is verified exactly once per push instead of twice.
+#
+# Not runnable here, by design (both need a local GPU box):
+#   - wiki-kb retrieval / RAGAS eval  -> needs the crawled SQLite corpus and
+#     Ollama embeddings; gated locally against eval/baseline.json
+#     (see OPTIMIZATION-PLAN.md).
+#   - scientists-backend persona runs -> needs a served LLM.
+# Their pure logic (query routing, eval statistics) does run below.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    # Monday 03:00 UTC — catches drift in the slow acceptance tier even in a
+    # quiet week (the swarm tests are Math.random-seeded, so this is a real
+    # regression signal, not a flake lottery).
+    - cron: '0 3 * * 1'
+
+# Superseded PR runs are pointless; main runs (via workflow_call) are not
+# cancelled so a deploy is never aborted halfway.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Syntax + unit + benchmarks + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # >= 22.5 for node:sqlite (wiki-kb) — see its package.json engines field.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # No install step on purpose: this repo is zero-install. Its only two
+      # dependencies (@babel/standalone, opencc-js) are committed under
+      # node_modules/, and there is no root lockfile for `npm ci` to use.
+      # Assert the vendored dep is really there instead of failing later with
+      # an opaque module-resolution error.
+      - name: Assert vendored dependencies are present
+        run: |
+          test -f node_modules/@babel/standalone/package.json \
+            || { echo "::error::node_modules/@babel/standalone is missing (this repo commits its deps)"; exit 1; }
+          test -f wiki-kb/node_modules/opencc-js/package.json \
+            || { echo "::error::wiki-kb/node_modules/opencc-js is missing"; exit 1; }
+
+      # Parse-checks every .js/.mjs/.cjs (node --check) and every .jsx (Babel),
+      # plus the shared-global-scope rule the browser enforces at runtime.
+      - name: Parse check (whole repo)
+        run: npm run check
+
+      # Root demo suites + the full-physics conservation benchmarks.
+      - name: Tests (fast tier)
+        run: npm test
+
+      # Pure-logic subsystem tests: eval statistics + query routing. No DB,
+      # no Ollama, no network.
+      - name: Tests (wiki-kb logic)
+        run: npm test --prefix wiki-kb
+
+      # The production precompile is part of the contract (dist/ is what the
+      # Pages deploy publishes), so a build break must fail here, not there.
+      - name: Production build smoke
+        run: |
+          node build.mjs
+          for f in dist/index.html dist/app.js dist/sim.js dist/vendor/react/react.production.min.js; do
+            test -f "$f" || { echo "::error::build.mjs did not produce $f"; exit 1; }
+          done
+          # The whole point of the precompile: no in-browser Babel, no CDN React.
+          ! grep -q 'babel/standalone' dist/index.html \
+            || { echo "::error::dist/index.html still loads the in-browser Babel transpiler"; exit 1; }
+          ! grep -q 'unpkg.com' dist/index.html \
+            || { echo "::error::dist/index.html still loads React from a CDN"; exit 1; }
+          ! grep -q 'text/babel' dist/index.html \
+            || { echo "::error::dist/index.html still has untranspiled text/babel scripts"; exit 1; }
+
+  acceptance:
+    name: Slow tier (N-body acceptance + ray tracing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # ~60 s: isolated-galaxy stability, a full galaxy x galaxy merger, and
+      # the two ray-tracing sample runners at real resolutions. Split from the
+      # fast tier so the gate every PR waits on stays a few seconds.
+      - name: Tests (slow tier)
+        run: node test/run-all.mjs --slow

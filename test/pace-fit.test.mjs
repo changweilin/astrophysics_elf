@@ -8,54 +8,14 @@
  *
  * Run:  node test/pace-fit.test.mjs   (or: npm test)
  */
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { loadLab as loadLabRaw, checker } from './harness.mjs';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const { check, near, finish } = checker();
 
-let passed = 0, failed = 0;
-function check(name, cond, detail) {
-  if (cond) { passed++; console.log(`  PASS ${name}`); }
-  else { failed++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
-}
-function near(name, actual, expected, tol) {
-  const err = Math.abs(actual - expected);
-  check(name, err <= tol, `actual=${actual}, expected=${expected}, tol=${tol}`);
-}
-
-// Fresh lab sandbox with the given ?demo= id pre-resolved (urlDemoId memo).
-// `stored` optionally pre-seeds localStorage (stale-config regression tests).
-function loadLab(demoId, stored) {
-  const store = new Map();
-  if (stored) store.set('kn-lab-config-v1', JSON.stringify(stored));
-  const sandbox = {
-    window: {}, console,
-    localStorage: {
-      getItem: (k) => (store.has(k) ? store.get(k) : null),
-      setItem: (k, v) => store.set(k, String(v)),
-      removeItem: (k) => store.delete(k),
-    },
-    tr: (en) => en,
-    trp: (t, vars) => String(t).replace(/\{(\w+)\}/g, (m, k) =>
-      (vars && Object.prototype.hasOwnProperty.call(vars, k)) ? vars[k] : m),
-    Math, isFinite, isNaN, Number, Array, JSON, Object,
-  };
-  sandbox.window.localStorage = sandbox.localStorage;
-  sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
-  for (const f of ['physics.js', 'sim.js', 'disc.js', 'demo-presets.js', 'config.js']) {
-    vm.runInContext(readFileSync(join(root, f), 'utf8'), sandbox, { filename: f });
-  }
-  const W = sandbox.window;
-  W.__knDemoId = demoId === undefined ? null : demoId;
-  const sim = W.KNSim.createSim();
-  W.KNSim.initBinary(sim);
-  W.KNDisc.initDisc(sim);
-  if (demoId !== undefined) W.KNSim.applyConfig(sim);   // reads (seeded) storage, then applies the demo
-  return { W, KN: W.KNSim, P: W.KNphysics, D: W.KNDisc, sim };
-}
+// Lab with the given ?demo= id pre-resolved (urlDemoId memo). `stored`
+// optionally pre-seeds the saved config (stale-config regression tests).
+const loadLab = (demoId, stored) =>
+  loadLabRaw(demoId, stored ? { 'kn-lab-config-v1': stored } : undefined);
 
 // Advance the sim exactly like the rAF loops do (60 fps) until `done(sim)`,
 // returning the wall-clock seconds consumed; honours pacePoll slow-motion.
@@ -266,5 +226,4 @@ console.log('demo pace (orbits) sanity across the catalog');
   check('orbits pace arms no one-shot watcher', sim._pace === null);
 }
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+finish();

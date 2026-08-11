@@ -85,14 +85,32 @@ HTTPS is terminated by `tailscale serve` (see `serve.mjs` header). Prefer the
 
 ## Verify Before Finishing
 
-- Full gate: `npm test` (physics/interaction/pace-fit/render tests + the
-  physics regression benchmarks).
+- Full gate: `npm run verify` = `npm run check` + `npm test`.
+  - `npm run check` (`tools/check-syntax.mjs`) parse-checks every
+    `.js`/`.mjs`/`.cjs` via `node --check` and every `.jsx` via Babel, and
+    fails on a top-level `const`/`let`/`class` declared in two `.jsx` files
+    (the shared-global-scope trap below). It globs, so nothing has to be
+    added to a list.
+  - `npm test` (`test/run-all.mjs`) is the fast tier: physics / interaction /
+    pace-fit / render-smoke / transient + the physics regression benchmarks.
+  - `npm run test:full` adds the slow tier (~60 s: structure N-body
+    acceptance + the two ray-tracing samples). Two of the N-body thresholds
+    are marked `xfail` with measured numbers — a numerics call, documented in
+    the file; never widen a band to go green.
+- Writing a test: reuse `test/harness.mjs` (vm sandbox with browser globals,
+  recording Canvas2D stub, seeded PRNG so `Math.random` paths reproduce) and
+  register the file in `SUITES` in `test/run-all.mjs`, which is what CI runs.
 - Targeted: `node --check <file>.js` for edited root scripts;
   `node full-physics/run-benchmarks.mjs` after any physics / catalog /
   facade / unit / integration change; `full-physics/run-*-sample.mjs` for
   smoke checks.
 - Retrieval or persona changes: run the wiki-kb eval and compare against the
-  committed baseline (see `OPTIMIZATION-PLAN.md`).
+  committed baseline (see `OPTIMIZATION-PLAN.md`). This is a local-only gate
+  (needs the corpus + Ollama), so CI runs only the pure-logic KB tests.
+- CI/CD: `.github/workflows/ci.yml` runs exactly the commands above on every
+  PR (plus a weekly slow-tier run); `deploy.yml` calls it and publishes the
+  `build.mjs` output (`dist/`) to Pages only when it passes. Rebuild and
+  re-check `dist/` after root edits.
 
 ## Skills And Subagents
 

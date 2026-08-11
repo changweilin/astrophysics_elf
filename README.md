@@ -189,11 +189,17 @@ console.log(frames.at(-1));
 ### 5. 完成修改前的驗證 · Verify before finishing
 
 ```bash
-# 語法檢查 / syntax check
-node --check physics.js && node --check sim.js && node --check disc.js && node --check serve.mjs
+# 語法檢查（全庫 .js/.mjs/.jsx + 共用全域範圍衝突）/ parse check (whole repo, incl. JSX)
+npm run check
 
-# 完整測試 + 物理回歸基準 / full test suite + physics regression benchmarks
+# 快速閘門：全部測試套件 + 物理回歸基準 / fast gate: every suite + physics benchmarks
 npm test
+
+# 加上慢速層（結構 N-body + 光線追蹤，約 60 秒）/ plus the slow tier (~60 s)
+npm run test:full
+
+# check + test 一次跑完 / both in one shot
+npm run verify
 
 # 個別冒煙測試 / individual smoke samples
 node ./full-physics/run-sample.mjs
@@ -205,12 +211,25 @@ node ./full-physics/run-units-sample.mjs
 > `npm test`）。/ Always run the physics benchmarks after any physics, catalog, unit, or
 > integration change (already part of `npm test`).
 
-### 6. 部署 · Deployment
+### 6. CI/CD · Continuous integration and deployment
 
-推送至 `main` 分支會透過 GitHub Actions（[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)）
-自動部署至 **GitHub Pages**。由於是零建置的靜態網站，工作流程僅將原始碼樹（排除工具目錄）直接發佈。
-Pushing to `main` auto-deploys the static site to **GitHub Pages**; the workflow publishes the
-source tree verbatim (tooling directories excluded) since there is no build step.
+| 工作流程 Workflow | 觸發 Trigger | 內容 What it runs |
+|---|---|---|
+| [`ci.yml`](.github/workflows/ci.yml) | pull request、手動、每週一 03:00 UTC | `npm run check`、`npm test`、wiki-kb 邏輯測試、`node build.mjs` 產物檢查；慢速驗收層另開一個 job |
+| [`deploy.yml`](.github/workflows/deploy.yml) | push 至 `main`、手動 | 先以 `workflow_call` 跑完整個 `ci.yml`，通過後才建置並發佈 |
+
+推送至 `main` 會先跑完整 CI，再由 `build.mjs` 預編譯出 `dist/`（生產版 React + 預先轉譯的 JSX）
+發佈至 **GitHub Pages** — 發佈的是建置產物，不是原始碼樹。
+Pushing to `main` runs the full CI gate first, then publishes the **precompiled** `dist/`
+(vendored production React, pre-transpiled JSX) to **GitHub Pages** — the build output, not
+the source tree. 本地可用 `npm run build && node dist/serve.mjs` 驗證同一份產物。
+
+以下無法在 CI 執行（都需要本機 GPU 機器）：wiki-kb 檢索／RAGAS 評估需要爬好的 SQLite 語料與
+Ollama embeddings，scientists-backend 需要已載入的 LLM — 這兩項仍以本機 golden-set 對照
+`eval/baseline.json` 為閘門（見 `OPTIMIZATION-PLAN.md`）。
+Not runnable in CI (both need the local GPU box): the wiki-kb retrieval/RAGAS eval needs the
+crawled corpus plus Ollama embeddings, and scientists-backend needs a served LLM; both stay
+gated locally against `eval/baseline.json`.
 
 ---
 
@@ -262,9 +281,12 @@ astrophysics_elf/
 │   ├── crawl.mjs · server.mjs · kb-admin.mjs · lib/ · eval/
 │   └── README.md
 │
-├── test/                   # physics / interaction / pace-fit / render-smoke / n-body 測試
-├── vendor/                 # 內嵌 Three.js（無 CDN 依賴）
-└── .github/workflows/deploy.yml   # GitHub Pages 部署流程
+├── test/                   # physics / interaction / pace-fit / render-smoke / transient / n-body
+│   ├── harness.mjs         # 共用 vm sandbox + Canvas2D stub + 固定種子 PRNG
+│   └── run-all.mjs         # 唯一入口：fast 閘門層 / slow 驗收層
+├── tools/check-syntax.mjs  # 全庫 parse 檢查（含 JSX 與共用全域範圍衝突）
+├── vendor/                 # 內嵌 Three.js、生產版 React（無 CDN 依賴）
+└── .github/workflows/      # ci.yml（閘門）+ deploy.yml（建置後發佈 Pages）
 ```
 
 ### 架構重點 · Architecture notes

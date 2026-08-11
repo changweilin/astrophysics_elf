@@ -1,38 +1,16 @@
 /* Unit tests for the shared pointer-interaction helpers (interaction-core.js),
- * which the desktop and mobile roots both call. Loads physics.js + sim.js +
- * interaction-core.js into a vm context (browser globals stubbed) and checks the
- * pure logic: star draw-radius, hit testing (with desktop vs mobile thresholds),
- * and grab-reposition. Guards against the desktop/mobile copies drifting apart.
+ * which the desktop and mobile roots both call. Checks the pure logic: star
+ * draw-radius, hit testing (with desktop vs mobile thresholds), and
+ * grab-reposition. Guards against the desktop/mobile copies drifting apart.
  *
  * Run:  node test/interaction.test.mjs
  */
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { loadEngine, checker } from './harness.mjs';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const sandbox = {
-  window: {}, console,
-  tr: (en) => en,
-  trp: (t, vars) => String(t).replace(/\{(\w+)\}/g, (m, k) =>
-    (vars && Object.prototype.hasOwnProperty.call(vars, k)) ? vars[k] : m),
-};
-sandbox.globalThis = sandbox;
-vm.createContext(sandbox);
-for (const f of ['physics.js', 'sim.js', 'interaction-core.js']) {
-  vm.runInContext(readFileSync(join(root, f), 'utf8'), sandbox, { filename: f });
-}
-const KN = sandbox.window.KNSim;
-const KI = sandbox.window.KNInteract;
+const lab = loadEngine('interaction');
+const { KN, KI, P } = lab;
+const { check, finish } = checker('Interaction-core unit tests');
 
-let passed = 0, failed = 0;
-function check(name, cond, detail) {
-  if (cond) { passed++; console.log(`  PASS ${name}`); }
-  else { failed++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
-}
-
-console.log('Interaction-core unit tests\n');
 check('window.KNInteract defined', !!KI);
 check('hitTestGrabbable is a function', typeof KI?.hitTestGrabbable === 'function');
 check('starVisualR is a function', typeof KI?.starVisualR === 'function');
@@ -46,7 +24,7 @@ const [bsx, bsy] = KN.worldToScreen(sim, W, H, 10, 0);   // body's screen positi
 
 // ── starVisualR ──────────────────────────────────────────────────────────────
 {
-  const hz = sandbox.window.KNphysics.horizons(1.5, 0, 0);   // r+ = 3
+  const hz = P.horizons(1.5, 0, 0);   // r+ = 3
   check('starVisualR BH = max(4, r+ * scale)',
     KI.starVisualR(sim, 1.5, 0, 0, 'bh', 3) === Math.max(4, hz.rplus * sim.view.scale));
   check('starVisualR stellar = max(6, R_star * scale * 0.7)',
@@ -85,5 +63,4 @@ const [bsx, bsy] = KN.worldToScreen(sim, W, H, 10, 0);   // body's screen positi
   check('moveGrabTo relocates a body', b.x === -7 && b.y === 3);
 }
 
-console.log(`\n${failed === 0 ? 'PASS' : 'FAIL'} — ${passed}/${passed + failed} checks passed`);
-process.exit(failed === 0 ? 0 : 1);
+finish();

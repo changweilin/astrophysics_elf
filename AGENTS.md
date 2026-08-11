@@ -38,11 +38,21 @@ browser physics demo (root files) plus three cleanly isolated subsystems.
 
 ## Verification Shortlist
 
-- Full gate: `npm test` (unit/interaction/render tests + physics
-  benchmarks).
+- Full gate: `npm run verify` = `npm run check` (parse-check every
+  `.js`/`.mjs`/`.jsx` plus the shared-global-scope rule) + `npm test` (fast
+  tier: all root suites + physics benchmarks, via `test/run-all.mjs`).
+- Slow tier: `npm run test:full` adds the structure N-body acceptance suite
+  plus the two ray-tracing samples (~60 s). The N-body suite carries two
+  documented known-gap (`xfail`) thresholds — do not widen a band to clear
+  them.
 - Targeted: `node --check <file>.js`; `node full-physics/run-benchmarks.mjs`
   after physics/catalog/facade/unit/integration changes;
   `full-physics/run-*-sample.mjs` smoke checks.
+- New root test? Add it to the `SUITES` table in `test/run-all.mjs` and reuse
+  `test/harness.mjs` (vm sandbox, Canvas2D stub, seeded PRNG) — never
+  re-roll the bootstrap.
+- CI mirrors exactly these commands (`.github/workflows/ci.yml`); `main`
+  deploys only after that gate passes, publishing the `build.mjs` output.
 
 ## Skills And Sub-Agent Roles
 

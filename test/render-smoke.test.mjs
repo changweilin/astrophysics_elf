@@ -1,84 +1,21 @@
 /* Headless render smoke test for the browser-demo engine.
  *
  * node --check and the unit tests never execute render() — yet that is where the
- * bulk of sim.js lives and where a missing helper reference would surface. This
- * harness loads physics.js + sim.js + disc.js (and, once split out, render.js +
- * config.js) into a vm context with a recording Canvas2D stub, builds a populated
- * scene, and drives every major render branch (single BH, binary, placement,
- * aiming, naked singularity, stellar central). It asserts that nothing throws and
- * that the context actually received draw calls — so a refactor that drops a
- * reference fails here instead of silently in the browser.
+ * bulk of render.js lives and where a missing helper reference would surface.
+ * This test builds a populated scene against the harness's recording Canvas2D
+ * stub and drives every major render branch (single BH, binary, placement,
+ * aiming, naked singularity, stellar central). It asserts that nothing throws
+ * and that the context actually received draw calls — so a refactor that drops
+ * a reference fails here instead of silently in the browser.
  *
  * Run:  node test/render-smoke.test.mjs
  */
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { loadEngine, makeCanvas, checker } from './harness.mjs';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const lab = loadEngine('render');
+const { KN, D: KD } = lab;
+const { check, finish } = checker('Render smoke test');
 
-// ── vm context with browser globals stubbed ──────────────────────────────────
-const store = new Map();
-const sandbox = {
-  window: {},
-  console,
-  tr: (en) => en,
-  trp: (t, vars) => String(t).replace(/\{(\w+)\}/g, (m, k) =>
-    (vars && Object.prototype.hasOwnProperty.call(vars, k)) ? vars[k] : m),
-  localStorage: {
-    getItem: (k) => (store.has(k) ? store.get(k) : null),
-    setItem: (k, v) => store.set(k, String(v)),
-    removeItem: (k) => store.delete(k),
-  },
-  performance: { now: () => Date.now() },
-  devicePixelRatio: 1,
-};
-sandbox.globalThis = sandbox;
-vm.createContext(sandbox);
-
-const ENGINE_FILES = ['physics.js', 'sim.js', 'render.js', 'config.js', 'disc.js'];
-function load(file) {
-  try {
-    vm.runInContext(readFileSync(join(root, file), 'utf8'), sandbox, { filename: file });
-    return true;
-  } catch (e) {
-    if (e.code === 'ENOENT') return false;   // file not split out yet — skip
-    throw e;
-  }
-}
-for (const f of ENGINE_FILES) load(f);
-
-const KN = sandbox.window.KNSim;
-const KD = sandbox.window.KNDisc;
-
-// ── recording Canvas2D stub ──────────────────────────────────────────────────
-function makeCtx() {
-  const target = { calls: {}, canvas: { width: 1600, height: 1200 } };
-  const grad = { addColorStop() {} };
-  return new Proxy(target, {
-    get(t, prop) {
-      if (prop in t) return t[prop];
-      if (typeof prop === 'symbol') return undefined;
-      return (...args) => {
-        t.calls[prop] = (t.calls[prop] || 0) + 1;
-        if (prop === 'createRadialGradient' || prop === 'createLinearGradient') return grad;
-        if (prop === 'measureText') return { width: (String(args[0] || '')).length * 6 };
-        return undefined;
-      };
-    },
-    set(t, prop, val) { t[prop] = val; return true; },
-  });
-}
-
-// ── tiny assert harness ──────────────────────────────────────────────────────
-let passed = 0, failed = 0;
-function check(name, cond, detail) {
-  if (cond) { passed++; console.log(`  PASS ${name}`); }
-  else { failed++; console.log(`  FAIL ${name}${detail ? `\n        ${detail}` : ''}`); }
-}
-
-console.log('Render smoke test\n');
 check('window.KNSim defined', !!KN);
 check('window.KNDisc defined', !!KD);
 check('KNSim.render is a function', typeof KN?.render === 'function');
@@ -104,7 +41,7 @@ for (let i = 0; i < 40; i++) KN.step(sim, 0.016);
 
 const W = 1600, H = 1200;
 function renderScene(label) {
-  const ctx = makeCtx();
+  const ctx = makeCanvas({ width: W, height: H });
   try {
     KN.render(sim, ctx, W, H);
     KN.renderInteraction(sim, ctx, W, H);
@@ -173,5 +110,4 @@ sim.aiming = null;
   renderScene('post-restore');
 }
 
-console.log(`\n${failed === 0 ? 'PASS' : 'FAIL'} — ${passed}/${passed + failed} checks passed`);
-process.exit(failed === 0 ? 0 : 1);
+finish();

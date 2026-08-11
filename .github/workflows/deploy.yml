@@ -1,8 +1,19 @@
 name: Deploy to GitHub Pages
 
-# The lab is a no-build static site: index.html transpiles the .jsx files
-# in-browser via @babel/standalone, and React/Babel load from a CDN. So we just
-# publish the source tree (minus tooling dirs) straight to GitHub Pages.
+# Publishes the PRECOMPILED site (build.mjs -> dist/), not the source tree.
+#
+# The dev flow stays zero-build: index.html loads React from a CDN and
+# transpiles the .jsx files in the browser with @babel/standalone. Shipping
+# that to visitors means a multi-megabyte dev React plus a transpile of every
+# panel on each page load, and rsyncing the repo also published things a
+# static site has no use for (test/, tools/, wiki-kb/ and scientists-backend/
+# sources, internal .md plans). build.mjs already exists to move the transpile
+# to build time and swap in the vendored production React, so the deploy uses
+# it and ships only what the pages actually reference.
+#
+# Every push here runs the full CI gate first (reusable workflow), so a red
+# tree cannot reach the live site. main is therefore verified exactly once per
+# push: ci.yml has no push trigger of its own.
 
 on:
   push:
@@ -20,29 +31,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Stage static site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Zero-install repo: @babel/standalone (the transpiler build.mjs uses) is
+      # committed under node_modules/. See ci.yml for the same assertion.
+      - name: Build dist/
+        run: node build.mjs
+
+      - name: Stage artifact
         run: |
-          mkdir -p _site
-          rsync -a \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='node_modules' \
-            --exclude='.claude' \
-            --exclude='.codex' \
-            --exclude='_site' \
-            ./ _site/
-          # Skip Jekyll so files/dirs are served verbatim (no underscore munging).
-          touch _site/.nojekyll
+          # Serve files/dirs verbatim (no Jekyll underscore munging).
+          touch dist/.nojekyll
+          # serve.mjs is only useful for `node dist/serve.mjs` locally.
+          rm -f dist/serve.mjs
+          echo "staged $(find dist -type f | wc -l) files, $(du -sh dist | cut -f1)"
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: dist
 
   deploy:
     needs: build
