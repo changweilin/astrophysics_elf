@@ -1,10 +1,18 @@
 # Phase 6 Wiring Plan: Gravitational Lensing / Black-Hole Shadow
 
-Status: **proposed, awaiting approval.** This document is add-only and touches
-no original demo files. It describes the first Phase 6 integration (see
-`PROGRESS-PLAN.md`, Phase 6 "Review Gate"): wiring the already-benchmarked
-`ray-tracing.mjs` + `radiation-models.mjs` layers into the browser demo so a
-user can see relativistic light bending, the photon ring, and the shadow.
+Status: **LANDED — kept as the living spec, not a proposal.** Option A (sec 11)
+shipped: `lensing-worker.mjs` + root `lensing.js` + the Observer View panel,
+plus the sec 4.5 deflection LUT and the sec 7 exact / plunging-region disc
+redshift. Code still cites this document by section (`lensing-worker.mjs`,
+`lensing.js`, `run-lensing-lut-sample.mjs`, `run-lensing-sky-sample.mjs`), so
+the sections below are the reference for what the implementation does — read
+them as "is", not "will be". Still deferred, and still needing approval: a
+fully-exact elliptic-integral sky and the Agol-Krolik plunging-region glow.
+See `PROGRESS-PLAN.md` for the Phase 6 record.
+
+It describes wiring the already-benchmarked `ray-tracing.mjs` +
+`radiation-models.mjs` layers into the browser demo so a user can see
+relativistic light bending, the photon ring, and the shadow.
 
 ## 1. Goal
 
@@ -372,7 +380,7 @@ as a new floating panel; `render.js` stays untouched; root-file edits (~8 lines)
 land only at P6.3+. Option B remains available as a later cheap complementary
 toggle but is out of scope for the first pass.
 
-Next actionable step: **P6.1 (add-only)** — `lensing-worker.mjs` +
-`run-lensing-sample.mjs`. P6.1 and P6.2 modify no original demo files and are
-fully reversible. The first edits to original demo files happen at **P6.3**
-(`index.html` + `app.jsx`) and still require an explicit go-ahead at that point.
+All of P6.1-P6.3 landed as described (`lensing-worker.mjs`,
+`run-lensing-sample.mjs`, `lensing.js`, `observer-view.jsx`, and the approved
+`index.html` / `app.jsx` edits). Option B was never taken and is still
+available. The two deferred items are listed in the status header.

@@ -1,48 +1,21 @@
 /* Unit tests for the browser-demo physics core (physics.js).
  *
- * physics.js is a browser IIFE that assigns window.KNphysics and references the
- * i18n globals tr()/trp(). It is not an ES module, so we load it into a vm
- * context with those globals stubbed, then assert the *pure numeric* functions
- * (horizons, isco, photon sphere, ergosphere, circular speed, Peters inspiral,
- * merger remnant, tidal stress) against closed-form / analytic values.
+ * Asserts the *pure numeric* functions (horizons, isco, photon sphere,
+ * ergosphere, circular speed, Peters inspiral, merger remnant, tidal stress)
+ * against closed-form / analytic values. The vm bootstrap lives in
+ * harness.mjs.
  *
  * Run:  node test/physics.test.mjs   (or: npm test)
  *
  * This complements full-physics/run-benchmarks.mjs, which covers the
  * high-fidelity ESM core but never touches the demo's KNphysics.
  */
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { loadEngine, checker } from './harness.mjs';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-
-// ── Load physics.js into a sandbox with browser globals stubbed ──────────────
-const sandbox = {
-  window: {},
-  tr: (en) => en,
-  trp: (t, vars) => t.replace(/\{(\w+)\}/g, (m, k) =>
-    (vars && Object.prototype.hasOwnProperty.call(vars, k)) ? vars[k] : m),
-  Math, isFinite, isNaN, Number, console,
-};
-vm.createContext(sandbox);
-vm.runInContext(readFileSync(join(root, 'physics.js'), 'utf8'), sandbox, { filename: 'physics.js' });
-const P = sandbox.window.KNphysics;
+const { P } = loadEngine('physics');
 if (!P) { console.error('FAIL: physics.js did not define window.KNphysics'); process.exit(1); }
 
-// ── Tiny assert harness (mirrors full-physics benchmark output style) ────────
-let passed = 0, failed = 0;
-function check(name, cond, detail) {
-  if (cond) { passed++; console.log(`  PASS ${name}`); }
-  else { failed++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
-}
-function near(name, actual, expected, tol = 1e-9) {
-  const err = Math.abs(actual - expected);
-  check(name, err <= tol, `actual=${actual}, expected=${expected}, err=${err}, tol=${tol}`);
-}
-
-console.log('KNphysics demo unit tests\n');
+const { check, near, finish } = checker('KNphysics demo unit tests');
 
 // ── horizons ─────────────────────────────────────────────────────────────────
 console.log('horizons(M,Q,a)');
@@ -148,6 +121,4 @@ console.log('wouldCollapse(M,Q,a,R_star)');
   check('star well outside survives', P.wouldCollapse(1, 0, 0, 10) === false);
 }
 
-// ── summary ──────────────────────────────────────────────────────────────────
-console.log(`\n${failed === 0 ? 'PASS' : 'FAIL'} — ${passed}/${passed + failed} checks passed`);
-process.exit(failed === 0 ? 0 : 1);
+finish();

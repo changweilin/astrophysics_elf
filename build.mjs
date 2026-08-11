@@ -43,6 +43,19 @@ const DIST = join(ROOT, 'dist');
 // Directories shipped verbatim (everything the pages reference at runtime).
 const COPY_DIRS = ['avatars', 'logos', 'library-images', 'portraits', 'vendor', 'full-physics'];
 
+// Pruned out of the copied dirs: nothing the browser fetches, and dist/ is
+// what the public Pages deploy publishes. full-physics/ carries internal
+// plans (PROGRESS-PLAN, PHASE6-*) and the Rust/WASM proof-of-concept with its
+// compiled .wasm and bench dumps; portraits/ keeps the raw green-screen art
+// next to the chroma-keyed copies, and only portraits/keyed/ is ever fetched
+// (scientist-page.mjs) — the raw originals are ~30 MB of build-time source.
+const COPY_EXCLUDE = [
+  /[\\/]wasm-poc([\\/]|$)/,
+  /\.md$/i,
+  /[\\/]portraits[\\/][^\\/]+\.png$/i,   // direct children only; keyed/ survives
+];
+const shipDir = (src) => !COPY_EXCLUDE.some((re) => re.test(src));
+
 // Single files pulled out of otherwise server-only directories.
 // scientists-data.mjs imports the backend persona registry directly in the
 // browser (dependency-free ESM, see its header comment).
@@ -103,7 +116,9 @@ let htmlCount = 0;
 for (const entry of await readdir(ROOT, { withFileTypes: true })) {
   const { name } = entry;
   if (entry.isDirectory()) {
-    if (COPY_DIRS.includes(name)) await cp(join(ROOT, name), join(DIST, name), { recursive: true });
+    if (COPY_DIRS.includes(name)) {
+      await cp(join(ROOT, name), join(DIST, name), { recursive: true, filter: shipDir });
+    }
     continue;
   }
   if (SKIP_FILES.has(name) || SKIP_EXT.has(name.slice(name.lastIndexOf('.')))) continue;
