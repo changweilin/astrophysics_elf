@@ -15,7 +15,8 @@ wire in the full engine.
    lower-level modules.
 2. Read `full-physics/CONSERVATION-LEDGER.md` before changing benchmarks,
    integrators, or tolerances.
-3. Read `full-physics/PROGRESS-PLAN.md` before editing original root demo files.
+3. Read `full-physics/README.md` (module map + demo-integration record) before
+   editing original root demo files.
 
 ## Module Boundaries
 
