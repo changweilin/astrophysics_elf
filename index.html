@@ -78,6 +78,9 @@
 <!-- Off-thread gravitational-lensing renderer bridge (defines window.KNLensing;
      owns a module Web Worker over full-physics/lensing-worker.mjs). -->
 <script src="lensing.js"></script>
+<!-- GPU reshade of the deflection LUT (KNLensing.gpu): patches shadeLUT at
+     runtime, falls back to the CPU reshade on its own (GPU-RENDER-PLAN.md). -->
+<script src="lensing-gpu.js"></script>
 
 <!-- Shared UI helpers (plain JS; use the React / KNSim globals at call time) -->
 <script src="drag-move.js"></script>

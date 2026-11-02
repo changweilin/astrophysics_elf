@@ -233,9 +233,15 @@ function ObserverView({ sim, onClose }) {
       // a degenerate fisheye.
       const fovY = Math.max(0.4, Math.min(Math.PI * 0.92, FOVY0 * (ch / REF_H)));
       // Display size tracks the canvas (1:1, so no stretch); trace stays cheap.
-      const dispH = Math.max(60, Math.min(220, Math.round(ch)));
+      // The trace grid is sized from CSS pixels either way, so the GPU reshade
+      // (lensing-gpu.js) buys device-pixel display resolution at no trace cost.
+      const cssH = Math.max(60, Math.min(220, Math.round(ch)));
+      const gpuShade = !!(KNL.gpu && KNL.gpu.ready());
+      const dispH = gpuShade
+        ? Math.max(60, Math.min(1080, Math.round(ch * (window.devicePixelRatio || 1))))
+        : cssH;
       const dispW = Math.max(60, Math.round(dispH * aspect));
-      const baseH = Math.max(24, Math.min(60, Math.round(dispH * 0.32)));
+      const baseH = Math.max(24, Math.min(60, Math.round(cssH * 0.32)));
       const baseW = Math.max(24, Math.round(baseH * aspect));
       const camera = { r: 26, theta: thetaDeg * Math.PI / 180, phi: azDeg * Math.PI / 180, fovY };
       KNL.syncParams(sim.params);

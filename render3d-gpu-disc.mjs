@@ -23,8 +23,9 @@
  * actually exists.
  *
  * Light bending is NOT included — rays run straight from the emitting ring to
- * the observer. That is exactly what Phase 3 replaces, and it is why the far
- * side of the disc is not yet lifted into an arc over the shadow.
+ * the observer, which is why the far side of the disc is not lifted into an
+ * arc over the shadow. Phase 3 put the lensed image on the GPU in the
+ * Observer View only; lensing this main-view surface is still open.
  *
  * Emission is Novikov-Thorne: T(r) ~ r^-3/4 (1 - sqrt(r_in/r))^1/4, which
  * vanishes at the inner edge and peaks at (49/36) r_in. Colour and brightness

@@ -130,28 +130,61 @@ Kerr-Newman ISCO from `KNphysics.isco`.
   corrugated by the same noise field the fragment stage shades with.
 
 Light bending is NOT included — rays run straight from the emitting ring to
-the observer. That is what Phase 3 replaces, and it is why the far side is not
-yet lifted into an arc over the shadow.
+the observer, which is why the far side is not lifted into an arc over the
+shadow. Phase 3 put the lensed image on the GPU in the Observer View only;
+lensing this main-view surface is an open item (see Phase 3).
 
 The point pool keeps running untouched: it still owns accretion, capture,
 `mDot` and the reconnection flares. Only its *drawing* is suppressed while the
 surface is up, because both represent the same gas and leaving both on doubles
 the emission. `gpu.disc.showPoints = true` draws both.
 
-### Phase 3 — Lensing and photon ring on the GPU
+### Phase 3 — Lensing and photon ring on the GPU  *(DONE — Observer View)*
 
-`buildDeflectionLUT` already returns, per pixel: `capture`, `skyTheta`,
-`skyPhi`, `ringGlow`, `discHit`, `discR`, `discPhi` and the **exact** redshift
-`discG`. The LUT is azimuth-invariant and already cached in `lensing.js`.
+Shipped as `lensing-gpu.js` (classic script, loaded right after `lensing.js`)
+plus one `<script>` line in `index.html` and a five-line change in
+`observer-view.jsx`. `lensing.js` and `lensing-worker.mjs`: **zero diff**.
 
-- Upload those arrays as `DataTexture`s once per LUT build.
-- Port `shadeLUT`'s per-pixel maths into a fragment shader: shadow mask,
-  photon ring, primary and secondary disc images, `g`-weighted beaming,
-  starfield warp from `skyTheta/skyPhi`.
-- Camera azimuth becomes a uniform, so orbiting is free and the display
-  resolution decouples from the trace resolution entirely.
+- The LUT from `buildDeflectionLUT` is uploaded once per LUT object as two
+  `RGBA32F` textures read with `texelFetch` (no float filtering extension
+  needed): `(capture, ringGlow, discHit, discG)` and
+  `(skyTheta, skyPhi, discR cos discPhi, discR sin discPhi)`.
+- One WebGL2 fragment shader ports `sampleLUT` + `shadeSample` verbatim:
+  boundary-aware bilinear vote, sky directions blended as vectors over the
+  escaped neighbours only, the `hashAngle` starfield (uint32 arithmetic
+  reproduces the JS `ToInt32` bit pattern exactly), Novikov-Thorne flux with
+  the ISCO torque pin, `g^(3+alpha)` beaming, `composeFalseColor`, the photon
+  ring and the anti-aliased shadow edge. Camera azimuth and output size are
+  uniforms.
+- Attachment is a runtime patch of `KNLensing.shadeLUT`, the one entry point
+  `requestRenderLUT` and `reshadeLUT` both use, so `observer-view.jsx` and
+  `mobile-app.jsx` get the same `{ buffer, imageData, ... }` result as before.
+  The result is read back with `readPixels`; GL row y is image row y, so the
+  never-displayed canvas is upside down and the buffer comes out top-first.
+- Falls back to the original CPU reshade, per call, when `gpu.enabled` is
+  false, WebGL2 is missing, the context is lost, or a LUT holds a non-finite
+  `discG` on a hit cell (the CPU recovers those with `discShiftApprox`, which
+  is not ported).
+- `observer-view.jsx` now shades at **device pixels** (capped at 1080 rows)
+  when `KNLensing.gpu.ready()`; the trace grid is still sized from CSS pixels,
+  so the LUT build cost is unchanged. Mobile keeps its 160x100 request and
+  simply gets it shaded on the GPU.
+
+Control surface: `KNLensing.gpu = { available, enabled, lastMs, ready(),
+shade(lut, options) }`; `shade` has `shadeLUTImage`'s exact contract.
 
 Physics stays in the benchmarked worker; only shading moves. No new threshold.
+
+*Open item, not started:* lensing the main 3D view (lifting the Phase 2 disc's
+far side over the shadow). The LUT is azimuth-invariant but not
+inclination- or distance-invariant, so every tilt or zoom of the main camera
+would cost a fresh trace (~2.3 s at 76x42 in the browser worker); it needs its
+own design pass.
+
+*Not a GPU problem:* the shadow edge and photon ring still show the trace
+grid's staircase at high display resolution, identically on both paths —
+the capture vote is one base texel wide. Sharper edges need a finer trace or
+an edge-refining pass in the worker, not more shading resolution.
 
 ### Phase 4 — Volumetric jets and plasma
 
@@ -338,12 +371,51 @@ GPU layer disabled) and is not touched here.
 
 ### Known approximations
 
-- No light bending, as above — Phase 3.
+- No light bending, as above — still open after Phase 3 (Observer View only).
 - Only the primary and companion discs are surfaced; everything else the point
   pool draws is unchanged.
 - A non-black-hole host (`type !== 'bh'`) gets the temperature profile with
   the redshift term switched off (`uRel = 0`), since the Kerr circular-orbit
   expressions do not describe a stellar surface.
+
+## Phase 3 results (measured, not estimated)
+
+Checked against the original CPU `shadeLUTImage` on the **same LUT object**,
+pixel for pixel, in the running app: four LUTs traced at 76x42 with the
+Observer View's trace settings (`a` = 0 / 0.5 / 1.4 at `M` = 1.5, inclination
+40-80 deg, disc on and off, one with `Q` = 0.3), each shaded at 76x42,
+180x100 and 540x300 and at camera azimuths 0, 1 and 3 rad — 36 frames.
+
+| | result |
+|---|---|
+| max \|delta\| outside star flips | **1 code** in every frame |
+| mean \|delta\| per channel | 0.003-0.066 codes |
+| pixels differing by > 2 codes | 24 in 36 frames; at most 4 per 162k-pixel frame |
+| what those 24 are | every one a single sky pixel flipping between `[3,4,8]` and a star |
+
+The flips are the starfield's cell quantisation: `floor((phi/2pi + 4) * 220)`
+lands on the other side of a cell boundary when the blended sky direction is
+computed in float32 instead of float64. Same field, a star moved by one
+pixel; there is no shading difference to chase. The 1-code residual is the
+float32 pipeline plus `Uint8ClampedArray` round-half-even vs the GPU's
+unorm rounding.
+
+### Cost
+
+Wall time per reshade, CPU `shadeLUTImage` vs GPU draw **including** the
+`readPixels` stall, same LUTs:
+
+| output | CPU | GPU |
+|---|---|---|
+| 76x42 | 1.0-10.9 ms | 0.7-3.8 ms |
+| 180x100 (old desktop panel size) | 5.3-10.5 ms | 0.9-2.6 ms |
+| 540x300 | 47-79 ms | 1.5-4.3 ms |
+
+The high end of each range is the first call on a LUT: texture upload on the
+GPU side, module import and warm-up on the CPU side. At device resolution the CPU
+reshade would have been a visible hitch on every azimuth step; the GPU one is
+not. In the app the panel now shades 371x354 device pixels (it was 230x220)
+from the same 63x60 trace.
 
 ## Test posture
 
