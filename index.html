@@ -65,6 +65,11 @@
 <!-- WebGL 3D renderer (defines window.KNRender3D; vendored Three.js). The 2D
      renderer above stays as the CANVAS2D fallback / mobile path. -->
 <script type="module" src="render3d.mjs"></script>
+<!-- GPU shader layer over the 3D renderer: linear HDR target, hand-written
+     bloom, tonemap/vignette/dither composite, GPU point sprites. Patches
+     KNRender3D at runtime and degrades to the fixed-function path on its
+     own (GPU-RENDER-PLAN.md). -->
+<script type="module" src="render3d-gpu.mjs"></script>
 <!-- Library-chapter demo configurations (?demo=<id>), consumed by config.js. -->
 <script src="demo-presets.js"></script>
 <script src="config.js"></script>
@@ -73,6 +78,9 @@
 <!-- Off-thread gravitational-lensing renderer bridge (defines window.KNLensing;
      owns a module Web Worker over full-physics/lensing-worker.mjs). -->
 <script src="lensing.js"></script>
+<!-- GPU reshade of the deflection LUT (KNLensing.gpu): patches shadeLUT at
+     runtime, falls back to the CPU reshade on its own (GPU-RENDER-PLAN.md). -->
+<script src="lensing-gpu.js"></script>
 
 <!-- Shared UI helpers (plain JS; use the React / KNSim globals at call time) -->
 <script src="drag-move.js"></script>
