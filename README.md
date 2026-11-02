@@ -87,6 +87,15 @@ backend (`scientists-backend/`), and a Wikipedia-derived knowledge base (`wiki-k
 - **即時遙測 / Live telemetry** — 徑向距離、比能、角動量、區域分類、潮汐本徵值與穩定性分析。
 - **3D / 2D 渲染 / Renderers** — 桌面預設 WebGL 3D（Three.js），並保留 Canvas2D 作為
   小視窗與行動版的後備路徑。
+- **GPU 著色層 / GPU shader layer** — 疊在 3D 渲染器之上：HDR 管線與柔和光暈、相對論吸積盤
+  （都卜勒增亮與重力紅移）、體積噴流、天體與線段的 instanced 繪製；觀測者視窗的重力透鏡
+  改在 GPU 著色。於主控台以 `KNRender3D.gpu.set({ quality: 'high' | 'medium' | 'off' })`
+  切換，`medium` 以 0.75 倍解析度渲染，適合效能較弱的顯示晶片；不支援 WebGL2 時自動退回原路徑。
+  Layered over the 3D renderer: HDR pipeline with gentle bloom, a relativistic accretion
+  disc (Doppler beaming, gravitational redshift), volumetric jets, instanced bodies and
+  lines; Observer View lensing is shaded on the GPU. Switch it from the console with
+  `KNRender3D.gpu.set({ quality: 'high' | 'medium' | 'off' })` — `medium` renders at 0.75x
+  resolution for weaker GPUs; without WebGL2 it falls back to the original path.
 - **響應式雙版面 / Responsive layouts** — 桌面（多面板儀器台）與行動（分頁抽屜）於執行期
   依視窗自動切換。
 - **八國語系 / Eight locales** — 英文、繁體中文（台灣）、日文、韓文、德文、法文、西班牙文、
@@ -247,7 +256,9 @@ astrophysics_elf/
 ├── disc.js                 # MHD 吸積盤與噴流引擎               → window.KNDisc
 ├── render.js               # Canvas2D 渲染器（後備 / 行動版）
 ├── render3d.mjs            # WebGL 3D 渲染器（桌面預設）        → window.KNRender3D
+├── render3d-gpu*.mjs       # GPU 著色層（HDR、吸積盤、噴流、instancing）→ KNRender3D.gpu
 ├── lensing.js              # 重力透鏡 Worker 橋接               → window.KNLensing
+├── lensing-gpu.js          # 透鏡圖的 GPU 著色                  → KNLensing.gpu
 │
 ├── app.jsx                 # 桌面版根元件                      → window.App
 ├── panel-left/right/bottom.jsx   # 桌面面板（參數 / 遙測 / 天體庫）

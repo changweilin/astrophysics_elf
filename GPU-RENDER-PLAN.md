@@ -60,11 +60,12 @@ window.KNRender3D.gpu = {
     fieldLines, lineWidth, showCones, steps,
   },
   bodies: { enabled },       // Phase 5, render3d-gpu-bodies.mjs
+  lines: { enabled, width }, // Phase 5, render3d-gpu-lines.mjs (width: device px)
   set(partial),              // merge + re-apply without a reload
 };
 ```
 
-`set()` MERGES `bloom`, `disc`, `jets` and `bodies` rather than replacing them — the
+`set()` MERGES `bloom`, `disc`, `jets`, `bodies` and `lines` rather than replacing them — the
 layer modules hold the same object references, so assigning a fresh one would
 detach every uniform from the control surface.
 
@@ -243,7 +244,7 @@ same closure-privacy gap Phase 1 hit. The ribbons do not carry the beaming
 factor: like the lines they replace they are a field diagnostic, not emission.
 The volume does not depth-test (see the results below).
 
-### Phase 5 — Perf and consolidation  *(partial — instanced bodies)*
+### Phase 5 — Perf and consolidation  *(DONE — integrated-GPU 60fps unverified)*
 
 - *(DONE)* `InstancedMesh` for N-body bodies, shipped as
   `render3d-gpu-bodies.mjs` and installed by the Phase 1 layer;
@@ -253,10 +254,27 @@ The volume does not depth-test (see the results below).
   and retires them, the layer copies each one's matrix and colour into an
   instance slot and hides it for the frame, and `drawBodies()` sets it
   visible again on the next one — so turning the layer off needs no restore.
-- Instanced line quads for the remaining `LinePool` work.
-- Frame-time budget measured at 1080p/high; `quality: 'medium'` path tuned to
-  hold 60fps on integrated graphics.
-- `npm run verify`, rebuild `dist/`, update `README.md` and this file.
+- *(DONE)* Instanced line quads for the shared `LinePool`, shipped as
+  `render3d-gpu-lines.mjs`. One instance per segment, read zero-copy from the
+  pool's own `pos` / `col` arrays (their per-segment layout is exactly two
+  vec3), only the used prefix uploaded. Screen-space quads with a near-plane
+  trim in view space, so a segment crossing behind the camera cannot smear.
+  `LinePool.seg()` keeps its signature, so the Phase 4 filter on it is
+  untouched; only the pool's `LineSegments` is hidden. Width is now a real
+  control (`lines.width`, device pixels). Not a speed change — the pool was
+  already one draw call — but it is what keeps lines one device pixel wide
+  under `medium`'s reduced render scale. The other GL lines (horizon and
+  ergosphere rims, photon-orbit band) are separate `Line` objects and stay GL
+  lines.
+- *(DONE, target unverified)* Frame-time budget measured at 1080p/high (see
+  results). `quality: 'medium'` now renders the scene at 0.75x the drawing
+  buffer (56% of the pixels) with 2x instead of 4x MSAA, and the composite
+  upsamples. Pixel-sized things are compensated so they land at the same
+  device size: the point sprites' `uDpr`, the starfield's `PointsMaterial`
+  size (set and restored around each frame) and the line-quad width. Whether
+  that holds 60fps on integrated graphics could not be checked — no such GPU
+  was available.
+- *(DONE)* `npm run verify`, rebuild `dist/`, `README.md` and this file.
 
 ## Phase 1 results (measured, not estimated)
 
@@ -631,7 +649,8 @@ Under an eighth of the 16.6 ms budget. Going 1080p -> 4K adds only ~0.9 ms,
 so most of the layer's cost is fixed per-pass overhead, not fill.
 `LinePool` uploads its whole 42000-segment buffer (2 MB) every frame;
 restricting the upload to the used prefix measured 0.694 vs 0.696 ms — no
-gain on this hardware, so it was not shipped. The integrated-graphics
+gain on this hardware, so it was not done for its own sake (the line-quad
+layer below uploads only the prefix anyway). The integrated-graphics
 `medium` target is **unverified**: no such GPU was available.
 
 ### Instanced bodies
@@ -661,6 +680,52 @@ Lifecycle: `bodies.enabled = false` empties the batches and every body mesh
 draws again; `gpu.enabled = false` removes all three batches; four
 detach/attach cycles still leave exactly three; a removed body shrinks its
 batch on the next frame; capacity grows by doubling from 64 (checked at 500).
+
+### Line quads
+
+A quad of width w cannot match a GL line pixel for pixel: a GL line covers
+one pixel per step of its *major* axis, so diagonals and short trail segments
+carry more than a 1 px-wide quad. The default width is therefore calibrated
+on the one quantity that should match — the frame's integrated line energy,
+read back, decoded to linear luminance and differenced against a no-lines
+frame (`width = 0`):
+
+| tilt (rad) | GL lines | quad, w = 1 | equivalent width |
+|---|---|---|---|
+| 0.25 | 175.6 | 127.5 | 1.377 |
+| 0.90 | 170.4 | 124.1 | 1.373 |
+| 1.35 | 155.4 | 112.6 | 1.380 |
+
+Energy is linear in width (w = 1.5 and 2 gave 1.49x and 1.99x of w = 1), and
+the ratio is flat across tilt, so `width` ships at **1.375**. Against the GL
+lines the frame then differs by 0.0007 codes mean, 0.002% of channels by more
+than 8, same peak (241).
+
+Near-plane trim, checked where it matters — zoomed in near edge-on, with the
+grid on: 79 and 103 segments straddling the near plane and 710 / 1899 fully
+behind it. Against the GL lines no channel moves by more than 8 (max 18 and
+4), i.e. no smear.
+
+Lifecycle: `lines.enabled = false` hands the pool's `LineSegments` back;
+`gpu.enabled = false` removes the quad mesh and the Phase 4 filter together;
+`medium` resizes the target with the quads following; four detach/attach
+cycles still leave exactly one quad mesh.
+
+### Medium render scale
+
+At a 1920x1080 buffer `medium` renders into 1440x810 with 2x MSAA. Against
+`high` the frame's total linear luminance is **0.995x** — the size
+compensation keeps points, stars and lines at the same energy — and the
+per-pixel difference (0.12 codes mean, 0.25% of channels over 8, max 180) is
+resampling on edges and single-pixel stars, as expected from an upsample.
+
+Cost could **not** be measured cleanly in this round. The Browser pane was
+hidden, so the page ran as a background page: the same condition scattered
+1-6 ms run to run, and `EXT_disjoint_timer_query_webgl2` was as erratic as
+Phase 2 found it. The only stable readings were timer queries at 3840x2160:
+`high` ~1.5 ms, `medium` ~0.8-1.1 ms, and GL lines vs quads indistinguishable
+(1.51 vs 1.51). Re-measure with the pane in view before quoting a `medium`
+saving, and on an integrated GPU before claiming 60fps.
 
 ## Test posture
 

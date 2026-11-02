@@ -39,9 +39,17 @@ import * as THREE from './vendor/three.module.js';
 import { GpuDiscLayer, DISC } from './render3d-gpu-disc.mjs';
 import { GpuJetLayer, JETS } from './render3d-gpu-jets.mjs';
 import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
+import { GpuLineLayer, LINES } from './render3d-gpu-lines.mjs';
 
 (function () {
   const LEVELS = { high: 4, medium: 3 };
+  // 'medium' renders the scene at 0.75x the drawing buffer (56% of the
+  // pixels) with 2x instead of 4x MSAA, and the composite upsamples. That is
+  // the lever a fill-bound integrated GPU actually responds to; bloom levels
+  // and jet steps alone bought 0.1-0.3 ms on a discrete card.
+  const SCALE = { high: 1, medium: 0.75 };
+  const SAMPLES = { high: 4, medium: 2 };
+  function renderScale() { return SCALE[GPU.quality] || 1; }
 
   const GPU = {
     available: false,
@@ -63,11 +71,14 @@ import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
     jets: JETS,
     // Phase 5 instanced N-body meshes (render3d-gpu-bodies.mjs).
     bodies: BODIES,
+    // Phase 5 instanced line quads for the shared LinePool (render3d-gpu-lines.mjs).
+    lines: LINES,
     _stack: null,
     _points: [],
     _disc: null,
     _jets: null,
     _bodies: null,
+    _lines: null,
   };
 
   const _v2 = new THREE.Vector2();
@@ -288,13 +299,13 @@ import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
       };
     }
 
-    resize(w, h, levels) {
-      if (this.w === w && this.h === h && this.levels === levels) return;
-      this.w = w; this.h = h; this.levels = levels;
+    resize(w, h, levels, samples) {
+      if (this.w === w && this.h === h && this.levels === levels && this.samples === samples) return;
+      this.w = w; this.h = h; this.levels = levels; this.samples = samples;
       if (this.hdr) this.hdr.dispose();
       // samples: 4 restores the MSAA that `antialias: true` stops providing the
       // moment a render target is bound.
-      this.hdr = rt(w, h, { depthBuffer: true, samples: 4 });
+      this.hdr = rt(w, h, { depthBuffer: true, samples });
       // The scene target stays LINEAR, and that is not a choice: for any
       // non-XR render target Three hard-codes the material output space to
       // LinearSRGBColorSpace (vendor/three.module.js:20725), so a
@@ -315,7 +326,11 @@ import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
     render(scene, camera) {
       const r = this.renderer, fs = this.fs, M = this.mat;
       const size = r.getDrawingBufferSize(_v2);
-      this.resize(Math.max(2, size.x | 0), Math.max(2, size.y | 0), LEVELS[GPU.quality] || 3);
+      // Same rounding as GpuLineLayer.update, which sizes its quads in these
+      // target pixels.
+      const s = renderScale();
+      this.resize(Math.max(2, Math.round(size.x * s)), Math.max(2, Math.round(size.y * s)),
+        LEVELS[GPU.quality] || 3, SAMPLES[GPU.quality] || 4);
 
       const prevAutoClear = r.autoClear;
 
@@ -457,8 +472,11 @@ import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
     GPU._points.length = 0;
   }
 
-  function updatePointUniforms(R) {
-    const dpr = R.renderer ? R.renderer.getPixelRatio() : 1;
+  // scale: the post stack's render scale. gl_PointSize is in target pixels,
+  // and the target is upsampled to the canvas, so sizes shrink by the same
+  // factor to land at the same device-pixel size.
+  function updatePointUniforms(R, scale) {
+    const dpr = (R.renderer ? R.renderer.getPixelRatio() : 1) * scale;
     const t = R.sim && Number.isFinite(R.sim.t) ? R.sim.t : performance.now() * 0.001;
     for (const pool of GPU._points) {
       pool.mat.uniforms.uDpr.value = dpr;
@@ -487,14 +505,26 @@ import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
       GPU._disc = new GpuDiscLayer(R);
       GPU._jets = new GpuJetLayer(R);
       GPU._bodies = new GpuBodyLayer(R);
+      GPU._lines = new GpuLineLayer(R);
       R.renderer.render = function (scene, camera) {
-        updatePointUniforms(R);
+        const scale = renderScale();
+        updatePointUniforms(R, scale);
         // Before the scene is traversed, not after: this positions the disc
         // meshes and hands the point pool back its visibility.
         GPU._disc.update(R);
         GPU._jets.update(R, GPU.quality);
         GPU._bodies.update(R);
-        stack.render(scene, camera);
+        GPU._lines.update(R, scale);
+        // The starfield keeps its PointsMaterial, whose size Three multiplies
+        // by the renderer's pixel ratio, not by the target's scale.
+        const stars = R.stars && R.stars.material;
+        const starSize = stars ? stars.size : 0;
+        if (stars) stars.size = starSize * scale;
+        try {
+          stack.render(scene, camera);
+        } finally {
+          if (stars) stars.size = starSize;
+        }
       };
       upgradePoints(R);
     } catch (err) {
@@ -505,6 +535,7 @@ import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
 
   function uninstall(R) {
     restorePoints();
+    if (GPU._lines) { GPU._lines.dispose(R); GPU._lines = null; }
     if (GPU._bodies) { GPU._bodies.dispose(R); GPU._bodies = null; }
     if (GPU._jets) { GPU._jets.dispose(R); GPU._jets = null; }
     if (GPU._disc) { GPU._disc.dispose(R); GPU._disc = null; }
@@ -535,13 +566,15 @@ import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
     GPU.set = function (partial) {
       if (partial && typeof partial === 'object') {
         for (const k in partial) {
-          // bloom, disc, jets and bodies are merged, never replaced: the layer
-          // modules hold the same object references, so assigning a fresh one
-          // would silently detach every uniform from the control surface.
+          // bloom, disc, jets, bodies and lines are merged, never replaced: the
+          // layer modules hold the same object references, so assigning a
+          // fresh one would silently detach every uniform from the control
+          // surface.
           if (k === 'bloom' && partial.bloom) Object.assign(GPU.bloom, partial.bloom);
           else if (k === 'disc' && partial.disc) Object.assign(GPU.disc, partial.disc);
           else if (k === 'jets' && partial.jets) Object.assign(GPU.jets, partial.jets);
           else if (k === 'bodies' && partial.bodies) Object.assign(GPU.bodies, partial.bodies);
+          else if (k === 'lines' && partial.lines) Object.assign(GPU.lines, partial.lines);
           else if (k in GPU && typeof GPU[k] !== 'function') GPU[k] = partial[k];
         }
       }
