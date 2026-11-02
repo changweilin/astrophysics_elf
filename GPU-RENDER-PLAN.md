@@ -54,13 +54,18 @@ window.KNRender3D.gpu = {
     enabled, gExp, brightness, turbulence, flare,
     colorGamma, hotDesat, maxIntensity, showPoints,
   },
+  jets: {                    // Phase 4, render3d-gpu-jets.mjs
+    enabled, brightness, density, turbulence, turns, flow, knots,
+    beaming, beamExp, maxIntensity,
+    fieldLines, lineWidth, showCones, steps,
+  },
   set(partial),              // merge + re-apply without a reload
 };
 ```
 
-`set()` MERGES `bloom` and `disc` rather than replacing them —
-`render3d-gpu-disc.mjs` holds the same `disc` object reference, so assigning a
-fresh one would detach every uniform from the control surface.
+`set()` MERGES `bloom`, `disc` and `jets` rather than replacing them — the
+layer modules hold the same object references, so assigning a fresh one would
+detach every uniform from the control surface.
 
 ## Phases
 
@@ -186,13 +191,56 @@ grid's staircase at high display resolution, identically on both paths —
 the capture vote is one base texel wide. Sharper edges need a finer trace or
 an edge-refining pass in the worker, not more shading resolution.
 
-### Phase 4 — Volumetric jets and plasma
+### Phase 4 — Volumetric jets and plasma  *(DONE)*
 
-Replace the two unlit cones with a raymarched bipolar volume: helical B-field
-advection, 3-octave noise density, Mach knots as density pulses driven by the
-existing `KNDisc.jetMetrics` (`P`, `theta`, `gamma`), synchrotron-leaning
-colour ramp keyed on `Γ`. Thick field lines become instanced quads so the
-helix reads at any zoom.
+Shipped as `render3d-gpu-jets.mjs`, installed and torn down by the Phase 1
+layer. `render3d.mjs`: **zero diff**. The two unlit `CylinderGeometry` cones
+are replaced by a raymarched bipolar volume (one `BoxGeometry` per jet, back
+faces, 48 steps at `high` / 28 at `medium`) plus instanced field-line ribbons
+(one `InstancedBufferGeometry`, 72 quads x 4 instances — the same two phases
+and two directions `drawJet` traced with 1px lines).
+
+Every dimension is re-derived from `drawJet`'s own expressions, so the volume
+occupies exactly the space the cones did: `lum = min(1, P/30)`,
+`len = 6 + 10 lum`, `baseR = 0.5 + 0.8 lum`,
+`tipR = max(1.4 baseR, baseR + tan(theta) len 1.2)`, knot count
+`min(5, floor(gamma/4))`, helix pitch 4 turns. Density is a limb-brightened
+sheath over a Poynting spine, modulated by 3-octave value noise sampled in a
+frame sheared by the helix and advected outward, with the Mach knots as
+Gaussian density pulses at `drawJet`'s own knot positions. Emission is faded
+to zero inside `r+`.
+
+The one piece of physics this phase ADDS, which the cones never had, is
+relativistic beaming of the two lobes:
+
+```
+beta = sqrt(1 - 1/Gamma^2)
+D    = 1 / (Gamma (1 - beta cos(theta_obs)))      Doppler factor
+I    = I_0 D^(2+alpha)                            steady jet, alpha ~ 0.7
+```
+
+`Gamma` is `jetMetrics().gamma`; `beamExp` defaults to 2.7 and is the
+discrete-blob `3+alpha` at 3.7. `D` is **not** used as an absolute scale:
+looking down the barrel of a `Gamma = 10` jet gives `D ~ 20` and
+`D^2.7 ~ 3000`, which blows the frame out for a reason that is normalisation
+rather than physics. The pair is normalised so the brighter lobe is 1 and the
+counter-jet carries the ratio `(D_dn/D_up)^beamExp`. That ratio is the
+falsifiable content, and it is what the verification below measures.
+
+The cones are suppressed by flipping `visible` on the meshes `jetSlot()`
+already parks in `R.jetSlots[key]` — that is the whole reason `render3d.mjs`
+needs no diff. `gpu.jets.showCones = true` draws both.
+
+The 1px helix and the knot circles go into the **shared** `LinePool`, which has
+no per-caller channel, so they are dropped as they arrive by a filter on
+`pools.line.seg`, with the envelopes refreshed from a patched
+`pools.line.begin` (the frame calls it before any drawing, so there is no
+one-frame lag).
+
+*Known gaps:* `makeMini`'s MHD-monitor jets keep the fixed-function cones — the
+same closure-privacy gap Phase 1 hit. The ribbons do not carry the beaming
+factor: like the lines they replace they are a field diagnostic, not emission.
+The volume does not depth-test (see the results below).
 
 ### Phase 5 — Perf and consolidation
 
@@ -416,6 +464,143 @@ GPU side, module import and warm-up on the CPU side. At device resolution the CP
 reshade would have been a visible hitch on every azimuth step; the GPU one is
 not. In the app the panel now shades 371x354 device pixels (it was 230x220)
 from the same 63x60 trace.
+
+## Phase 4 results (measured, not estimated)
+
+Measured in the running app at a 1167x1077 drawing buffer, `a` = 0.95,
+`B` = 1.0 (`P` = 90.3, `Gamma` ~ 10, `theta` = 5.1 deg — the most luminous jet
+the model produces, `lum` = 1), the disc enabled and stepped to ~660
+particles, the sim paused so consecutive frames are bit-identical (checked:
+frame-to-frame max delta 1 code) and the composite dither off.
+
+Note that the app's RAF loop does not run while the Browser pane is hidden and
+**overwrites `SIM.paused` on every iteration**, so every A/B below was taken
+inside a single evaluation, driving `KNSim.step` + `KNRender3D.render` by hand.
+Comparisons split across calls drift — the first round of brightness numbers
+was taken that way and was wrong by 10%.
+
+### Beaming, against the closed form
+
+The counter-jet/jet ratio was read out of the frame: two boxes on the axis at
+`z = +-(z0 + 0.55 len)`, each sized from its OWN lobe's pixel scale so both
+hold the same physical slab, differenced against a null frame taken with
+`jets.density = 0` (the layer installed and the cones still hidden, so the
+difference is the volume alone and nothing else), decoded from sRGB to linear,
+with `brightness` dropped to 0.05 so nothing reaches the composite's knee and
+the chain is linear end to end.
+
+Perspective makes the two boxes catch slightly different chord lengths, so
+each tilt also gets a geometric null at `beaming = 0`, where the shader makes
+the lobes identical by construction. Dividing it out leaves the beaming alone:
+
+| tilt (rad) | cos(theta) | geometric null | raw ratio | corrected | predicted | err |
+|---|---|---|---|---|---|---|
+| 0.70 | 0.7648 | 1.1704 | 0.00530 | 0.00453 | 0.00453 | -0.1% |
+| 1.00 | 0.5403 | 1.2121 | 0.04689 | 0.03868 | 0.03894 | -0.7% |
+| 1.25 | 0.3153 | 1.1264 | 0.19517 | 0.17327 | 0.17307 | +0.1% |
+| 1.42 | 0.1502 | 1.0616 | 0.47028 | 0.44300 | 0.44327 | -0.1% |
+| pi/2 | 0.0000 | 1.0000 | 0.99996 | 1.00000 | 1.00000 | 0% |
+
+`Gamma` = 10.42, `beta` = 0.99538. Sub-1% over a factor of 200 in the ratio.
+
+Two further falsifiable limits, both clean:
+
+- **Exactly edge-on is symmetric.** At `cos(theta) = 0` the measured ratio is
+  0.99996 with beaming fully on, and the geometric null is 1.000 as well —
+  which also confirms the correction above is perspective and not a shading
+  difference, since the two lobes are then equidistant.
+- **The exponent is what it says.** Halving `beamExp` to 1.35 should square the
+  ratio. Measured at tilt 1.25: 0.4725 at 1.35 and 0.1969 at 2.7, and
+  `0.4725^2 / 0.1969 = 1.134` — the same geometric null (1.1264) the
+  `beaming = 0` run found independently at that tilt.
+
+### Brightness, against the cones it replaces
+
+Whole-frame statistics, same frozen scene, peak and clipped-channel count
+against the fixed-function cones:
+
+| | frame mean | peak | channels > 248 |
+|---|---|---|---|
+| old cones | 12.51 | 222 | 0.001% |
+| `brightness` 0.55, `maxIntensity` 3.2 | 12.98 | 255 | 1.282% |
+| `brightness` 0.35, `maxIntensity` 2.0 | 11.87 | 253 | 0.603% |
+| `brightness` 0.25, `maxIntensity` 1.6 | 11.16 | 243 | 0.275% |
+| **`brightness` 0.20, `maxIntensity` 1.2** | **10.77** | **223** | **0.073%** |
+| `brightness` 0.15, `maxIntensity` 1.0 | 10.33 | 215 | 0.001% |
+
+0.55 was the first guess and put 1.3% of the frame at 255 — glare, which the
+project rule rules out. The shipped default lands the peak on the cones' own
+peak. The frame mean comes out *below* the cones because the volume
+concentrates its emission in the cone interior where they spread a flat
+translucent haze over the whole silhouette.
+
+### The LinePool filter, and the indicator it nearly ate
+
+With the jets on, exactly **288** segments are dropped from the shared pool:
+184 helix segments (2 phases x 2 directions x 46) plus 104 knot-circle
+segments (2 knots x 2 directions x 26) — the entire set `drawJet` contributes
+and nothing else.
+
+The first build tested geometry only ("both endpoints inside an active jet
+cone") and dropped **318**. The extra 30 were the spin-axis indicator: 5
+dashes plus a 10-segment sense arc per direction, drawn straight up the same
++-z corridor and labelled in the UI. It is a readout this layer does not
+replace. The filter now needs colour AND geometry, which fails safe the right
+way round — if `drawJet`'s palette changes the filter stops matching and the
+old helix draws under the ribbons, a visual nit, rather than silently removing
+an indicator.
+
+### Cost
+
+Same protocol as Phase 2 (queue N frames with no flush, force one `readPixels`
+so the driver backpressures, conditions interleaved to cancel drift), medians
+of six interleaved rounds of 25 frames:
+
+| | default framing | jet filling the viewport |
+|---|---|---|
+| cones (jets off) | 1.29 | 1.48 |
+| volume only, 48 steps | 1.48 | 2.48 |
+| volume only, 28 steps (`medium`) | 1.32 | 1.95 |
+| volume + ribbons, 48 steps | 1.48 | 2.10 |
+
+ms per frame. At the framing the app actually uses the layer costs ~0.2 ms, a
+fifth of the frame's GPU submission. A raymarch is fill-bound, so the number
+that matters is the zoomed-in case, where 48 steps cost ~0.6-1.0 ms and the
+`medium` step count halves it. Run-to-run drift is a few tenths of a ms — the
+ribbons measuring *cheaper* than the volume alone in one column is that noise,
+not a real ordering — so only the interleaved differences mean anything. The
+early-out on zero density is what keeps this affordable: most steps along a
+ray through the bounding box are outside the cone and skip the noise entirely.
+
+### Lifecycle
+
+Checked explicitly, as in Phase 2:
+
+| | volumes | ribbons | pool patched | cones |
+|---|---|---|---|---|
+| installed | 2 | 2 | yes | hidden |
+| `jets.enabled = false` | 2 | 2 | yes | visible |
+| `jets.enabled = true` | 2 | 2 | yes | hidden |
+| `gpu.enabled = false` | 0 | 0 | no | visible |
+| `gpu.enabled = true` | 2 | 2 | yes | hidden |
+| after 4 detach/attach cycles | 2 | 2 | yes | hidden |
+
+Two of each (primary + companion), never more. Binary mode drives both slots
+and hides both cone sets; `P <= 0.3` (`a` = 0, `B` = 0) leaves no jet at all
+and hands the cones straight back.
+
+### Known approximations
+
+- **No depth test on the volume.** A raymarch needs the scene depth buffer to
+  clip against, and Phase 1's HDR target is multisampled, which rules out a
+  depth texture in Three r169. The case it would matter for is the counter-jet
+  seen through the hole — and a lobe is hidden behind the horizon exactly when
+  it points away, where the beaming factor has already driven it to a few
+  percent. Emission is faded to zero inside `r+` on top of that.
+- The ribbons do not beam (a field diagnostic, like the lines they replace).
+- Mini views keep the fixed-function cones (the Phase 1 closure-privacy gap).
+- Light bending is not included here either — the jet is drawn with straight
+  rays, like the Phase 2 disc.
 
 ## Test posture
 

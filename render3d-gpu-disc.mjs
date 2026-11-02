@@ -77,7 +77,7 @@ export const DISC = {
 // 3D value noise: the disc has to tile seamlessly in azimuth, so the field is
 // sampled on a cylinder — (cos psi, sin psi) around, log r along — which a 2D
 // noise cannot do without a visible seam at phi = 0.
-const NOISE_GLSL = `
+export const NOISE_GLSL = `
   float hash13(vec3 p) {
     return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
   }
