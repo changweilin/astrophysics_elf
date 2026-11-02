@@ -36,6 +36,7 @@
  */
 
 import * as THREE from './vendor/three.module.js';
+import { GpuDiscLayer, DISC } from './render3d-gpu-disc.mjs';
 
 (function () {
   const LEVELS = { high: 4, medium: 3 };
@@ -54,8 +55,11 @@ import * as THREE from './vendor/three.module.js';
     // per frame for a zero-delta result. 0.35 lets the hottest cores glow and
     // nothing else: ~0.04% of channels move, by at most 23 codes.
     bloom: { threshold: 0.35, intensity: 0.16, radius: 1.0 },
+    // Phase 2 relativistic disc surface (render3d-gpu-disc.mjs).
+    disc: DISC,
     _stack: null,
     _points: [],
+    _disc: null,
   };
 
   const _v2 = new THREE.Vector2();
@@ -227,10 +231,16 @@ import * as THREE from './vendor/three.module.js';
           c += texture2D(tBloom, vUv).rgb * uBloom;
           c *= uExposure;
           // Hot cores drift toward white rather than toward a saturated hue —
-          // this is what keeps a bright disc from reading as neon. Keyed above
-          // 1.0 so nothing already in display range is touched.
+          // this is what keeps a bright disc from reading as neon. Keyed on the
+          // MAX channel, not on luminance: the relativistic disc produces
+          // colours whose green and blue are far over 1.0 while red is still
+          // near zero, and luminance stays under 1.0 right through that, so a
+          // luminance key leaves the two clipped channels to pin at 255 and the
+          // result reads as neon cyan. Still zero below 1.0, so nothing already
+          // in display range moves.
           float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-          c = mix(c, vec3(l), clamp((l - 1.0) * 0.35, 0.0, 0.45));
+          float m = max(max(c.r, c.g), c.b);
+          c = mix(c, vec3(l), clamp((m - 1.0) * 0.35, 0.0, 0.75));
           c = shoulder(c);
           vec2 q = vUv - 0.5;
           c *= 1.0 - uVignette * dot(q, q) * 2.4;
@@ -466,8 +476,12 @@ import * as THREE from './vendor/three.module.js';
     try {
       const stack = new PostStack(R.renderer);
       GPU._stack = stack;
+      GPU._disc = new GpuDiscLayer(R);
       R.renderer.render = function (scene, camera) {
         updatePointUniforms(R);
+        // Before the scene is traversed, not after: this positions the disc
+        // meshes and hands the point pool back its visibility.
+        GPU._disc.update(R);
         stack.render(scene, camera);
       };
       upgradePoints(R);
@@ -479,6 +493,7 @@ import * as THREE from './vendor/three.module.js';
 
   function uninstall(R) {
     restorePoints();
+    if (GPU._disc) { GPU._disc.dispose(R); GPU._disc = null; }
     if (GPU._stack) {
       if (R && R.renderer) R.renderer.render = GPU._stack.raw;
       GPU._stack.dispose();
@@ -506,7 +521,11 @@ import * as THREE from './vendor/three.module.js';
     GPU.set = function (partial) {
       if (partial && typeof partial === 'object') {
         for (const k in partial) {
+          // bloom and disc are merged, never replaced: render3d-gpu-disc.mjs
+          // holds the same object reference, so assigning a fresh one would
+          // silently detach every uniform from the control surface.
           if (k === 'bloom' && partial.bloom) Object.assign(GPU.bloom, partial.bloom);
+          else if (k === 'disc' && partial.disc) Object.assign(GPU.disc, partial.disc);
           else if (k in GPU && typeof GPU[k] !== 'function') GPU[k] = partial[k];
         }
       }

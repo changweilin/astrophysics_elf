@@ -50,9 +50,17 @@ window.KNRender3D.gpu = {
   quality: 'high'|'medium'|'off',
   exposure, vignette, grain,
   bloom: { threshold, intensity, radius },
+  disc: {                    // Phase 2, render3d-gpu-disc.mjs
+    enabled, gExp, brightness, turbulence, flare,
+    colorGamma, hotDesat, maxIntensity, showPoints,
+  },
   set(partial),              // merge + re-apply without a reload
 };
 ```
+
+`set()` MERGES `bloom` and `disc` rather than replacing them —
+`render3d-gpu-disc.mjs` holds the same `disc` object reference, so assigning a
+fresh one would detach every uniform from the control surface.
 
 ## Phases
 
@@ -84,20 +92,51 @@ no-regression check.
 fixed-function materials in Phase 1. Closing that needs one additive line in
 `render3d.mjs` exposing the pool classes — deferred, per-target approval.
 
-### Phase 2 — Relativistic accretion disc
+### Phase 2 — Relativistic accretion disc  *(DONE)*
 
-A shader-driven annulus (high radial tessellation, inner edge at the ISCO from
-`KNphysics`) rendered alongside the point pool:
+Shipped as `render3d-gpu-disc.mjs`, installed and torn down by the Phase 1
+layer. A shader-driven annulus, 160 x 256 quads (82k triangles), logarithmic
+in radius so the tessellation sits where the gradients are. `position` carries
+`(u, v)` parameters rather than coordinates and the vertex stage places every
+vertex from `uRin`/`uRout`, so a change of mass, spin or charge needs no
+rebuild.
 
-- Keplerian shear advected in the vertex stage; flared scale height `h ∝ r`.
-- Doppler factor `g = 1 / (γ (1 - β·n))`, specific intensity `I ∝ g^(3+α)`.
-- Gravitational redshift folded in from the same `√(1 - 2M/r)` the demo uses.
-- Blackbody colour from `T(r) ∝ r^(-3/4)` through the existing `discLUT` as a
-  1D texture.
-- 3-octave domain-warped noise for turbulence and reconnection sheets.
+Redshift came out stronger than the plan asked for. Rather than the
+Schwarzschild `β·n` form, the shader uses the **exact Kerr equatorial circular
+geodesic**, which costs no more arithmetic:
 
-The point pool stays as the fallback and keeps driving particle *events*; only
-the appearance moves to the surface shader.
+```
+Omega = s sqrt(M) / (r^3/2 + |a| sqrt(M))
+u^t   = (r^3/2 + |a| sqrt(M)) / sqrt(r^3 - 3 M r^2 + 2 |a| sqrt(M) r^3/2)
+b     = x n_y - y n_x                      photon impact parameter L/E
+g     = 1 / (u^t (1 - Omega b))
+```
+
+Face-on with `a = 0` this reduces to `g = sqrt(1 - 3M/r)` and the `u^t`
+denominator vanishes at the *photon* orbit, always inside the prograde ISCO,
+so it stays finite wherever the disc exists. Inner edge is the exact
+Kerr-Newman ISCO from `KNphysics.isco`.
+
+- Emission is Novikov-Thorne, `T ~ r^-3/4 (1 - sqrt(r_in/r))^1/4`, normalised
+  to its own peak at `(49/36) r_in`. The zero-torque factor is why the inner
+  rim is dark rather than brightest.
+- Colour and brightness both come from the *observed* temperature `g*T` —
+  one quantity, not two tuned ones. `I = (g T)^gExp`, default 4, the
+  bolometric Liouville result; the plan's `g^(3+α)` is this knob at `3 + α`.
+- 3-octave domain-warped value noise, sampled on a cylinder so azimuth has no
+  seam, advected by `Omega(r)` so differential rotation winds it into trailing
+  spirals with no explicit spiral term.
+- Flared scale height `h = 0.055 r`, the constant the point pool already uses,
+  corrugated by the same noise field the fragment stage shades with.
+
+Light bending is NOT included — rays run straight from the emitting ring to
+the observer. That is what Phase 3 replaces, and it is why the far side is not
+yet lifted into an arc over the shadow.
+
+The point pool keeps running untouched: it still owns accretion, capture,
+`mDot` and the reconnection flares. Only its *drawing* is suppressed while the
+surface is up, because both represent the same gas and leaving both on doubles
+the emission. `gpu.disc.showPoints = true` draws both.
 
 ### Phase 3 — Lensing and photon ring on the GPU
 
@@ -213,6 +252,98 @@ MSAA accounts for most of the 1.6% of channels that moved by more than 8:
 `antialias: true` on the default framebuffer and `samples: 4` on a render
 target do not resolve identically, so high-contrast edges differ by a few
 codes.
+
+## Phase 2 results (measured, not estimated)
+
+The shader was checked against an **independent CPU implementation of the same
+model** — redshift, temperature profile, LUT lookup, hot-end desaturation and
+intensity, written separately in JS — sampled through `KNSim.worldToScreen` at
+matching world points, with the frame read back by `gl.readPixels`, decoded
+from sRGB and corrected for the composite's vignette. Turbulence off so the
+comparison is deterministic; the sky floor (`[1,4,7]`) subtracted, since the
+prediction is disc-only.
+
+Camera tilted 1.15 rad, `a = 0.5` (so r_in = 4.233 M, the exact Kerr-Newman
+ISCO), shipped defaults. Error is measured minus predicted, per channel:
+
+| r / M | g approaching | g receding | approaching err | receding err |
+|---|---|---|---|---|
+| 6  | 1.1396 | 0.5358 | -0.4 / -0.6 / -0.5 % | +1.0 / -0.7 % |
+| 9  | 1.1745 | 0.6342 | +2.3 / +0.7 / +0.7 % | -0.6 / -3.1 % |
+| 14 | 1.1718 | 0.7157 | -3.1 / +1.8 / +7.0 % | -0.2 / -4.2 % |
+
+(The receding blue channel is omitted where the predicted value is under
+1/10 of a display code — the relative error there is meaningless.) The
+residual few percent is LUT texel filtering, 8-bit quantisation and the 5x5
+sample patch sitting on a gradient.
+
+Two falsifiable limits, both clean:
+
+- **Face-on is axisymmetric.** With `uObs = (0,0,1)` the impact parameter `b`
+  is zero everywhere, and four azimuths at r = 9 agree to ~2%, i.e. to the
+  sampling noise. No spurious asymmetry anywhere in the chain.
+- **Schwarzschild limit.** At `a = 0` the inner edge lands on exactly 6 M and
+  `1/u^t` matches `sqrt(1 - 3M/r)` to six decimals at r = 6.2, 8, 12, 20.
+
+### Cost
+
+GPU timings here need care. `EXT_disjoint_timer_query_webgl2` returned 22-39 ms
+per frame and was **self-inconsistent** — it put the disc-off case *slower*
+than disc-on — so those numbers were discarded. A `performance.now()` loop
+around single frames is worse still: it quantises to 16.6 / 33.3 ms, i.e. it
+measures vsync, not work. What does work is queueing N frames with no flush
+and forcing one `readPixels` at the end, so the driver backpressures; with the
+conditions interleaved to cancel the drift this environment clearly has:
+
+| | ms / frame |
+|---|---|
+| fixed-function path, whole layer off | 0.63 |
+| Phase 1 layer (post stack + sprites) | 1.87 |
+| disc surface on vs off | 1.21 vs 1.30 |
+| turbulence on vs off | 1.67 vs 1.66 |
+
+So the disc surface is free to within the noise — it replaces a point pool
+that cost about the same — and the 3-octave warped noise is free as well,
+because the disc covers few pixels. Absolute levels drift between runs, which
+is why only the interleaved differences are quoted.
+
+### A Phase 1 fix this phase forced
+
+The composite desaturated highlights keyed on **luminance**, which misses the
+case this disc produces constantly: green and blue far over 1.0 while red is
+still near zero, with luminance under 1.0 the whole time. The two channels pin
+at 255 and the result reads as neon. The key is now the **max channel**, with
+the ceiling raised from 0.45 to 0.75. It is still exactly zero below 1.0, so
+every Phase 1 measurement in display range is unaffected.
+
+That was not the whole story. The shared ramp in `render3d.mjs` ends at
+`oklch(0.95 0.20 230)`, a saturated cyan the point pool never reached — its
+index is `1 - r/22`, which tops out near 0.73. Driving the index from real
+temperature does reach it. The fix is physical rather than a clamp: a
+blackbody's chromaticity converges to blue-white as it heats instead of
+saturating further, so chroma is bled toward a neutral of equal luminance past
+the warm half of the ramp (`DISC.hotDesat`). Measured on the tilted production
+frame, the fraction of bright strongly-coloured pixels fell from 1.12% to
+0.08% — 14x — while the beaming stays plainly readable.
+
+### Lifecycle
+
+Checked explicitly, since this phase adds scene objects where Phase 1 added
+none: `disc.enabled = false` hides the surface and hands the point pool back;
+turning the whole layer off removes both meshes and restores the pool;
+detach/attach re-creates them; and four detach/attach cycles still leave
+exactly two meshes, so nothing accumulates. The `INVALID_OPERATION` after a
+detach/attach cycle is pre-existing in `render3d.mjs` (it reproduces with the
+GPU layer disabled) and is not touched here.
+
+### Known approximations
+
+- No light bending, as above — Phase 3.
+- Only the primary and companion discs are surfaced; everything else the point
+  pool draws is unchanged.
+- A non-black-hole host (`type !== 'bh'`) gets the temperature profile with
+  the redshift term switched off (`uRel = 0`), since the Kerr circular-orbit
+  expressions do not describe a stellar surface.
 
 ## Test posture
 
