@@ -59,11 +59,12 @@ window.KNRender3D.gpu = {
     beaming, beamExp, maxIntensity,
     fieldLines, lineWidth, showCones, steps,
   },
+  bodies: { enabled },       // Phase 5, render3d-gpu-bodies.mjs
   set(partial),              // merge + re-apply without a reload
 };
 ```
 
-`set()` MERGES `bloom`, `disc` and `jets` rather than replacing them — the
+`set()` MERGES `bloom`, `disc`, `jets` and `bodies` rather than replacing them — the
 layer modules hold the same object references, so assigning a fresh one would
 detach every uniform from the control surface.
 
@@ -242,9 +243,16 @@ same closure-privacy gap Phase 1 hit. The ribbons do not carry the beaming
 factor: like the lines they replace they are a field diagnostic, not emission.
 The volume does not depth-test (see the results below).
 
-### Phase 5 — Perf and consolidation
+### Phase 5 — Perf and consolidation  *(partial — instanced bodies)*
 
-- `InstancedMesh` for N-body bodies (one draw call instead of one per body).
+- *(DONE)* `InstancedMesh` for N-body bodies, shipped as
+  `render3d-gpu-bodies.mjs` and installed by the Phase 1 layer;
+  `render3d.mjs`: **zero diff**. One batch per shape (sphere, ship cone, probe
+  box) with the same geometry, material and `renderOrder` as `bodyMesh()`.
+  The per-body meshes stay the source of truth: `drawBodies()` still places
+  and retires them, the layer copies each one's matrix and colour into an
+  instance slot and hides it for the frame, and `drawBodies()` sets it
+  visible again on the next one — so turning the layer off needs no restore.
 - Instanced line quads for the remaining `LinePool` work.
 - Frame-time budget measured at 1080p/high; `quality: 'medium'` path tuned to
   hold 60fps on integrated graphics.
@@ -601,6 +609,58 @@ and hands the cones straight back.
 - Mini views keep the fixed-function cones (the Phase 1 closure-privacy gap).
 - Light bending is not included here either — the jet is drawn with straight
   rays, like the Phase 2 disc.
+
+## Phase 5 results (measured, not estimated)
+
+Measured in the running app on an RTX 3060 (ANGLE / D3D11) at a 1920x1080
+drawing buffer, `a` = 0.95, `B` = 1.0, disc on and stepped, jets on.
+
+### Budget before any Phase 5 change
+
+Same protocol as Phase 2 (N frames queued, one forcing `readPixels`,
+conditions interleaved, medians):
+
+| | ms / frame |
+|---|---|
+| layer off (fixed-function) | 0.49-0.85 |
+| `quality: 'medium'` | 1.26-1.85 |
+| `quality: 'high'` | 1.37-1.99 |
+| `high` at 3840x2160 | 2.87 |
+
+Under an eighth of the 16.6 ms budget. Going 1080p -> 4K adds only ~0.9 ms,
+so most of the layer's cost is fixed per-pass overhead, not fill.
+`LinePool` uploads its whole 42000-segment buffer (2 MB) every frame;
+restricting the upload to the used prefix measured 0.694 vs 0.696 ms — no
+gain on this hardware, so it was not shipped. The integrated-graphics
+`medium` target is **unverified**: no such GPU was available.
+
+### Instanced bodies
+
+Pixel check, 63 bodies of all five kinds, dither off, read back with
+`readPixels`: layer on vs off differs by at most **1 code** (170 channels in
+6.2M), the same as off vs off frame-to-frame (151 channels, max 1). The
+batches held 38 / 13 / 12 instances, matching the map exactly.
+
+Interleaved, 12 rounds, medians. "Submit" is CPU time inside
+`renderer.render`, where draw-call overhead lands; the frame column includes
+the GPU wait and drifts by a few tenths of a ms run to run:
+
+| bodies | draw calls off -> on | submit off -> on (ms) | frame off -> on (ms) |
+|---|---|---|---|
+| 3 | 41 -> 41 | 0.295 -> 0.305 | 1.85 -> 1.85 |
+| 60 | 185 -> 132 | 0.552 -> 0.513 | 1.90 -> 1.88 |
+| 200 | 372 -> 193 | 0.800 -> 0.597 | 1.39 -> 1.49 |
+| 500 | 645 -> 198 | 1.295 -> 0.665 | 1.86 -> 1.53 |
+
+A draw call is cheap on this GPU, so the win only becomes visible past a
+couple of hundred bodies. What remains at 500 bodies is mostly the
+`SpritePool` glows (cap 110) and `LabelPool` labels (cap 72), each still one
+`Sprite` per item.
+
+Lifecycle: `bodies.enabled = false` empties the batches and every body mesh
+draws again; `gpu.enabled = false` removes all three batches; four
+detach/attach cycles still leave exactly three; a removed body shrinks its
+batch on the next frame; capacity grows by doubling from 64 (checked at 500).
 
 ## Test posture
 

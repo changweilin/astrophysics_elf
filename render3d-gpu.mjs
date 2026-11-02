@@ -38,6 +38,7 @@
 import * as THREE from './vendor/three.module.js';
 import { GpuDiscLayer, DISC } from './render3d-gpu-disc.mjs';
 import { GpuJetLayer, JETS } from './render3d-gpu-jets.mjs';
+import { GpuBodyLayer, BODIES } from './render3d-gpu-bodies.mjs';
 
 (function () {
   const LEVELS = { high: 4, medium: 3 };
@@ -60,10 +61,13 @@ import { GpuJetLayer, JETS } from './render3d-gpu-jets.mjs';
     disc: DISC,
     // Phase 4 volumetric jets (render3d-gpu-jets.mjs).
     jets: JETS,
+    // Phase 5 instanced N-body meshes (render3d-gpu-bodies.mjs).
+    bodies: BODIES,
     _stack: null,
     _points: [],
     _disc: null,
     _jets: null,
+    _bodies: null,
   };
 
   const _v2 = new THREE.Vector2();
@@ -482,12 +486,14 @@ import { GpuJetLayer, JETS } from './render3d-gpu-jets.mjs';
       GPU._stack = stack;
       GPU._disc = new GpuDiscLayer(R);
       GPU._jets = new GpuJetLayer(R);
+      GPU._bodies = new GpuBodyLayer(R);
       R.renderer.render = function (scene, camera) {
         updatePointUniforms(R);
         // Before the scene is traversed, not after: this positions the disc
         // meshes and hands the point pool back its visibility.
         GPU._disc.update(R);
         GPU._jets.update(R, GPU.quality);
+        GPU._bodies.update(R);
         stack.render(scene, camera);
       };
       upgradePoints(R);
@@ -499,6 +505,7 @@ import { GpuJetLayer, JETS } from './render3d-gpu-jets.mjs';
 
   function uninstall(R) {
     restorePoints();
+    if (GPU._bodies) { GPU._bodies.dispose(R); GPU._bodies = null; }
     if (GPU._jets) { GPU._jets.dispose(R); GPU._jets = null; }
     if (GPU._disc) { GPU._disc.dispose(R); GPU._disc = null; }
     if (GPU._stack) {
@@ -528,12 +535,13 @@ import { GpuJetLayer, JETS } from './render3d-gpu-jets.mjs';
     GPU.set = function (partial) {
       if (partial && typeof partial === 'object') {
         for (const k in partial) {
-          // bloom, disc and jets are merged, never replaced: the layer
+          // bloom, disc, jets and bodies are merged, never replaced: the layer
           // modules hold the same object references, so assigning a fresh one
           // would silently detach every uniform from the control surface.
           if (k === 'bloom' && partial.bloom) Object.assign(GPU.bloom, partial.bloom);
           else if (k === 'disc' && partial.disc) Object.assign(GPU.disc, partial.disc);
           else if (k === 'jets' && partial.jets) Object.assign(GPU.jets, partial.jets);
+          else if (k === 'bodies' && partial.bodies) Object.assign(GPU.bodies, partial.bodies);
           else if (k in GPU && typeof GPU[k] !== 'function') GPU[k] = partial[k];
         }
       }
