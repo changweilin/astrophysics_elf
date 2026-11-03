@@ -12,6 +12,7 @@
 //   node eval/run-eval.mjs --retrieval-only --ab fusion=weighted
 //   node eval/run-eval.mjs --retrieval-only --ab rrf-k=60
 //   node eval/run-eval.mjs --retrieval-only --ab qroute
+//   node eval/run-eval.mjs --retrieval-only --ab mmr=0.7   # RET4 delivery
 //
 // EVAL1b -- blocking regression gate (exit 1 on regression, 2 if undecidable):
 //   node eval/run-eval.mjs --retrieval-only --gate
@@ -27,7 +28,7 @@ import { openDb, now } from '../lib/db.mjs';
 import { search, buildContext } from '../lib/retrieve.mjs';
 import { recordTrace } from '../lib/trace.mjs';
 import { embedAvailable } from '../lib/embed.mjs';
-import { retrievalMetrics, contextPrecision, contextRecall, faithfulness } from './metrics.mjs';
+import { retrievalMetrics, deliveryMetrics, contextPrecision, contextRecall, faithfulness } from './metrics.mjs';
 import { generate, resolveJudgeModel, resolveAnswerModel } from './judge.mjs';
 import { saveBaseline, loadBaseline, compareToBaseline, formatComparison, gateTolerances } from './baseline.mjs';
 import { bootstrapCI, abVerdict, formatVerdict } from './stats.mjs';
@@ -64,7 +65,7 @@ const round3 = (x) => Number(x.toFixed(3));
 // mode: 'retrieval' (no LLM) or 'full'. Returns the persisted run row shape.
 export async function runEval(db, {
   mode = 'full', k = 8, graph = true, limit = Infinity, fusion, rrfK, qroute,
-  judgeModel, answerModel, datasetPath, log = () => {},
+  mmrLambda, judgeModel, answerModel, datasetPath, log = () => {},
 } = {}) {
   const cases = loadGolden(datasetPath).slice(0, limit);
   const full = mode === 'full';
@@ -85,7 +86,13 @@ export async function runEval(db, {
      VALUES(?,?,?,?,?,?,?,?,?)`
   );
 
-  const acc = { hit: [], mrr: [], retrieveMs: [], precision: [], recall: [], faithfulness: [], hallucination: [] };
+  const acc = {
+    hit: [], mrr: [], retrieveMs: [], precision: [], recall: [], faithfulness: [], hallucination: [],
+    // Delivery side (RET2/RET4): deterministic, so it is measured in
+    // retrieval-only runs too -- without it an MMR or budget change has no
+    // falsifiable metric short of the full judged run.
+    deliveredHit: [], deliveredQids: [],
+  };
   // Per-slice retrieval accuracy (golden `tags`, plus lang and the QROUTE
   // route), so a paraphrase / multi-hop subset can be read separately from the
   // single-hop baseline -- the whole point of RET3's "semantic recall" and
@@ -110,11 +117,21 @@ export async function runEval(db, {
     });
     const retrieveMs = Date.now() - t0;
 
-    const m = { ...retrievalMetrics(results, c.expect, c.expect_qids), retrieveMs };
+    const built = buildContext(results, undefined, { mmrLambda });
+    const m = {
+      ...retrievalMetrics(results, c.expect, c.expect_qids),
+      ...deliveryMetrics(built, c.expect, c.expect_qids),
+      retrieveMs,
+    };
     acc.hit.push(m.hit);
     acc.mrr.push(m.mrr);
+    acc.deliveredHit.push(m.deliveredHit);
+    acc.deliveredQids.push(m.deliveredQids);
     acc.retrieveMs.push(retrieveMs);
-    perCase.push({ id: c.id, lang: c.lang, tags: c.tags ?? [], route: route?.route ?? null, hit: m.hit, mrr: m.mrr });
+    perCase.push({
+      id: c.id, lang: c.lang, tags: c.tags ?? [], route: route?.route ?? null,
+      hit: m.hit, mrr: m.mrr, deliveredHit: m.deliveredHit, deliveredQids: m.deliveredQids,
+    });
     pushSlice(`lang:${c.lang}`, m);
     for (const tag of (Array.isArray(c.tags) ? c.tags : [])) pushSlice(`tag:${tag}`, m);
     if (route) pushSlice(`route:${route.route}`, m);
@@ -129,7 +146,7 @@ export async function runEval(db, {
       detail.judgeModel = judge;
       detail.answerModel = answerer;
 
-      const { context } = buildContext(results);
+      const { context } = built; // same delivery the metrics above scored
       const tA = Date.now();
       let answerUsage = { tokensIn: null, tokensOut: null };
       try {
@@ -212,6 +229,9 @@ export async function runEval(db, {
   const metrics = {
     hitRate: round3(avg(acc.hit)),
     mrr: round3(avg(acc.mrr)),
+    deliveredHitRate: round3(avg(acc.deliveredHit)),
+    avgDeliveredQids: round3(avg(acc.deliveredQids)),
+    mmrLambda: mmrLambda ?? config.retrieve.mmrLambda,
     avgRetrieveMs: Math.round(avg(acc.retrieveMs)),
     fusion: fusionUsed,
     ...(fusionUsed === 'rrf' ? { rrfK: rrfK || config.retrieve.rrfK } : {}),
@@ -244,6 +264,11 @@ const AB_VARIANTS = {
   fusion: (v) => ({ fusion: v }),
   'rrf-k': (v) => ({ rrfK: Number(v) }),
   k: (v) => ({ k: Number(v) }),
+  // RET4. The ranking metrics cannot move here (MMR runs at delivery), so the
+  // verdicts that matter on this arm are deliveredHit / deliveredQids: the
+  // trade is only worth taking if diversity rises while the gold page still
+  // reaches the context.
+  mmr: (v) => ({ mmrLambda: v === undefined ? 0.7 : Number(v) }),
 };
 
 export function parseVariant(spec) {
@@ -293,6 +318,8 @@ export function abCompare(variantRun, baseRun) {
       n: idx.length,
       hitRate: abVerdict(idx.map((i) => a[i].hit), idx.map((i) => b[i].hit)),
       mrr: abVerdict(idx.map((i) => a[i].mrr), idx.map((i) => b[i].mrr)),
+      deliveredHit: abVerdict(idx.map((i) => a[i].deliveredHit), idx.map((i) => b[i].deliveredHit)),
+      deliveredQids: abVerdict(idx.map((i) => a[i].deliveredQids), idx.map((i) => b[i].deliveredQids)),
     });
   }
   return out;
@@ -352,6 +379,7 @@ if (isMain) {
     fusion: opt('--fusion', undefined),
     rrfK: Number(opt('--rrf-k', 0)) || undefined,
     qroute: opt('--qroute', undefined),
+    mmrLambda: args.includes('--mmr') ? Number(opt('--mmr', 0.7)) : undefined,
     k: Number(opt('--k', 8)),
     limit: Number(opt('--limit', Infinity)),
     judgeModel: opt('--judge', undefined),
@@ -400,6 +428,8 @@ if (isMain) {
       console.log(`    ${row.scope} (n=${row.n})`);
       console.log(formatVerdict('hitRate', row.hitRate));
       console.log(formatVerdict('mrr', row.mrr));
+      console.log(formatVerdict('deliveredHit', row.deliveredHit));
+      console.log(formatVerdict('deliveredQids', row.deliveredQids));
     }
     console.log('\n  ^ improved  v regressed  = no-effect (a meaningful change is ruled out)'
       + '  ? need-more-cases (undecided at this n)');

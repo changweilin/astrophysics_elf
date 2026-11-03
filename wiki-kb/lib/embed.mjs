@@ -3,6 +3,9 @@
 // product. Everything fails soft: if the embed model is unavailable the KB
 // still works in BM25-only mode.
 
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { config } from '../config.mjs';
 import { withBusy } from './ollama-gate.mjs';
 
@@ -51,8 +54,75 @@ export async function embedTexts(texts, signal) {
 const QUERY_CACHE_MAX = Math.max(0, config.embed.queryCacheMax ?? 512);
 const queryCache = new Map(); // "model\ntext" -> Float32Array
 
+// EMBCACHE disk tier under that LRU. The LRU dies with the process, but a CLI
+// eval run IS a fresh process re-embedding the same fixed golden queries, so
+// the vector is also written to a small file keyed by model + sha256(text) --
+// the same purity argument as the LRU, one level down. Fail-soft throughout:
+// an unwritable directory, an unreadable file or a truncated one falls back to
+// the live embed call and never raises.
+const CACHE_DIR = String(config.embed.queryCacheDir || '');
+let cacheDirReady = false;
+
+function diskPath(text) {
+  const slug = config.embed.model.replace(/[^A-Za-z0-9._-]+/g, '_');
+  const sha = createHash('sha256').update(`${config.embed.model}\n${text}`).digest('hex');
+  return path.join(CACHE_DIR, `${slug}-${sha}.f32`);
+}
+
+function diskRead(text) {
+  if (!CACHE_DIR) return null;
+  try {
+    const buf = readFileSync(diskPath(text));
+    // A file truncated by a kill mid-write, or left by a model whose dimension
+    // changed under the same tag, is garbage rather than a vector.
+    if (!buf.byteLength || buf.byteLength % 4 !== 0) return null;
+    return fromBlob(buf);
+  } catch {
+    return null;
+  }
+}
+
+// Returns whether the vector actually reached the disk tier (the caller only
+// counts real writes, so the stats cannot claim a cache that does not exist).
+function diskWrite(text, vec) {
+  if (!CACHE_DIR) return false;
+  try {
+    if (!cacheDirReady) {
+      mkdirSync(CACHE_DIR, { recursive: true });
+      cacheDirReady = true;
+    }
+    const file = diskPath(text);
+    // Write-then-rename: a concurrent reader never sees a half-written vector,
+    // and two processes embedding the same query race to identical bytes.
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, toBlob(vec));
+    renameSync(tmp, file);
+    return true;
+  } catch {
+    // The cache is an optimization; a failed write only costs the next embed.
+    return false;
+  }
+}
+
+const cacheStats = { memHits: 0, diskHits: 0, diskWrites: 0, misses: 0 };
+
+export function embedCacheStats() {
+  return { ...cacheStats, memEntries: queryCache.size, diskDir: CACHE_DIR || null };
+}
+
+// Clears the in-process LRU only. The disk tier is deliberately left alone:
+// it is valid across processes, so dropping it here would punish every other
+// run for one caller wanting a cold in-memory cache.
 export function clearEmbedCache() {
   queryCache.clear();
+}
+
+function remember(key, vec) {
+  if (QUERY_CACHE_MAX <= 0) return;
+  queryCache.set(key, vec);
+  if (queryCache.size > QUERY_CACHE_MAX) {
+    queryCache.delete(queryCache.keys().next().value); // evict oldest
+  }
 }
 
 export async function embedQuery(text, signal) {
@@ -63,18 +133,24 @@ export async function embedQuery(text, signal) {
       // Refresh recency (delete+set moves it to the tail of the Map's order).
       queryCache.delete(key);
       queryCache.set(key, hit);
+      cacheStats.memHits++;
       return hit;
     }
+  }
+  const onDisk = diskRead(text);
+  if (onDisk) {
+    cacheStats.diskHits++;
+    remember(key, onDisk);
+    return onDisk;
   }
   const [v] = await embedTexts([text], signal);
   const vec = v ?? null;
   // Only cache real vectors -- a soft-failed embed (null) must be retried next
   // time, not remembered as "this query has no embedding".
-  if (vec && QUERY_CACHE_MAX > 0) {
-    queryCache.set(key, vec);
-    if (queryCache.size > QUERY_CACHE_MAX) {
-      queryCache.delete(queryCache.keys().next().value); // evict oldest
-    }
+  if (vec) {
+    cacheStats.misses++;
+    remember(key, vec);
+    if (diskWrite(text, vec)) cacheStats.diskWrites++;
   }
   return vec;
 }

@@ -10,7 +10,10 @@
 // multi-hop pages the lexical/vector channels missed. It is additive and
 // fail-open: wGraph=0 or any error reproduces the plain hybrid ranking.
 
-import { ftsQuery } from './db.mjs';
+// Tokenization comes from tokenize.mjs, not db.mjs: this module needs no
+// `node:sqlite` of its own (the caller hands it an open db), which is what
+// lets its ranking/delivery logic be unit-tested without a corpus.
+import { ftsQuery, cjkTokenize } from './tokenize.mjs';
 import { embedQuery, fromBlob, dot } from './embed.mjs';
 import { graphChannel } from './graph-rank.mjs';
 import { routeQuery } from './query-route.mjs';
@@ -309,7 +312,10 @@ export async function search(db, opts = {}) {
 //      are distinct pageIds sharing one qid) so the budget isn't spent twice on
 //      the same fact, and
 //   2) RESERVE a slot for graph-expanded pages so a couple of multi-hop hits
-//      always reach the model.
+//      always reach the model, and
+//   3) optionally diversify what is left with MMR (`mmrOrder`, off by default)
+//      so two different-qid chunks carrying the same sentence do not both
+//      occupy the budget.
 // The returned `coverage` reports delivered-vs-retrieved so the throttle is
 // visible in traces instead of silent.
 const CTX_SEP = 2; // length of the '\n\n' joiner between blocks
@@ -345,9 +351,80 @@ function dedupeByQid(rows) {
   return out;
 }
 
+// RET4 -- MMR diversity over near-duplicate DIFFERENT-qid chunks.
+//
+// dedupeByQid above collapses one concept's zh/en pages, because they share a
+// qid. What it cannot see is two distinct qids whose delivered chunks say
+// nearly the same thing ("Kerr metric" and "Rotating black hole" both opening
+// with the same definition), which spends a tight char budget twice on one
+// fact and starves the rest of the retrieved set.
+//
+// Similarity is lexical -- the FTS index's own CJK-bigram tokenization, so CJK
+// compares by character bigram and latin by word. Chunk embeddings are not
+// carried through search()'s candidate rows, and loading hundreds of blobs to
+// diversify <=8 delivered chunks would cost more than the pass saves. Lexical
+// also happens to be the right tool for what is LEFT here: cross-lingual
+// near-duplicates are already gone by qid, so the remaining ones are
+// same-language and share surface form.
+function tokenSet(text) {
+  return new Set(cjkTokenize(String(text || '')));
+}
+
+// Cosine over token sets: |A n B| / sqrt(|A||B|), in [0,1].
+function setCosine(a, b) {
+  if (!a.size || !b.size) return 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let inter = 0;
+  for (const t of small) if (large.has(t)) inter++;
+  return inter / Math.sqrt(a.size * b.size);
+}
+
+// Greedy MMR: pick the top-relevance row, then repeatedly pick the row
+// maximizing `lambda*rel - (1-lambda)*maxSim(already picked)`. Relevance is the
+// fused score normalized by the set's own max, so it is on the same [0,1] scale
+// as the similarity term in every channel mode. lambda >= 1 returns the input
+// untouched (the identity default), and ties keep the higher-scored row first,
+// so the pass is stable.
+export function mmrOrder(rows, lambda = config.retrieve.mmrLambda) {
+  if (!(lambda < 1) || rows.length < 3) return rows;
+  let maxScore = 0;
+  for (const r of rows) if ((r.score ?? 0) > maxScore) maxScore = r.score ?? 0;
+  const norm = maxScore > 0 ? maxScore : 1;
+  const rel = rows.map((r) => (r.score ?? 0) / norm);
+  const toks = rows.map((r) => tokenSet(r.text));
+  const maxSim = new Array(rows.length).fill(0);
+  const pending = rows.map((_, i) => i);
+  const out = [];
+  while (pending.length) {
+    let bestAt = 0;
+    let bestVal = -Infinity;
+    for (let j = 0; j < pending.length; j++) {
+      const i = pending[j];
+      const val = out.length ? lambda * rel[i] - (1 - lambda) * maxSim[i] : rel[i];
+      if (val > bestVal) {
+        bestVal = val;
+        bestAt = j;
+      }
+    }
+    const pick = pending.splice(bestAt, 1)[0];
+    out.push(rows[pick]);
+    for (const i of pending) {
+      const s = setCosine(toks[i], toks[pick]);
+      if (s > maxSim[i]) maxSim[i] = s;
+    }
+  }
+  return out;
+}
+
 export function buildContext(results, maxChars = config.retrieve.maxContextChars, opts = {}) {
   const graphReserve = opts.graphReserve ?? config.retrieve.graphReserve;
-  const organic = dedupeByQid(results.filter((r) => !r.graphExpanded));
+  const mmrLambda = opts.mmrLambda ?? config.retrieve.mmrLambda;
+  const ranked = dedupeByQid(results.filter((r) => !r.graphExpanded));
+  // Diversify the organic rows only. The graph-expanded ones are already
+  // capped at `graphReserve` (1 by default) and come from a different channel,
+  // so there is nothing for MMR to spread out there.
+  const organic = mmrOrder(ranked, mmrLambda);
+  const mmrMoved = organic.reduce((n, r, i) => n + (r === ranked[i] ? 0 : 1), 0);
   const expanded = dedupeByQid(results.filter((r) => r.graphExpanded)).slice(0, graphReserve);
 
   const parts = [];
@@ -393,6 +470,10 @@ export function buildContext(results, maxChars = config.retrieve.maxContextChars
     graphDelivered: sources.filter((s) => s.graphExpanded).length,
     charsUsed: used,
     maxChars,
+    // So a trace says whether the diversity pass was on and whether it
+    // actually changed the delivered order, instead of leaving it invisible.
+    mmrLambda,
+    mmrMoved,
   };
   return { context: parts.join('\n\n'), sources, coverage };
 }

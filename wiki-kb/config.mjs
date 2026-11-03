@@ -86,6 +86,11 @@ export const config = {
     // is a pure function of (model, text), so identical chat/eval queries never
     // need to re-hit the GPU. 0 disables the cache.
     queryCacheMax: envNum('WKB_EMBED_QUERY_CACHE', 512),
+    // EMBCACHE: disk tier under that LRU, so a repeat CLI eval run (a fresh
+    // process every time) skips the embed instead of re-paying for the same 69
+    // fixed golden queries. Keyed by model + sha256(text); one small file per
+    // key. Empty string disables the disk tier.
+    queryCacheDir: envStr('WKB_EMBED_QUERY_CACHE_DIR', path.join(HERE, 'data', 'qvec-cache')),
   },
 
   retrieve: {
@@ -112,6 +117,12 @@ export const config = {
     halfLifeDays: envNum('WKB_DECAY_HALFLIFE_DAYS', 1095),
     decayFloor: envNum('WKB_DECAY_FLOOR', 0.6),
     maxPerPage: envNum('WKB_MAX_PER_PAGE', 2),
+    // RET4: MMR diversity on the DELIVERED context (buildContext), not on the
+    // ranking. lambda=1 is the identity (pure relevance order) and is the
+    // default on purpose: trading relevance for diversity changes what the
+    // model receives, so it needs `--ab mmr=<lambda>` evidence on the delivery
+    // metrics before it is flipped on. 0.7 is the usual literature start.
+    mmrLambda: envNum('WKB_MMR_LAMBDA', 1),
     // Delivered-context budget. Was 2200 (delivered ~1-2 chunks); widened so the
     // k=8 fusion + graph expansion that search() computes actually reaches the
     // model (RET2). buildContext still counts every block toward this cap.

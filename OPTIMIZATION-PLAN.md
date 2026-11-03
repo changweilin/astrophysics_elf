@@ -89,8 +89,19 @@ One line each; the code and its tests are the detail.
 - **LOOP1** — `knowledge/triage-feedback.mjs` activates the dead
   `status`/`auto_label` columns: deterministic labels, one fail-open judge call
   only for a bare downvote, idempotent, `new -> triaged`.
-- **RET4 (dedup half)** / **EMBCACHE (in-process half)** — see open TODOs for
-  what is still missing.
+- **RET4** — cross-lingual qid dedup, plus the MMR diversity pass over
+  near-duplicate *different-qid* chunks (`mmrOrder` in `lib/retrieve.mjs`,
+  greedy `λ·rel − (1−λ)·maxSim` over CJK-bigram token cosine).
+  **Default `WKB_MMR_LAMBDA=1` = identity**: shipped off, like QROUTE's
+  `observe`, because it changes what the model receives — see open TODOs.
+  Delivery is now measured too (`deliveryMetrics`: `deliveredHit`,
+  `deliveredQids`) in retrieval-only runs and on both `--ab` arms, so the knob
+  has a falsifiable metric that needs no judge.
+- **EMBCACHE** — the in-process query-vector LRU over a disk tier keyed by
+  model + `sha256(text)` (`WKB_EMBED_QUERY_CACHE_DIR`, default
+  `wiki-kb/data/qvec-cache`), so a repeat CLI eval run skips the embed entirely
+  instead of re-paying for the same fixed golden queries. Fail-soft: an
+  unwritable dir or a truncated file falls back to the live embed call.
 
 ## Open roadmap
 
@@ -137,14 +148,16 @@ One line each; the code and its tests are the detail.
   retrieves on the rewritten query) so RET1's anaphora fix is regression-tracked
   rather than demo'd. Optional: inject rewrite-extracted entities into
   `seedQids`.
-- [ ] **RET4 — MMR diversity pass** over near-duplicate *different-qid* chunks
-  (cross-lingual qid dedup already shipped).
+- [ ] **Decide MMR's λ with `npm run eval:ab -- mmr=0.7`** (RET4 shipped at
+  λ=1, the identity). Flip `WKB_MMR_LAMBDA` only if `deliveredQids` reads
+  `improved` *and* `deliveredHit` reads `improved`/`no-effect` — buying
+  diversity by pushing the gold page out of the context is a loss, not a win.
+  `need-more-cases` means the golden set is too small to justify it, same rule
+  as QROUTE. (Also worth one judged run: delivery changes land in
+  contextRecall / faithfulness, not in MRR.)
 - [ ] **RET2 — small-to-big delivery** (rank on chunks, deliver the parent
   section / merged neighbour window). Deferred: higher complexity, lower
   marginal value.
-- [ ] **EMBCACHE — cross-process persistence.** The `embedQuery` LRU is
-  per-process; persist the fixed golden-query vectors to disk (keyed by
-  `model+sha(text)`) so repeat CLI eval runs skip the embed entirely.
 - [ ] **Full LLM eval baseline.** RET1/RET2 change what the *model receives*, so
   their payoff shows only in the judged run (contextRecall / faithfulness). Run
   `node eval/run-eval.mjs` (full) once the judge/answer models are loaded.

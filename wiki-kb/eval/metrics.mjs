@@ -16,17 +16,23 @@ import { generate, parseYesNoLines, parseClaimLines } from './judge.mjs';
 
 // ---- retrieval metrics (pure computation) -----------------------------------
 
-export function retrievalMetrics(results, expect = [], expectQids = []) {
-  const titles = results.map((r) => String(r.title || ''));
-  // Prefer qid-level ground truth when the case carries it (unambiguous and
-  // language-independent -- a zh and en page of one concept share a qid);
-  // fall back to the legacy title-substring match for cases without it.
+// Ground-truth matcher shared by the retrieval and delivery metrics, so a
+// chunk and the context block built from it are judged by one rule.
+// Prefer qid-level ground truth when the case carries it (unambiguous and
+// language-independent -- a zh and en page of one concept share a qid); fall
+// back to the legacy title-substring match for cases without it.
+export function makeIsHit(expect = [], expectQids = []) {
   const wantQids = new Set((expectQids || []).map((q) => String(q)));
-  const lowered = expect.map((e) => String(e).toLowerCase());
-  const isHit = (r) =>
+  const lowered = (expect || []).map((e) => String(e).toLowerCase());
+  return (r) =>
     wantQids.size
       ? r.qid != null && wantQids.has(String(r.qid))
       : lowered.some((e) => String(r.title || '').toLowerCase().includes(e));
+}
+
+export function retrievalMetrics(results, expect = [], expectQids = []) {
+  const titles = results.map((r) => String(r.title || ''));
+  const isHit = makeIsHit(expect, expectQids);
   // rank over distinct pages, mirroring how a reader sees the source list
   const seen = new Set();
   let rank = 0;
@@ -42,6 +48,26 @@ export function retrievalMetrics(results, expect = [], expectQids = []) {
     mrr: firstHit > 0 ? 1 / firstHit : 0,
     pagesRetrieved: seen.size,
     chunksRetrieved: titles.length,
+  };
+}
+
+// Delivery metrics (no LLM). retrievalMetrics scores what search() RANKED;
+// these score what buildContext actually put in front of the model after qid
+// dedup, the graph reserve, the MMR pass and the char budget -- the half of
+// the pipeline RET2/RET4 move and the ranking metrics cannot see.
+//
+//   deliveredHit:  the gold page reached the context, not just the ranking
+//   deliveredQids: how many distinct concepts the budget bought
+//
+// `sources` is buildContext's source list; `coverage` its coverage block.
+export function deliveryMetrics(built, expect = [], expectQids = []) {
+  const isHit = makeIsHit(expect, expectQids);
+  const sources = built?.sources ?? [];
+  return {
+    deliveredHit: sources.some(isHit) ? 1 : 0,
+    deliveredQids: built?.coverage?.deliveredQids ?? 0,
+    deliveredChunks: sources.length,
+    deliveredChars: built?.coverage?.charsUsed ?? 0,
   };
 }
 

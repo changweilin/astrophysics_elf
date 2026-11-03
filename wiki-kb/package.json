@@ -25,7 +25,7 @@
     "eval:baseline": "node eval/run-eval.mjs --retrieval-only --save-baseline",
     "eval:gate": "node eval/run-eval.mjs --retrieval-only --gate",
     "eval:ab": "node eval/run-eval.mjs --retrieval-only --ab",
-    "test": "node eval/stats.test.mjs && node lib/query-route.test.mjs",
+    "test": "node eval/stats.test.mjs && node lib/query-route.test.mjs && node lib/retrieve.test.mjs && node lib/embed.test.mjs",
     "check": "node ../tools/check-syntax.mjs --quiet wiki-kb && npm test"
   },
   "dependencies": {

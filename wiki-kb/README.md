@@ -111,6 +111,28 @@ golden set). **PPR always stays on** and every per-route `wGraph` scale is 1;
 the boost fires 69/69, so disabling it is a ranking change that needs paired
 `npm run eval:ab -- qroute` evidence first.
 
+### Delivered context (RET2/RET4, `buildContext`)
+
+Ranking is not delivery: `search()` returns k chunks, but the model only sees
+what fits `WKB_CONTEXT_MAX_CHARS` (3000). So the delivery pass (a) collapses
+chunks sharing a QID, since one concept's zh and en pages are distinct
+`pageId`s, (b) **reserves** `WKB_GRAPH_RESERVE` slots for graph-expanded pages
+so the multi-hop probe is not truncated away, and (c) can diversify the rest
+with **MMR** — greedy `λ·rel − (1−λ)·maxSim` over CJK-bigram token cosine,
+which catches two *different*-QID chunks repeating the same sentence.
+
+`WKB_MMR_LAMBDA=1` (**default**) is the identity: relevance order, byte-for-byte
+the pre-RET4 delivery. Diversity is a change to what the model receives, so it
+needs evidence before it is flipped on — `npm run eval:ab -- mmr=0.7`, reading
+the `deliveredHit` / `deliveredQids` verdicts (the ranking verdicts cannot move
+on this arm). Every run reports `mmrLambda`/`mmrMoved` in the coverage block.
+
+Query vectors are cached in two tiers (EMBCACHE): a per-process LRU
+(`WKB_EMBED_QUERY_CACHE=512`) over a disk tier keyed by model + `sha256(text)`
+(`WKB_EMBED_QUERY_CACHE_DIR`, default `data/qvec-cache`, empty = off), so a
+repeat CLI eval run does not re-embed the same fixed golden queries. Both tiers
+fail soft; `clearEmbedCache()` drops only the in-process one.
+
 ## Commands
 
 ```powershell
@@ -204,13 +226,14 @@ Three traps worth remembering:
 Main env vars (full list in `config.mjs`): `WKB_DB`, `WKB_LANGS`,
 `WKB_PRIORITY_LANGS`, `WKB_FULLTEXT_LANGS`, `WKB_MAX_PAGES_PER_LANG`,
 `WKB_EMBED_MODEL`, `WKB_OLLAMA_URL`, `WKB_TOP_K`, `WKB_W_BM25`/`WKB_W_VEC`,
-`WKB_DECAY_HALFLIFE_DAYS`, `WKB_DECAY_FLOOR`, `WKB_QROUTE`, `WKB_PORT`.
+`WKB_DECAY_HALFLIFE_DAYS`, `WKB_DECAY_FLOOR`, `WKB_QROUTE`, `WKB_MMR_LAMBDA`,
+`WKB_EMBED_QUERY_CACHE_DIR`, `WKB_PORT`.
 
 ## Verify
 
 ```powershell
 npm run check        # node --check every module + unit tests (no DB, no Ollama)
-npm test             # unit tests only (eval/stats, lib/query-route)
+npm test             # unit tests only (eval/stats, query-route, retrieve, embed)
 npm run eval:gate    # retrieval regression gate — needs kb.sqlite AND live bge-m3
 ```
 
