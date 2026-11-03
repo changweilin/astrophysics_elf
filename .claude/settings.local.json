@@ -46,7 +46,9 @@
       "PowerShell(node --check sim.js; node --check physics.js; node --check disc.js)",
       "PowerShell(node .\\\\full-physics\\\\run-benchmarks.mjs)",
       "Bash(grep -nE '^\\(button|a|input|select|textarea|h[1-6]|p|ul|ol|li|img\\)[ ,{:]' \"C:\\\\Users\\\\user\\\\Documents\\\\app\\\\astrophysics_elf\\\\scientists.css\")",
-      "Bash(find \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@openai\" \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@google\" \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\opencode-ai\" -maxdepth 4 -name \"playwright*\" -o -maxdepth 4 -name \"*playwright*\" 2>/dev/null | head -5)"
+      "Bash(find \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@openai\" \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\@google\" \"C:\\\\Users\\\\user\\\\AppData\\\\Roaming\\\\npm\\\\node_modules\\\\opencode-ai\" -maxdepth 4 -name \"playwright*\" -o -maxdepth 4 -name \"*playwright*\" 2>/dev/null | head -5)",
+      "PowerShell(git add GPU-RENDER-PLAN.md index.html observer-view.jsx render3d-gpu-disc.mjs lensing-gpu.js)",
+      "PowerShell(git commit -q -F \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-user-Documents-app-astrophysics-elf\\\\33d68be9-8a43-4c0d-b4d7-415d2214b49d\\\\scratchpad\\\\phase3-msg.txt\")"
     ]
   }
 }
